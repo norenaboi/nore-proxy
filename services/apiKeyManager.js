@@ -226,12 +226,28 @@ class APIKeyManager {
         (sum, log) => sum + (log.output_tokens || 0),
         0,
       ),
+      total_cache_write_tokens: apiKeyLogsAll.reduce(
+        (sum, log) => sum + (log.cache_write_tokens || 0),
+        0,
+      ),
+      total_cache_read_tokens: apiKeyLogsAll.reduce(
+        (sum, log) => sum + (log.cache_read_tokens || 0),
+        0,
+      ),
       daily_input_tokens: apiKeyLogs24h.reduce(
         (sum, log) => sum + (log.input_tokens || 0),
         0,
       ),
       daily_output_tokens: apiKeyLogs24h.reduce(
         (sum, log) => sum + (log.output_tokens || 0),
+        0,
+      ),
+      daily_cache_write_tokens: apiKeyLogs24h.reduce(
+        (sum, log) => sum + (log.cache_write_tokens || 0),
+        0,
+      ),
+      daily_cache_read_tokens: apiKeyLogs24h.reduce(
+        (sum, log) => sum + (log.cache_read_tokens || 0),
         0,
       ),
       rate_limit: this.keys[apiKey]?.rpd || 0,

@@ -246,7 +246,7 @@ async function streamFromBackend(
       const outputTokens =
         streamUsage?.completion_tokens ?? estimateTokens(accumulatedContent);
       const cacheWriteTokens =
-        streamUsage?.prompt_tokens_details?.cache_creation_input_tokens ?? 0;
+        streamUsage?.prompt_tokens_details?.cache_write_tokens ?? 0;
       const cacheReadTokens =
         streamUsage?.prompt_tokens_details?.cached_tokens ?? 0;
       logRequestEnd(

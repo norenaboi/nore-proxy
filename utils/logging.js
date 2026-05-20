@@ -10,6 +10,55 @@ import {
   errorCount,
 } from "../services/metricsService.js";
 
+// Cost calculation function based on model type
+export function calculateCost(
+  model,
+  inputTokens,
+  outputTokens,
+  cacheWriteTokens,
+  cacheReadTokens,
+) {
+  const modelLower = (model || "").toLowerCase();
+
+  let inputRate, outputRate, cacheWriteRate, cacheReadRate;
+
+  if (modelLower.includes("sonnet")) {
+    // Sonnet pricing
+    inputRate = 3 / 1_000_000;
+    outputRate = 15 / 1_000_000;
+    cacheWriteRate = 3.75 / 1_000_000;
+    cacheReadRate = 0.3 / 1_000_000;
+  } else if (modelLower.includes("opus")) {
+    // Opus pricing
+    inputRate = 5 / 1_000_000;
+    outputRate = 25 / 1_000_000;
+    cacheWriteRate = 6.25 / 1_000_000;
+    cacheReadRate = 0.5 / 1_000_000;
+  } else {
+    // Default pricing
+    inputRate = 1 / 1_000_000;
+    outputRate = 1 / 1_000_000;
+    cacheWriteRate = 1 / 1_000_000;
+    cacheReadRate = 1 / 1_000_000;
+  }
+
+  // Calculate normal input tokens (excluding cache write and cache read tokens)
+  const normalInputTokens = inputTokens - cacheWriteTokens - cacheReadTokens;
+
+  const inputCost = normalInputTokens * inputRate;
+  const outputCost = outputTokens * outputRate;
+  const cacheWriteCost = cacheWriteTokens * cacheWriteRate;
+  const cacheReadCost = cacheReadTokens * cacheReadRate;
+
+  return {
+    inputCost,
+    outputCost,
+    cacheWriteCost,
+    cacheReadCost,
+    totalCost: inputCost + outputCost + cacheWriteCost + cacheReadCost,
+  };
+}
+
 export function logRequestStart(
   requestId,
   model,
@@ -135,6 +184,8 @@ export function logRequestEnd(
     duration,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
+    cache_write_tokens: cacheWriteTokens,
+    cache_read_tokens: cacheReadTokens,
     error,
     params: req.params || {},
     key_name: apiKeyManager.getKeyName(resolvedKey),
