@@ -197,7 +197,7 @@
             /* Summary Cards */
             .summary-cards {
                 display: grid;
-                grid-template-columns: repeat(3, 1fr);
+                grid-template-columns: repeat(4, 1fr);
                 gap: 20px;
                 margin-bottom: 32px;
             }
@@ -252,13 +252,21 @@
                 font-size: 32px;
                 font-weight: 700;
                 color: var(--gray-900);
-                line-height: 1;
                 margin-bottom: 8px;
             }
 
             .card-trend {
-                font-size: 13px;
+                font-size: 12px;
+                color: var(--gray-500);
+            }
+
+            .card-cost {
+                position: absolute;
+                bottom: 12px;
+                right: 12px;
+                font-size: 11px;
                 color: var(--gray-400);
+                font-weight: 500;
             }
 
             .card-trend.up {
@@ -616,6 +624,7 @@
                         </div>
                         <div class="value" id="totalInput">-</div>
                         <span class="card-trend">All time input</span>
+                        <span class="card-cost" id="totalInputCost">$0.00</span>
                     </div>
 
                     <div class="summary-card">
@@ -629,6 +638,20 @@
                         </div>
                         <div class="value" id="totalOutput">-</div>
                         <span class="card-trend">All time output</span>
+                        <span class="card-cost" id="totalOutputCost"
+                            >$0.00</span
+                        >
+                    </div>
+
+                    <div class="summary-card" style="grid-column: span 1">
+                        <div class="card-header">
+                            <h3>Total Estimated Cost</h3>
+                            <div class="card-icon">
+                                <i class="fa-solid fa-dollar-sign"></i>
+                            </div>
+                        </div>
+                        <div class="value" id="totalCost">$0.00</div>
+                        <span class="card-trend">All time estimated cost</span>
                     </div>
 
                     <div class="summary-card">
@@ -653,6 +676,7 @@
                         </div>
                         <div class="value" id="dailyInput">-</div>
                         <span class="card-trend">Today's input</span>
+                        <span class="card-cost" id="dailyInputCost">$0.00</span>
                     </div>
 
                     <div class="summary-card">
@@ -666,6 +690,78 @@
                         </div>
                         <div class="value" id="dailyOutput">-</div>
                         <span class="card-trend">Today's output</span>
+                        <span class="card-cost" id="dailyOutputCost"
+                            >$0.00</span
+                        >
+                    </div>
+
+                    <div class="summary-card" style="grid-column: span 1">
+                        <div class="card-header">
+                            <h3>Daily Estimated Cost</h3>
+                            <div class="card-icon">
+                                <i class="fa-solid fa-dollar-sign"></i>
+                            </div>
+                        </div>
+                        <div class="value" id="dailyCost">$0.00</div>
+                        <span class="card-trend"
+                            >Last 24 hours estimated cost</span
+                        >
+                    </div>
+
+                    <div class="summary-card">
+                        <div class="card-header">
+                            <h3>Cache Write (24h)</h3>
+                            <div class="card-icon">
+                                <i class="fa-solid fa-database"></i>
+                            </div>
+                        </div>
+                        <div class="value" id="dailyCacheWrite">-</div>
+                        <span class="card-trend">Today's cache write</span>
+                        <span class="card-cost" id="dailyCacheWriteCost"
+                            >$0.00</span
+                        >
+                    </div>
+
+                    <div class="summary-card">
+                        <div class="card-header">
+                            <h3>Cache Read (24h)</h3>
+                            <div class="card-icon">
+                                <i class="fa-solid fa-database"></i>
+                            </div>
+                        </div>
+                        <div class="value" id="dailyCacheRead">-</div>
+                        <span class="card-trend">Today's cache read</span>
+                        <span class="card-cost" id="dailyCacheReadCost"
+                            >$0.00</span
+                        >
+                    </div>
+
+                    <div class="summary-card">
+                        <div class="card-header">
+                            <h3>Cache Write</h3>
+                            <div class="card-icon">
+                                <i class="fa-solid fa-database"></i>
+                            </div>
+                        </div>
+                        <div class="value" id="totalCacheWrite">-</div>
+                        <span class="card-trend">All time cache write</span>
+                        <span class="card-cost" id="totalCacheWriteCost"
+                            >$0.00</span
+                        >
+                    </div>
+
+                    <div class="summary-card">
+                        <div class="card-header">
+                            <h3>Cache Read</h3>
+                            <div class="card-icon">
+                                <i class="fa-solid fa-database"></i>
+                            </div>
+                        </div>
+                        <div class="value" id="totalCacheRead">-</div>
+                        <span class="card-trend">All time cache read</span>
+                        <span class="card-cost" id="totalCacheReadCost"
+                            >$0.00</span
+                        >
                     </div>
                 </div>
 
@@ -684,13 +780,17 @@
                             <thead>
                                 <tr>
                                     <th>Name</th>
-                                    <th>API Key</th>
                                     <th>Requests (24h)</th>
                                     <th>Total Requests</th>
                                     <th>Input (24h)</th>
                                     <th>Output (24h)</th>
+                                    <th>Cache Write (24h)</th>
+                                    <th>Cache Read (24h)</th>
                                     <th>Total Input</th>
                                     <th>Total Output</th>
+                                    <th>Total Cache Write</th>
+                                    <th>Total Cache Read</th>
+                                    <th>Estimated Cost</th>
                                 </tr>
                             </thead>
                             <tbody id="apiKeysBody"></tbody>
@@ -711,11 +811,13 @@
                                 <tr>
                                     <th>Time</th>
                                     <th>Name</th>
-                                    <th>API Key</th>
                                     <th>Model</th>
                                     <th>Input Tokens</th>
                                     <th>Output Tokens</th>
+                                    <th>Cache Write</th>
+                                    <th>Cache Read</th>
                                     <th>Duration</th>
+                                    <th>Est. Cost</th>
                                 </tr>
                             </thead>
                             <tbody id="recentLogsBody"></tbody>
@@ -743,6 +845,73 @@
 
                     const data = await response.json();
 
+                    // Helper function to calculate cost based on model
+                    function calculateCost(
+                        model,
+                        inputTokens,
+                        outputTokens,
+                        cacheWriteTokens,
+                        cacheReadTokens,
+                    ) {
+                        const modelLower = (model || "").toLowerCase();
+                        let inputRate,
+                            outputRate,
+                            cacheWriteRate,
+                            cacheReadRate;
+
+                        if (modelLower.includes("sonnet")) {
+                            inputRate = 3 / 1_000_000;
+                            outputRate = 15 / 1_000_000;
+                            cacheWriteRate = 3.75 / 1_000_000;
+                            cacheReadRate = 0.3 / 1_000_000;
+                        } else if (modelLower.includes("opus")) {
+                            inputRate = 5 / 1_000_000;
+                            outputRate = 25 / 1_000_000;
+                            cacheWriteRate = 6.25 / 1_000_000;
+                            cacheReadRate = 0.5 / 1_000_000;
+                        } else {
+                            inputRate = 1 / 1_000_000;
+                            outputRate = 1 / 1_000_000;
+                            cacheWriteRate = 1 / 1_000_000;
+                            cacheReadRate = 1 / 1_000_000;
+                        }
+
+                        return {
+                            inputCost: inputTokens * inputRate,
+                            outputCost: outputTokens * outputRate,
+                            cacheWriteCost: cacheWriteTokens * cacheWriteRate,
+                            cacheReadCost: cacheReadTokens * cacheReadRate,
+                        };
+                    }
+
+                    // Calculate aggregate costs (using average model pricing - sonnet as default)
+                    const totalCosts = calculateCost(
+                        "sonnet",
+                        data.summary.total_input_tokens,
+                        data.summary.total_output_tokens,
+                        data.summary.total_cache_write_tokens || 0,
+                        data.summary.total_cache_read_tokens || 0,
+                    );
+
+                    const dailyCosts = calculateCost(
+                        "sonnet",
+                        data.summary.daily_input_tokens,
+                        data.summary.daily_output_tokens,
+                        data.summary.daily_cache_write_tokens || 0,
+                        data.summary.daily_cache_read_tokens || 0,
+                    );
+
+                    const totalCost =
+                        totalCosts.inputCost +
+                        totalCosts.outputCost +
+                        totalCosts.cacheWriteCost +
+                        totalCosts.cacheReadCost;
+                    const dailyCost =
+                        dailyCosts.inputCost +
+                        dailyCosts.outputCost +
+                        dailyCosts.cacheWriteCost +
+                        dailyCosts.cacheReadCost;
+
                     // Update summary cards
                     document.getElementById("dailyRequests").textContent =
                         data.summary.daily_requests.toLocaleString();
@@ -752,30 +921,80 @@
                         data.summary.total_input_tokens.toLocaleString();
                     document.getElementById("totalOutput").textContent =
                         data.summary.total_output_tokens.toLocaleString();
+                    document.getElementById("totalCacheWrite").textContent = (
+                        data.summary.total_cache_write_tokens || 0
+                    ).toLocaleString();
+                    document.getElementById("totalCacheRead").textContent = (
+                        data.summary.total_cache_read_tokens || 0
+                    ).toLocaleString();
                     document.getElementById("dailyInput").textContent =
                         data.summary.daily_input_tokens.toLocaleString();
                     document.getElementById("dailyOutput").textContent =
                         data.summary.daily_output_tokens.toLocaleString();
+                    document.getElementById("dailyCacheWrite").textContent = (
+                        data.summary.daily_cache_write_tokens || 0
+                    ).toLocaleString();
+                    document.getElementById("dailyCacheRead").textContent = (
+                        data.summary.daily_cache_read_tokens || 0
+                    ).toLocaleString();
                     document.getElementById("keyCount").textContent =
                         data.summary.total_api_keys.toLocaleString() + " keys";
+
+                    // Update costs
+                    document.getElementById("totalInputCost").textContent =
+                        "$" + totalCosts.inputCost.toFixed(4);
+                    document.getElementById("totalOutputCost").textContent =
+                        "$" + totalCosts.outputCost.toFixed(4);
+                    document.getElementById("totalCacheWriteCost").textContent =
+                        "$" + totalCosts.cacheWriteCost.toFixed(4);
+                    document.getElementById("totalCacheReadCost").textContent =
+                        "$" + totalCosts.cacheReadCost.toFixed(4);
+                    document.getElementById("dailyInputCost").textContent =
+                        "$" + dailyCosts.inputCost.toFixed(4);
+                    document.getElementById("dailyOutputCost").textContent =
+                        "$" + dailyCosts.outputCost.toFixed(4);
+                    document.getElementById("dailyCacheWriteCost").textContent =
+                        "$" + dailyCosts.cacheWriteCost.toFixed(4);
+                    document.getElementById("dailyCacheReadCost").textContent =
+                        "$" + dailyCosts.cacheReadCost.toFixed(4);
+                    document.getElementById("totalCost").textContent =
+                        "$" + totalCost.toFixed(2);
+                    document.getElementById("dailyCost").textContent =
+                        "$" + dailyCost.toFixed(2);
 
                     // Update table
                     const tbody = document.getElementById("apiKeysBody");
                     tbody.innerHTML = data.api_keys
-                        .map(
-                            (key) => `
+                        .map((key) => {
+                            const keyCosts = calculateCost(
+                                "sonnet",
+                                key.total_input_tokens,
+                                key.total_output_tokens,
+                                key.total_cache_write_tokens || 0,
+                                key.total_cache_read_tokens || 0,
+                            );
+                            const keyTotalCost =
+                                keyCosts.inputCost +
+                                keyCosts.outputCost +
+                                keyCosts.cacheWriteCost +
+                                keyCosts.cacheReadCost;
+                            return `
                     <tr>
                         <td><strong>${key.name}</strong></td>
-                        <td><span class="api-key">${key.api_key}</span></td>
                         <td>${key.daily_requests.toLocaleString()}</td>
                         <td>${key.total_requests.toLocaleString()}</td>
                         <td>${key.daily_input_tokens.toLocaleString()}</td>
                         <td>${key.daily_output_tokens.toLocaleString()}</td>
+                        <td>${(key.daily_cache_write_tokens || 0).toLocaleString()}</td>
+                        <td>${(key.daily_cache_read_tokens || 0).toLocaleString()}</td>
                         <td>${key.total_input_tokens.toLocaleString()}</td>
                         <td>${key.total_output_tokens.toLocaleString()}</td>
+                        <td>${(key.total_cache_write_tokens || 0).toLocaleString()}</td>
+                        <td>${(key.total_cache_read_tokens || 0).toLocaleString()}</td>
+                        <td>$${keyTotalCost.toFixed(2)}</td>
                     </tr>
-                `,
-                        )
+                `;
+                        })
                         .join("");
 
                     if (data.recent_logs && data.recent_logs.length > 0) {
@@ -787,22 +1006,37 @@
                                 const timeStr = date.toLocaleTimeString();
                                 const dateStr = date.toLocaleDateString();
 
+                                const logCosts = calculateCost(
+                                    log.model,
+                                    log.input_tokens,
+                                    log.output_tokens,
+                                    log.cache_write_tokens || 0,
+                                    log.cache_read_tokens || 0,
+                                );
+                                const logTotalCost =
+                                    logCosts.inputCost +
+                                    logCosts.outputCost +
+                                    logCosts.cacheWriteCost +
+                                    logCosts.cacheReadCost;
+
                                 return `
                             <tr>
                                 <td class="timestamp">${dateStr} ${timeStr}</td>
                                 <td><strong>${log.name}</strong></td>
-                                <td><span class="api-key">${log.api_key}</span></td>
                                 <td><span class="model-badge">${log.model}</span></td>
                                 <td>${log.input_tokens.toLocaleString()}</td>
                                 <td>${log.output_tokens.toLocaleString()}</td>
+                                <td>${(log.cache_write_tokens || 0).toLocaleString()}</td>
+                                <td>${(log.cache_read_tokens || 0).toLocaleString()}</td>
                                 <td>${log.duration.toFixed(2)}s</td>
+                                <td>$${logTotalCost.toFixed(4)}</td>
                             </tr>
                         `;
                             })
                             .join("");
                     } else {
                         document.getElementById("recentLogsBody").innerHTML =
-                            '<tr><td colspan="8" style="text-align: center; padding: 20px; color: #666;">No recent requests</td></tr>';
+                            '<tr><td colspan="10" style="text-align: center; padding: 20px; color: #666;">No recent requests</td></tr>';
                     }
 
                     document.getElementById("loading").style.display = "none";

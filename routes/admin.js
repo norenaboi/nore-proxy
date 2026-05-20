@@ -69,13 +69,16 @@ router.get("/api/logs", verifySession, async (req, res) => {
     const stats = apiKeyManager.getUsageStats(apiKey);
     dashboardData.push({
       name: apiKeyManager.getKeyName(apiKey),
-      api_key: apiKey.length > 5 ? apiKey.substring(0, 5) + "..." : apiKey,
       total_requests: stats.total_requests,
       daily_requests: stats.daily_requests || 0,
       total_input_tokens: stats.total_input_tokens || 0,
       total_output_tokens: stats.total_output_tokens || 0,
+      total_cache_write_tokens: stats.total_cache_write_tokens || 0,
+      total_cache_read_tokens: stats.total_cache_read_tokens || 0,
       daily_input_tokens: stats.daily_input_tokens || 0,
       daily_output_tokens: stats.daily_output_tokens || 0,
+      daily_cache_write_tokens: stats.daily_cache_write_tokens || 0,
+      daily_cache_read_tokens: stats.daily_cache_read_tokens || 0,
     });
   }
 
@@ -99,6 +102,8 @@ router.get("/api/logs", verifySession, async (req, res) => {
         model: log.model || "Unknown",
         input_tokens: log.input_tokens || 0,
         output_tokens: log.output_tokens || 0,
+        cache_write_tokens: log.cache_write_tokens || 0,
+        cache_read_tokens: log.cache_read_tokens || 0,
         total_tokens: (log.input_tokens || 0) + (log.output_tokens || 0),
         duration: log.duration || 0,
       };
@@ -118,12 +123,28 @@ router.get("/api/logs", verifySession, async (req, res) => {
       (sum, d) => sum + d.total_output_tokens,
       0,
     ),
+    total_cache_write_tokens: dashboardData.reduce(
+      (sum, d) => sum + d.total_cache_write_tokens,
+      0,
+    ),
+    total_cache_read_tokens: dashboardData.reduce(
+      (sum, d) => sum + d.total_cache_read_tokens,
+      0,
+    ),
     daily_input_tokens: dashboardData.reduce(
       (sum, d) => sum + d.daily_input_tokens,
       0,
     ),
     daily_output_tokens: dashboardData.reduce(
       (sum, d) => sum + d.daily_output_tokens,
+      0,
+    ),
+    daily_cache_write_tokens: dashboardData.reduce(
+      (sum, d) => sum + d.daily_cache_write_tokens,
+      0,
+    ),
+    daily_cache_read_tokens: dashboardData.reduce(
+      (sum, d) => sum + d.daily_cache_read_tokens,
       0,
     ),
   };
@@ -543,8 +564,12 @@ router.get("/api/users", verifySession, async (req, res) => {
         total_requests: stats.total_requests || 0,
         total_input_tokens: stats.total_input_tokens || 0,
         total_output_tokens: stats.total_output_tokens || 0,
+        total_cache_write_tokens: stats.total_cache_write_tokens || 0,
+        total_cache_read_tokens: stats.total_cache_read_tokens || 0,
         daily_input_tokens: stats.daily_input_tokens || 0,
         daily_output_tokens: stats.daily_output_tokens || 0,
+        daily_cache_write_tokens: stats.daily_cache_write_tokens || 0,
+        daily_cache_read_tokens: stats.daily_cache_read_tokens || 0,
       });
     }
 
@@ -598,6 +623,8 @@ router.get("/api/users/:apiKey", verifySession, async (req, res) => {
         model: log.model || "Unknown",
         input_tokens: log.input_tokens || 0,
         output_tokens: log.output_tokens || 0,
+        cache_write_tokens: log.cache_write_tokens || 0,
+        cache_read_tokens: log.cache_read_tokens || 0,
         total_tokens: (log.input_tokens || 0) + (log.output_tokens || 0),
         duration: log.duration || 0,
       }))
@@ -612,8 +639,12 @@ router.get("/api/users/:apiKey", verifySession, async (req, res) => {
       total_requests: stats.total_requests || 0,
       total_input_tokens: stats.total_input_tokens || 0,
       total_output_tokens: stats.total_output_tokens || 0,
+      total_cache_write_tokens: stats.total_cache_write_tokens || 0,
+      total_cache_read_tokens: stats.total_cache_read_tokens || 0,
       daily_input_tokens: stats.daily_input_tokens || 0,
       daily_output_tokens: stats.daily_output_tokens || 0,
+      daily_cache_write_tokens: stats.daily_cache_write_tokens || 0,
+      daily_cache_read_tokens: stats.daily_cache_read_tokens || 0,
       recent_requests: userLogs,
     });
   } catch (error) {
