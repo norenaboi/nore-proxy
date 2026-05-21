@@ -505,25 +505,6 @@
             </div>
 
             <div id="content" style="display: none">
-                <div class="stats-overview">
-                    <div class="stat-card">
-                        <h3>Total Models</h3>
-                        <div class="value" id="totalModels">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Total Requests</h3>
-                        <div class="value" id="totalRequests">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Total Tokens</h3>
-                        <div class="value" id="totalTokens">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Total Errors</h3>
-                        <div class="value" id="totalErrors">0</div>
-                    </div>
-                </div>
-
                 <div class="models-table-card">
                     <div class="table-header">
                         <h2>
@@ -549,9 +530,33 @@
                                 </th>
                                 <th
                                     class="sortable"
-                                    onclick="sortTable('tokens')"
+                                    onclick="sortTable('input_tokens')"
+                                >
+                                    Input Tokens
+                                </th>
+                                <th
+                                    class="sortable"
+                                    onclick="sortTable('output_tokens')"
+                                >
+                                    Output Tokens
+                                </th>
+                                <th
+                                    class="sortable"
+                                    onclick="sortTable('cache_tokens')"
+                                >
+                                    Cache Tokens
+                                </th>
+                                <th
+                                    class="sortable"
+                                    onclick="sortTable('total_tokens')"
                                 >
                                     Total Tokens
+                                </th>
+                                <th
+                                    class="sortable"
+                                    onclick="sortTable('cost')"
+                                >
+                                    Cost
                                 </th>
                                 <th
                                     class="sortable"
@@ -559,7 +564,6 @@
                                 >
                                     Errors
                                 </th>
-                                <th style="width: 200px">Usage</th>
                             </tr>
                         </thead>
                         <tbody id="modelsTableBody"></tbody>
@@ -570,7 +574,7 @@
 
         <script>
             let modelsData = [];
-            let sortColumn = "requests";
+            let sortColumn = "total_tokens";
             let sortDirection = "desc";
 
             async function logout() {
@@ -578,13 +582,70 @@
                 window.location.href = "/admin/login";
             }
 
+            function calculateCost(
+                model,
+                inputTokens,
+                outputTokens,
+                cacheWriteTokens,
+                cacheReadTokens,
+            ) {
+                const modelLower = (model || "").toLowerCase();
+                let inputRate, outputRate, cacheWriteRate, cacheReadRate;
+
+                if (modelLower.includes("sonnet")) {
+                    inputRate = 3 / 1_000_000;
+                    outputRate = 15 / 1_000_000;
+                    cacheWriteRate = 3.75 / 1_000_000;
+                    cacheReadRate = 0.3 / 1_000_000;
+                } else if (modelLower.includes("opus")) {
+                    inputRate = 15 / 1_000_000;
+                    outputRate = 75 / 1_000_000;
+                    cacheWriteRate = 18.75 / 1_000_000;
+                    cacheReadRate = 1.5 / 1_000_000;
+                } else if (modelLower.includes("haiku")) {
+                    inputRate = 0.8 / 1_000_000;
+                    outputRate = 4 / 1_000_000;
+                    cacheWriteRate = 1 / 1_000_000;
+                    cacheReadRate = 0.08 / 1_000_000;
+                } else {
+                    // Default rates (Sonnet)
+                    inputRate = 3 / 1_000_000;
+                    outputRate = 15 / 1_000_000;
+                    cacheWriteRate = 3.75 / 1_000_000;
+                    cacheReadRate = 0.3 / 1_000_000;
+                }
+
+                // Calculate normal input tokens (excluding cache write and cache read tokens)
+                const normalInputTokens =
+                    inputTokens - cacheWriteTokens - cacheReadTokens;
+
+                const inputCost = normalInputTokens * inputRate;
+                const outputCost = outputTokens * outputRate;
+                const cacheWriteCost = cacheWriteTokens * cacheWriteRate;
+                const cacheReadCost = cacheReadTokens * cacheReadRate;
+
+                return inputCost + outputCost + cacheWriteCost + cacheReadCost;
+            }
+
             async function loadModelUsage() {
                 try {
                     const response = await fetch("/api/model-usage");
                     const data = await response.json();
 
-                    modelsData = data.models;
-                    updateStats(data);
+                    // Calculate cost for each model
+                    modelsData = data.models.map((model) => ({
+                        ...model,
+                        cost: calculateCost(
+                            model.model,
+                            model.input_tokens,
+                            model.output_tokens,
+                            model.cache_write_tokens,
+                            model.cache_read_tokens,
+                        ),
+                        cache_tokens:
+                            model.cache_write_tokens + model.cache_read_tokens,
+                    }));
+
                     sortAndRenderTable();
 
                     document.getElementById("loading").style.display = "none";
@@ -594,17 +655,6 @@
                     document.getElementById("loading").innerHTML =
                         '<div class="empty-state"><i class="fa-solid fa-exclamation-triangle"></i><p>Error loading model usage</p></div>';
                 }
-            }
-
-            function updateStats(data) {
-                document.getElementById("totalModels").textContent =
-                    data.total_models.toLocaleString();
-                document.getElementById("totalRequests").textContent =
-                    data.total_requests.toLocaleString();
-                document.getElementById("totalTokens").textContent =
-                    formatNumber(data.total_tokens);
-                document.getElementById("totalErrors").textContent =
-                    data.total_errors.toLocaleString();
             }
 
             function sortTable(column) {
@@ -642,17 +692,33 @@
                             aVal = a.requests;
                             bVal = b.requests;
                             break;
-                        case "tokens":
-                            aVal = a.tokens;
-                            bVal = b.tokens;
+                        case "input_tokens":
+                            aVal = a.input_tokens;
+                            bVal = b.input_tokens;
+                            break;
+                        case "output_tokens":
+                            aVal = a.output_tokens;
+                            bVal = b.output_tokens;
+                            break;
+                        case "cache_tokens":
+                            aVal = a.cache_tokens;
+                            bVal = b.cache_tokens;
+                            break;
+                        case "total_tokens":
+                            aVal = a.total_tokens;
+                            bVal = b.total_tokens;
+                            break;
+                        case "cost":
+                            aVal = a.cost;
+                            bVal = b.cost;
                             break;
                         case "errors":
                             aVal = a.errors;
                             bVal = b.errors;
                             break;
                         default:
-                            aVal = a.requests;
-                            bVal = b.requests;
+                            aVal = a.total_tokens;
+                            bVal = b.total_tokens;
                     }
 
                     if (sortColumn === "model") {
@@ -674,12 +740,9 @@
 
                 if (models.length === 0) {
                     tbody.innerHTML =
-                        '<tr><td colspan="6" class="empty-state"><i class="fa-solid fa-inbox"></i><p>No model usage data available</p></td></tr>';
+                        '<tr><td colspan="9" class="empty-state"><i class="fa-solid fa-inbox"></i><p>No model usage data available</p></td></tr>';
                     return;
                 }
-
-                // Calculate max for usage bar
-                const maxRequests = Math.max(...models.map((m) => m.requests));
 
                 tbody.innerHTML = models
                     .map((model, index) => {
@@ -692,10 +755,6 @@
                                   : rank === 3
                                     ? "top-3"
                                     : "other";
-                        const usagePercent =
-                            maxRequests > 0
-                                ? (model.requests / maxRequests) * 100
-                                : 0;
 
                         return `
                         <tr>
@@ -709,15 +768,22 @@
                                 <span class="metric-value requests">${model.requests.toLocaleString()}</span>
                             </td>
                             <td>
-                                <span class="metric-value tokens">${formatNumber(model.tokens)}</span>
+                                <span class="metric-value tokens">${formatNumber(model.input_tokens)}</span>
+                            </td>
+                            <td>
+                                <span class="metric-value tokens">${formatNumber(model.output_tokens)}</span>
+                            </td>
+                            <td>
+                                <span class="metric-value tokens" title="Write: ${formatNumber(model.cache_write_tokens)}, Read: ${formatNumber(model.cache_read_tokens)}">${formatNumber(model.cache_tokens)}</span>
+                            </td>
+                            <td>
+                                <span class="metric-value tokens">${formatNumber(model.total_tokens)}</span>
+                            </td>
+                            <td>
+                                <span class="metric-value">$${model.cost.toFixed(2)}</span>
                             </td>
                             <td>
                                 <span class="metric-value errors">${model.errors.toLocaleString()}</span>
-                            </td>
-                            <td>
-                                <div class="usage-bar">
-                                    <div class="usage-bar-fill" style="width: ${usagePercent}%"></div>
-                                </div>
                             </td>
                         </tr>
                     `;

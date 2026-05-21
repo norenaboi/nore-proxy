@@ -1,4 +1,4 @@
-import Config from '../config/index.js';
+import Config from "../config/index.js";
 
 class RealtimeStats {
   constructor() {

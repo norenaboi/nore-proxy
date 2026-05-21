@@ -654,37 +654,73 @@ router.get("/api/users/:apiKey", verifySession, async (req, res) => {
 });
 
 /*
-    GET for model usage statistics
+    GET for model usage statistics from database
 */
 
-// Get model usage statistics
+// Get model usage statistics from database
 router.get("/api/model-usage", verifySession, async (req, res) => {
   try {
-    const modelUsageMap = realtimeStats.modelUsage;
-    const models = [];
+    // Query all request_end logs from database
+    const query = `
+      SELECT
+        model,
+        COUNT(*) as request_count,
+        SUM(CASE WHEN json_extract(data, '$.status') = 'success' THEN 1 ELSE 0 END) as success_count,
+        SUM(CASE WHEN json_extract(data, '$.status') = 'failed' THEN 1 ELSE 0 END) as error_count,
+        SUM(CAST(json_extract(data, '$.input_tokens') AS INTEGER)) as total_input_tokens,
+        SUM(CAST(json_extract(data, '$.output_tokens') AS INTEGER)) as total_output_tokens,
+        SUM(CAST(json_extract(data, '$.cache_write_tokens') AS INTEGER)) as total_cache_write_tokens,
+        SUM(CAST(json_extract(data, '$.cache_read_tokens') AS INTEGER)) as total_cache_read_tokens
+      FROM request_logs
+      WHERE type = 'request_end' AND model IS NOT NULL
+      GROUP BY model
+      ORDER BY total_input_tokens + total_output_tokens DESC
+    `;
 
-    // Convert Map to array
-    for (const [modelName, stats] of modelUsageMap.entries()) {
-      models.push({
-        model: modelName,
-        requests: stats.requests || 0,
-        tokens: stats.tokens || 0,
-        errors: stats.errors || 0,
-      });
-    }
+    const rows = logManager.db.prepare(query).all();
 
-    // Sort by total tokens descending (you can change this to requests if preferred)
-    models.sort((a, b) => b.tokens - a.tokens);
+    const models = rows.map((row) => ({
+      model: row.model,
+      requests: row.request_count || 0,
+      success_count: row.success_count || 0,
+      errors: row.error_count || 0,
+      input_tokens: row.total_input_tokens || 0,
+      output_tokens: row.total_output_tokens || 0,
+      cache_write_tokens: row.total_cache_write_tokens || 0,
+      cache_read_tokens: row.total_cache_read_tokens || 0,
+      total_tokens:
+        (row.total_input_tokens || 0) +
+        (row.total_output_tokens || 0) +
+        (row.total_cache_write_tokens || 0) +
+        (row.total_cache_read_tokens || 0),
+    }));
 
     // Calculate totals
     const totals = models.reduce(
       (acc, model) => ({
         total_models: acc.total_models + 1,
         total_requests: acc.total_requests + model.requests,
-        total_tokens: acc.total_tokens + model.tokens,
+        total_success: acc.total_success + model.success_count,
         total_errors: acc.total_errors + model.errors,
+        total_input_tokens: acc.total_input_tokens + model.input_tokens,
+        total_output_tokens: acc.total_output_tokens + model.output_tokens,
+        total_cache_write_tokens:
+          acc.total_cache_write_tokens + model.cache_write_tokens,
+        total_cache_read_tokens:
+          acc.total_cache_read_tokens + model.cache_read_tokens,
+        total_tokens: acc.total_tokens + model.total_tokens,
       }),
-      { total_models: 0, total_requests: 0, total_tokens: 0, total_errors: 0 },
+      {
+        total_models: 0,
+        total_requests: 0,
+        total_success: 0,
+        total_errors: 0,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cache_write_tokens: 0,
+        total_cache_read_tokens: 0,
+        total_tokens: 0,
+      },
     );
 
     res.json({
