@@ -11,46 +11,41 @@ const router = express.Router();
 
 router.get("/v1/models", async (req, res) => {
   const modelsData = [];
-  const modelAliases = {};
 
   try {
-    const filePath = path.join(__dirname, "..", "allowed_models.txt");
-    const content = fs.readFileSync(filePath, "utf-8");
-    const lines = content.split("\n");
+    const jsonPath = path.join(__dirname, "..", "models.json");
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith("#")) {
-        let displayName;
+    if (fs.existsSync(jsonPath)) {
+      const content = fs.readFileSync(jsonPath, "utf-8");
+      const data = JSON.parse(content);
 
-        if (trimmed.includes(":")) {
-          const [alias, actualName] = trimmed.split(":", 2);
-          modelAliases[alias.trim()] = actualName.trim();
-          displayName = alias.trim();
-        } else {
-          displayName = trimmed;
-        }
-
+      for (const [displayName, modelConfig] of Object.entries(
+        data.models || {},
+      )) {
         modelsData.push({
           id: displayName,
           object: "model",
           created: Math.floor(Date.now() / 1000),
           owned_by: "nore-proxy",
           type: "chat",
+          pricing: modelConfig.pricing || null,
+        });
+      }
+    } else {
+      // Fall back to in-memory registry
+      for (const [modelName, modelInfo] of Object.entries(MODEL_REGISTRY)) {
+        modelsData.push({
+          id: modelName,
+          object: "model",
+          created: Math.floor(Date.now() / 1000),
+          owned_by: "nore-proxy",
+          type: modelInfo.type || "chat",
+          pricing: null,
         });
       }
     }
   } catch (error) {
-    // If no file exists, return models from registry
-    for (const [modelName, modelInfo] of Object.entries(MODEL_REGISTRY)) {
-      modelsData.push({
-        id: modelName,
-        object: "model",
-        created: Math.floor(Date.now() / 1000),
-        owned_by: "nore-proxy",
-        type: modelInfo.type || "chat",
-      });
-    }
+    console.error("Error reading models:", error);
   }
 
   res.json({

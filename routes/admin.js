@@ -8,8 +8,8 @@ import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
 import Config from "../config/index.js";
 import { loadModelsFromFile } from "../utils/helpers.js";
+import { calculateCost } from "../utils/logging.js";
 import settingsManager from "../services/settingsManager.js";
-import realtimeStats from "../services/realtimeStats.js";
 import crypto from "crypto";
 import { createSession, deleteSession } from "../services/sessionManager.js";
 
@@ -61,12 +61,86 @@ router.post("/admin/logout", (req, res) => {
 */
 
 // Get logs
+/**
+ * Sum costs from an array of log entries, calculating per-model to respect different pricing.
+ * Returns { total_cost, daily_cost } where daily = entries from the last 24 h.
+ */
+function computeCostsFromLogs(logs) {
+  const currentTime = Date.now() / 1000;
+  const dayAgo = currentTime - 86400;
+
+  let totalCost = 0;
+  let totalInputCost = 0;
+  let totalOutputCost = 0;
+  let totalCacheWriteCost = 0;
+  let totalCacheReadCost = 0;
+
+  let dailyCost = 0;
+  let dailyInputCost = 0;
+  let dailyOutputCost = 0;
+  let dailyCacheWriteCost = 0;
+  let dailyCacheReadCost = 0;
+
+  for (const log of logs) {
+    if (log.type !== "request_end" || log.status !== "success") continue;
+    const costs = calculateCost(
+      log.model || "unknown",
+      log.input_tokens || 0,
+      log.output_tokens || 0,
+      log.cache_write_tokens || 0,
+      log.cache_read_tokens || 0,
+    );
+    totalCost += costs.totalCost;
+    totalInputCost += costs.inputCost;
+    totalOutputCost += costs.outputCost;
+    totalCacheWriteCost += costs.cacheWriteCost;
+    totalCacheReadCost += costs.cacheReadCost;
+
+    if ((log.timestamp || 0) > dayAgo) {
+      dailyCost += costs.totalCost;
+      dailyInputCost += costs.inputCost;
+      dailyOutputCost += costs.outputCost;
+      dailyCacheWriteCost += costs.cacheWriteCost;
+      dailyCacheReadCost += costs.cacheReadCost;
+    }
+  }
+
+  return {
+    total_cost: totalCost,
+    total_input_cost: totalInputCost,
+    total_output_cost: totalOutputCost,
+    total_cache_write_cost: totalCacheWriteCost,
+    total_cache_read_cost: totalCacheReadCost,
+    daily_cost: dailyCost,
+    daily_input_cost: dailyInputCost,
+    daily_output_cost: dailyOutputCost,
+    daily_cache_write_cost: dailyCacheWriteCost,
+    daily_cache_read_cost: dailyCacheReadCost,
+  };
+}
+
 router.get("/api/logs", verifySession, async (req, res) => {
   const allApiKeys = apiKeyManager.keys;
   const dashboardData = [];
 
+  const allLogs = logManager.readRequestLogs(10000);
+  const currentTime = Date.now() / 1000;
+  const dayAgo = currentTime - 86400;
+
   for (const apiKey of Object.keys(allApiKeys)) {
     const stats = apiKeyManager.getUsageStats(apiKey);
+
+    // Compute masked key used in logs for this API key
+    const maskedKey =
+      apiKey && apiKey.length > 8
+        ? apiKey.substring(0, 5) + "..." + apiKey.substring(apiKey.length - 3)
+        : apiKey
+          ? "****"
+          : apiKey;
+
+    const keyLogs = allLogs.filter((l) => l.api_key === maskedKey);
+    const { total_cost, daily_cost } = computeCostsFromLogs(keyLogs);
+
     dashboardData.push({
       name: apiKeyManager.getKeyName(apiKey),
       total_requests: stats.total_requests,
@@ -79,6 +153,8 @@ router.get("/api/logs", verifySession, async (req, res) => {
       daily_output_tokens: stats.daily_output_tokens || 0,
       daily_cache_write_tokens: stats.daily_cache_write_tokens || 0,
       daily_cache_read_tokens: stats.daily_cache_read_tokens || 0,
+      total_cost,
+      daily_cost,
     });
   }
 
@@ -110,6 +186,8 @@ router.get("/api/logs", verifySession, async (req, res) => {
     })
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, 50);
+
+  const summaryCosts = computeCostsFromLogs(allLogs);
 
   const totals = {
     total_api_keys: Object.keys(allApiKeys).length,
@@ -147,6 +225,16 @@ router.get("/api/logs", verifySession, async (req, res) => {
       (sum, d) => sum + d.daily_cache_read_tokens,
       0,
     ),
+    total_cost: summaryCosts.total_cost,
+    total_input_cost: summaryCosts.total_input_cost,
+    total_output_cost: summaryCosts.total_output_cost,
+    total_cache_write_cost: summaryCosts.total_cache_write_cost,
+    total_cache_read_cost: summaryCosts.total_cache_read_cost,
+    daily_cost: summaryCosts.daily_cost,
+    daily_input_cost: summaryCosts.daily_input_cost,
+    daily_output_cost: summaryCosts.daily_output_cost,
+    daily_cache_write_cost: summaryCosts.daily_cache_write_cost,
+    daily_cache_read_cost: summaryCosts.daily_cache_read_cost,
   };
 
   res.json({
@@ -234,20 +322,31 @@ router.delete("/api/keys", verifySession, async (req, res) => {
 });
 
 /*
-    GET PUT POST DELETE for allowed_models.txt
+    GET PUT POST DELETE for models.json
 */
 
 // Get all models
 router.get("/api/models", verifySession, async (req, res) => {
   try {
-    const modelsPath = path.join(__dirname, "../allowed_models.txt");
-    const content = fs.existsSync(modelsPath)
-      ? fs.readFileSync(modelsPath, "utf-8")
-      : "";
-    const models = content
-      .split("\n")
-      .map((line) => line.replace(/\r/g, "").trim()) // Remove \r and trim
-      .filter((line) => line && !line.startsWith("#"));
+    const jsonPath = path.join(__dirname, "../models.json");
+
+    if (!fs.existsSync(jsonPath)) {
+      return res.json({ models: [] });
+    }
+
+    const content = fs.readFileSync(jsonPath, "utf-8");
+    const data = JSON.parse(content);
+    const models = Object.entries(data.models || {}).map(([name, config]) => ({
+      name,
+      backend: config.backend || name,
+      version: config.version || "",
+      pricing: config.pricing || {
+        input: 0,
+        output: 0,
+        cache_write: 0,
+        cache_read: 0,
+      },
+    }));
     res.json({ models });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -257,20 +356,33 @@ router.get("/api/models", verifySession, async (req, res) => {
 // Add model
 router.post("/api/models", verifySession, async (req, res) => {
   try {
-    const model = (req.body.model || "").trim();
-    if (!model) return res.status(400).json({ error: "Model name required" });
+    const { name, backend, version, pricing } = req.body;
+    if (!name) return res.status(400).json({ error: "Model name required" });
 
-    const modelsPath = path.join(__dirname, "../allowed_models.txt");
-    const content = fs.existsSync(modelsPath)
-      ? fs.readFileSync(modelsPath, "utf-8")
-      : "";
-    const models = content.split("\n").filter((line) => line.trim());
+    const jsonPath = path.join(__dirname, "../models.json");
+    let data = { models: {} };
 
-    if (models.includes(model))
+    if (fs.existsSync(jsonPath)) {
+      const content = fs.readFileSync(jsonPath, "utf-8");
+      data = JSON.parse(content);
+    }
+
+    if (data.models[name]) {
       return res.status(400).json({ error: "Model already exists" });
+    }
 
-    models.push(model);
-    fs.writeFileSync(modelsPath, models.join("\n"));
+    data.models[name] = {
+      backend: backend || name,
+      version: version || "",
+      pricing: pricing || {
+        input: 1,
+        output: 1,
+        cache_write: 1,
+        cache_read: 1,
+      },
+    };
+
+    fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
     loadModelsFromFile();
     res.json({ message: "Model added" });
   } catch (error) {
@@ -281,21 +393,41 @@ router.post("/api/models", verifySession, async (req, res) => {
 // Update model
 router.put("/api/models", verifySession, async (req, res) => {
   try {
-    const oldModel = (req.body.oldModel || "").replace(/\r/g, "").trim();
-    const newModel = (req.body.newModel || "").replace(/\r/g, "").trim();
+    const { oldName, name, backend, version, pricing } = req.body;
 
-    if (!oldModel || !newModel) {
-      return res.status(400).json({ error: "Both model names required" });
+    if (!oldName) {
+      return res.status(400).json({ error: "Old model name required" });
     }
 
-    const modelsPath = path.join(__dirname, "../allowed_models.txt");
-    const content = fs.readFileSync(modelsPath, "utf-8");
-    const models = content.split("\n").map((line) => {
-      const cleanLine = line.replace(/\r/g, "").trim();
-      return cleanLine === oldModel ? newModel : cleanLine;
-    });
+    const jsonPath = path.join(__dirname, "../models.json");
+    if (!fs.existsSync(jsonPath)) {
+      return res.status(404).json({ error: "Models file not found" });
+    }
 
-    fs.writeFileSync(modelsPath, models.join("\n"));
+    const content = fs.readFileSync(jsonPath, "utf-8");
+    const data = JSON.parse(content);
+
+    if (!data.models[oldName]) {
+      return res.status(404).json({ error: "Model not found" });
+    }
+
+    // If name changed, delete old and create new
+    if (oldName !== name) {
+      delete data.models[oldName];
+    }
+
+    data.models[name] = {
+      backend: backend || name,
+      version: version || "",
+      pricing: pricing || {
+        input: 1,
+        output: 1,
+        cache_write: 1,
+        cache_read: 1,
+      },
+    };
+
+    fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
     loadModelsFromFile();
     res.json({ message: "Model updated" });
   } catch (error) {
@@ -306,17 +438,23 @@ router.put("/api/models", verifySession, async (req, res) => {
 // Delete model
 router.delete("/api/models", verifySession, async (req, res) => {
   try {
-    const model = (req.body.model || "").replace(/\r/g, "").trim();
-    if (!model) return res.status(400).json({ error: "Model name required" });
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: "Model name required" });
 
-    const modelsPath = path.join(__dirname, "../allowed_models.txt");
-    const content = fs.readFileSync(modelsPath, "utf-8");
-    const models = content
-      .split("\n")
-      .map((line) => line.replace(/\r/g, "").trim())
-      .filter((line) => line !== model);
+    const jsonPath = path.join(__dirname, "../models.json");
+    if (!fs.existsSync(jsonPath)) {
+      return res.status(404).json({ error: "Models file not found" });
+    }
 
-    fs.writeFileSync(modelsPath, models.join("\n"));
+    const content = fs.readFileSync(jsonPath, "utf-8");
+    const data = JSON.parse(content);
+
+    if (!data.models[name]) {
+      return res.status(404).json({ error: "Model not found" });
+    }
+
+    delete data.models[name];
+    fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
     loadModelsFromFile();
     res.json({ message: "Model deleted" });
   } catch (error) {
@@ -600,7 +738,7 @@ router.get("/api/users/:apiKey", verifySession, async (req, res) => {
     }
 
     const stats = apiKeyManager.getUsageStats(fullApiKey);
-    const logs = logManager.readRequestLogs(1000);
+    const logs = logManager.readRequestLogs(10000);
 
     // Get masked key for log filtering
     const maskedKey =
@@ -611,13 +749,11 @@ router.get("/api/users/:apiKey", verifySession, async (req, res) => {
         : "****";
 
     // Filter logs for this user
-    const userLogs = logs
-      .filter(
-        (log) =>
-          log.api_key === maskedKey &&
-          log.type === "request_end" &&
-          log.status === "success",
-      )
+    const allUserLogs = logs.filter((log) => log.api_key === maskedKey);
+    const userCosts = computeCostsFromLogs(allUserLogs);
+
+    const userLogs = allUserLogs
+      .filter((log) => log.type === "request_end" && log.status === "success")
       .map((log) => ({
         timestamp: log.timestamp || 0,
         model: log.model || "Unknown",
@@ -645,6 +781,16 @@ router.get("/api/users/:apiKey", verifySession, async (req, res) => {
       daily_output_tokens: stats.daily_output_tokens || 0,
       daily_cache_write_tokens: stats.daily_cache_write_tokens || 0,
       daily_cache_read_tokens: stats.daily_cache_read_tokens || 0,
+      total_cost: userCosts.total_cost,
+      total_input_cost: userCosts.total_input_cost,
+      total_output_cost: userCosts.total_output_cost,
+      total_cache_write_cost: userCosts.total_cache_write_cost,
+      total_cache_read_cost: userCosts.total_cache_read_cost,
+      daily_cost: userCosts.daily_cost,
+      daily_input_cost: userCosts.daily_input_cost,
+      daily_output_cost: userCosts.daily_output_cost,
+      daily_cache_write_cost: userCosts.daily_cache_write_cost,
+      daily_cache_read_cost: userCosts.daily_cache_read_cost,
       recent_requests: userLogs,
     });
   } catch (error) {

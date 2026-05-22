@@ -392,6 +392,73 @@
             margin-top: 2px;
         }
 
+        .model-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .model-meta-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .model-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            font-family: 'Courier New', monospace;
+        }
+
+        .model-badge-backend {
+            background: var(--gray-100);
+            color: var(--gray-600);
+        }
+
+        .model-badge-version {
+            background: rgba(99,102,241,0.1);
+            color: var(--primary-dark);
+        }
+
+        .model-pricing {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .pricing-chip {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 3px;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 11px;
+            background: var(--gray-100);
+            color: var(--gray-600);
+        }
+
+        .pricing-chip .chip-label {
+            font-weight: 600;
+            color: var(--gray-500);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            font-size: 10px;
+        }
+
+        .pricing-chip .chip-val {
+            font-family: 'Courier New', monospace;
+            color: var(--gray-800);
+            font-weight: 500;
+        }
+
         .model-actions {
             display: flex;
             gap: 8px;
@@ -424,7 +491,7 @@
             background: white;
             border-radius: 16px;
             width: 100%;
-            max-width: 480px;
+            max-width: 560px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
             transform: scale(0.9);
             transition: transform 0.3s ease;
@@ -481,26 +548,29 @@
 
         /* Form Styles */
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 18px;
         }
 
         .form-label {
             display: block;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 500;
-            color: var(--gray-700);
-            margin-bottom: 8px;
+            color: var(--gray-500);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
         }
 
         .form-input {
             width: 100%;
-            padding: 12px 16px;
+            padding: 10px 14px;
             border: 1px solid var(--gray-200);
             border-radius: 10px;
             font-size: 14px;
             font-family: inherit;
             transition: all 0.2s ease;
             background: var(--gray-50);
+            color: var(--gray-800);
         }
 
         .form-input:focus {
@@ -510,10 +580,35 @@
             background: white;
         }
 
-        .form-hint {
-            font-size: 12px;
-            color: var(--gray-500);
-            margin-top: 6px;
+        .form-input::placeholder {
+            color: var(--gray-300);
+        }
+
+        .form-row {
+            display: grid;
+            gap: 12px;
+        }
+
+        .form-row-3 {
+            grid-template-columns: 1fr 1fr 1fr;
+        }
+
+        .form-row-2 {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .form-section-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--gray-400);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 12px 0 8px;
+            border-top: 1px solid var(--gray-100);
+            margin-top: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
         /* Toast Notification */
@@ -668,10 +763,47 @@
                     </button>
                 </div>
                 <div class="modal-body">
+                    <!-- Row 1: Display Name | Actual Name | Version -->
                     <div class="form-group">
-                        <label class="form-label">Model Name</label>
-                        <input type="text" id="modelInput" class="form-input" placeholder="e.g., claude-sonnet-4-20250514-v1">
-                        <p class="form-hint">For model mapping, use format: public_name:backend_name</p>
+                        <div class="form-row form-row-3">
+                            <div>
+                                <label class="form-label">Display Name</label>
+                                <input type="text" id="nameInput" class="form-input" placeholder="bedrock/claude-opus">
+                            </div>
+                            <div>
+                                <label class="form-label">Actual Name</label>
+                                <input type="text" id="backendInput" class="form-input" placeholder="anthropic/claude-opus">
+                            </div>
+                            <div>
+                                <label class="form-label">Version</label>
+                                <input type="text" id="versionInput" class="form-input" placeholder="v1">
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Pricing section -->
+                    <div class="form-section-label">
+                        <i class="fa-solid fa-tag" style="font-size:10px;"></i>
+                        Pricing &mdash; $/MTok &nbsp;<span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--gray-400);">(optional, leave blank for 0)</span>
+                    </div>
+                    <div class="form-group" style="margin-top:12px;">
+                        <div class="form-row form-row-2">
+                            <div>
+                                <label class="form-label">Input</label>
+                                <input type="number" id="pricingInputInput" class="form-input" placeholder="0" step="0.001" min="0">
+                            </div>
+                            <div>
+                                <label class="form-label">Output</label>
+                                <input type="number" id="pricingOutputInput" class="form-input" placeholder="0" step="0.001" min="0">
+                            </div>
+                            <div>
+                                <label class="form-label">Cache Write</label>
+                                <input type="number" id="pricingCacheWriteInput" class="form-input" placeholder="0" step="0.001" min="0">
+                            </div>
+                            <div>
+                                <label class="form-label">Cache Read</label>
+                                <input type="number" id="pricingCacheReadInput" class="form-input" placeholder="0" step="0.001" min="0">
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -752,32 +884,46 @@
             list.style.display = 'flex';
             emptyState.style.display = 'none';
 
-            list.innerHTML = models.map((model, index) => {
-                const hasMapping = model.includes(':');
-                const [publicName, backendName] = hasMapping ? model.split(':') : [model, null];
+            const fmt = (v) => (v != null && v !== '') ? `$${parseFloat(v).toFixed(2)}` : '$0.00';
 
-                // Use HTML entities for the quotes
-                const safeModel = JSON.stringify(model).replace(/"/g, '&quot;');
+            list.innerHTML = models.map((model) => {
+                const safeModelName = JSON.stringify(model.name).replace(/"/g, '&quot;');
+                const p = model.pricing || {};
+
+                const backendFull = model.version
+                    ? `${model.backend}-${model.version}`
+                    : model.backend;
+
+                const pricingHtml = `
+                    <div class="model-pricing">
+                        <span class="pricing-chip"><span class="chip-label">in</span><span class="chip-val">${fmt(p.input)}</span></span>
+                        <span class="pricing-chip"><span class="chip-label">out</span><span class="chip-val">${fmt(p.output)}</span></span>
+                        <span class="pricing-chip"><span class="chip-label">cw</span><span class="chip-val">${fmt(p.cache_write)}</span></span>
+                        <span class="pricing-chip"><span class="chip-label">cr</span><span class="chip-val">${fmt(p.cache_read)}</span></span>
+                    </div>`;
 
                 return `
                     <div class="model-item">
                         <div class="model-info">
-                            <div style="flex-direction: row; display: flex; gap: 20px;">
-                                <div class="model-name">${escapeHtml(publicName)}</div>
-                                ${backendName ? `<div class="model-mapping">→ ${escapeHtml(backendName)}</div>` : ''}
+                            <div class="model-icon"><i class="fa-solid fa-microchip"></i></div>
+                            <div class="model-meta">
+                                <div class="model-meta-row">
+                                    <span class="model-name">${escapeHtml(model.name)}</span>
+                                    ${backendFull ? `<span class="model-badge model-badge-backend">${escapeHtml(backendFull)}</span>` : ''}
+                                    ${model.version ? `<span class="model-badge model-badge-version">${escapeHtml(model.version)}</span>` : ''}
+                                </div>
+                                ${pricingHtml}
                             </div>
                         </div>
                         <div class="model-actions">
-                            <button class="btn btn-secondary btn-sm" onclick="openEditModal(${safeModel})">
-                                <i class="fa-solid fa-pen"></i>
-                                Edit
+                            <button class="btn btn-secondary btn-sm" onclick="openEditModal(${safeModelName})">
+                                <i class="fa-solid fa-pen"></i> Edit
                             </button>
-                            <button class="btn btn-danger btn-sm" onclick="openDeleteModal(${safeModel})">
+                            <button class="btn btn-danger btn-sm" onclick="openDeleteModal(${safeModelName})">
                                 <i class="fa-solid fa-trash"></i>
                             </button>
                         </div>
-                    </div>
-                `;
+                    </div>`;
             }).join('');
         }
 
@@ -785,16 +931,35 @@
             editingModel = null;
             document.getElementById('modalTitle').textContent = 'Add Model';
             document.getElementById('modalSubmit').textContent = 'Add Model';
-            document.getElementById('modelInput').value = '';
+            document.getElementById('nameInput').value = '';
+            document.getElementById('backendInput').value = '';
+            document.getElementById('versionInput').value = '';
+            document.getElementById('pricingInputInput').value = '';
+            document.getElementById('pricingOutputInput').value = '';
+            document.getElementById('pricingCacheWriteInput').value = '';
+            document.getElementById('pricingCacheReadInput').value = '';
             document.getElementById('modelModal').classList.add('active');
         }
 
-        function openEditModal(model) {
-            editingModel = model;
+        function openEditModal(modelName) {
+            // Find the model object by name
+            const model = models.find(m => m.name === modelName);
+            if (!model) {
+                showToast('Model not found', 'error');
+                return;
+            }
+
+            editingModel = modelName;
             console.log('Opening edit modal for:', model);
             document.getElementById('modalTitle').textContent = 'Edit Model';
             document.getElementById('modalSubmit').textContent = 'Save Changes';
-            document.getElementById('modelInput').value = model;
+            document.getElementById('nameInput').value = model.name || '';
+            document.getElementById('backendInput').value = model.backend || '';
+            document.getElementById('versionInput').value = model.version || '';
+            document.getElementById('pricingInputInput').value = model.pricing?.input || '';
+            document.getElementById('pricingOutputInput').value = model.pricing?.output || '';
+            document.getElementById('pricingCacheWriteInput').value = model.pricing?.cache_write || '';
+            document.getElementById('pricingCacheReadInput').value = model.pricing?.cache_read || '';
             document.getElementById('modelModal').classList.add('active');
         }
 
@@ -815,13 +980,38 @@
         }
 
         async function submitModel() {
-            const modelInput = document.getElementById('modelInput').value.trim();
-            console.log('Submitting:', { editingModel, modelInput });
+            const name = document.getElementById('nameInput').value.trim();
+            const backend = document.getElementById('backendInput').value.trim();
+            const version = document.getElementById('versionInput').value.trim();
+            const pricingInput = document.getElementById('pricingInputInput').value.trim();
+            const pricingOutput = document.getElementById('pricingOutputInput').value.trim();
+            const pricingCacheWrite = document.getElementById('pricingCacheWriteInput').value.trim();
+            const pricingCacheRead = document.getElementById('pricingCacheReadInput').value.trim();
 
-            if (!modelInput) {
-                showToast('Please enter a model name', 'error');
+            console.log('Submitting:', { editingModel, name, backend, version });
+
+            if (!name) {
+                showToast('Please enter a display name', 'error');
                 return;
             }
+
+            if (!backend) {
+                showToast('Please enter a backend name', 'error');
+                return;
+            }
+
+            // Build the model object
+            const modelData = {
+                name,
+                backend,
+                version: version || '',
+                pricing: {
+                    input: pricingInput !== '' ? parseFloat(pricingInput) : 0,
+                    output: pricingOutput !== '' ? parseFloat(pricingOutput) : 0,
+                    cache_write: pricingCacheWrite !== '' ? parseFloat(pricingCacheWrite) : 0,
+                    cache_read: pricingCacheRead !== '' ? parseFloat(pricingCacheRead) : 0
+                }
+            };
 
             try {
                 if (editingModel) {
@@ -831,7 +1021,7 @@
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify({ oldModel: editingModel, newModel: modelInput })
+                        body: JSON.stringify({ oldName: editingModel, ...modelData })
                     });
 
                     if (!response.ok) {
@@ -847,7 +1037,7 @@
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify({ model: modelInput })
+                        body: JSON.stringify(modelData)
                     });
 
                     if (!response.ok) {
@@ -874,7 +1064,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ model: deletingModel })
+                    body: JSON.stringify({ name: deletingModel })
                 });
 
                 if (!response.ok) {

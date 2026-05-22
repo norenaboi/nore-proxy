@@ -6,7 +6,7 @@ endpoints.txt
 
 # Data files that should not be baked into images
 logs/
-allowed_models.txt
+models.json
 
 # Dev / docs
 *.sh

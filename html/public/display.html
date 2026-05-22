@@ -148,7 +148,7 @@
             /* Models List */
             .models-container {
                 padding: 10px;
-                max-height: 300px;
+                max-height: 320px;
                 overflow-y: auto;
             }
 
@@ -163,6 +163,7 @@
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
+                gap: 8px;
             }
 
             .model-item:hover {
@@ -170,13 +171,49 @@
                 color: gray;
             }
 
-            .model-item i {
+            .model-item-left {
+                display: flex;
+                flex-direction: column;
+                gap: 3px;
+                min-width: 0;
+            }
+
+            .model-item-name {
+                font-size: 14px;
+                color: #444;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .model-item-pricing {
+                display: flex;
+                gap: 6px;
+                flex-wrap: wrap;
+            }
+
+            .price-tag {
+                font-size: 10px;
+                background: #f0f0f0;
+                border-radius: 4px;
+                padding: 1px 5px;
+                color: #888;
+                font-family: monospace;
+            }
+
+            .price-tag b {
+                color: #555;
+                font-weight: 600;
+            }
+
+            .model-item i.copy-icon {
                 opacity: 0;
                 transition: 0.2s;
                 color: gray;
+                flex-shrink: 0;
             }
 
-            .model-item:hover i {
+            .model-item:hover i.copy-icon {
                 opacity: 1;
             }
         </style>
@@ -208,7 +245,7 @@
         </div>
 
         <script>
-            // Model Logic
+            // Model Logic — keeps full model objects so pricing passes through
             function categorizeModels(models) {
                 const categories = {
                     Sonnet: [],
@@ -224,46 +261,45 @@
                 };
 
                 models.forEach((model) => {
-                    const modelName =
+                    const modelId =
                         typeof model === "string"
                             ? model
                             : model.id || model.name || model.model;
-                    const lowerName = modelName.toLowerCase();
+                    const lowerName = modelId.toLowerCase();
 
-                    // Order matters here. Specific detections first.
+                    // Keep the full object so pricing propagates
+                    const entry = typeof model === "string" ? model : model;
 
                     if (lowerName.includes("gemini")) {
-                        categories["Gemini"].push(modelName);
+                        categories["Gemini"].push(entry);
                     } else if (
                         lowerName.includes("claude") ||
                         lowerName.includes("sonnet") ||
                         lowerName.includes("opus")
                     ) {
-                        categories["Claude"].push(modelName);
+                        categories["Claude"].push(entry);
                     } else if (
                         lowerName.includes("gpt") ||
                         lowerName.includes("chatgpt") ||
                         lowerName.startsWith("o")
                     ) {
-                        categories["GPT"].push(modelName);
+                        categories["GPT"].push(entry);
                     } else if (lowerName.includes("deepseek")) {
-                        categories["DeepSeek"].push(modelName);
+                        categories["DeepSeek"].push(entry);
                     } else if (lowerName.includes("glm")) {
-                        categories["GLM"].push(modelName);
+                        categories["GLM"].push(entry);
                     } else if (lowerName.includes("grok")) {
-                        categories["Grok"].push(modelName);
+                        categories["Grok"].push(entry);
                     } else if (lowerName.includes("kimi")) {
-                        categories["Kimi"].push(modelName);
+                        categories["Kimi"].push(entry);
                     } else {
-                        categories["Others"].push(modelName);
+                        categories["Others"].push(entry);
                     }
                 });
 
                 // Remove empty categories
                 Object.keys(categories).forEach((key) => {
-                    if (categories[key].length === 0) {
-                        delete categories[key];
-                    }
+                    if (categories[key].length === 0) delete categories[key];
                 });
 
                 return categories;
@@ -280,6 +316,13 @@
                     Others: "fa-box-open",
                 };
                 return icons[category] || "fa-microchip";
+            }
+
+            function fmtPrice(v) {
+                if (v == null || v === "") return null;
+                const n = parseFloat(v);
+                if (n === 0) return null;
+                return `$${n % 1 === 0 ? n : n.toFixed(n < 1 ? 3 : 2)}`;
             }
 
             function createCategoryCard(categoryName, models, index) {
@@ -309,22 +352,53 @@
 
                 // Add each model
                 models.forEach((model, modelIndex) => {
+                    // model may be a string (id) or an object {id, pricing}
+                    const modelId =
+                        typeof model === "string" ? model : model.id;
+                    const pricing =
+                        typeof model === "object" ? model.pricing : null;
+
                     const modelItem = document.createElement("div");
                     modelItem.className = "model-item";
                     modelItem.style.animationDelay = `${index * 0.1 + modelIndex * 0.02}s`;
 
-                    const modelName = document.createElement("span");
-                    modelName.textContent = model;
+                    // Build pricing tags if available
+                    let pricingHtml = "";
+                    if (pricing) {
+                        const inp = fmtPrice(pricing.input);
+                        const out = fmtPrice(pricing.output);
+                        const cw = fmtPrice(pricing.cache_write);
+                        const cr = fmtPrice(pricing.cache_read);
+                        const tags = [
+                            inp
+                                ? `<span class="price-tag"><b>in</b> ${inp}</span>`
+                                : "",
+                            out
+                                ? `<span class="price-tag"><b>out</b> ${out}</span>`
+                                : "",
+                            cw
+                                ? `<span class="price-tag"><b>cw</b> ${cw}</span>`
+                                : "",
+                            cr
+                                ? `<span class="price-tag"><b>cr</b> ${cr}</span>`
+                                : "",
+                        ]
+                            .filter(Boolean)
+                            .join("");
+                        if (tags)
+                            pricingHtml = `<div class="model-item-pricing">${tags}</div>`;
+                    }
 
-                    const copyIcon = document.createElement("i");
-                    copyIcon.className = "fa-regular fa-copy";
-
-                    modelItem.appendChild(modelName);
-                    modelItem.appendChild(copyIcon);
+                    modelItem.innerHTML = `
+                        <div class="model-item-left">
+                            <span class="model-item-name">${modelId}</span>
+                            ${pricingHtml}
+                        </div>
+                        <i class="fa-regular fa-copy copy-icon"></i>`;
 
                     // Add click event
                     modelItem.addEventListener("click", () => {
-                        navigator.clipboard.writeText(model);
+                        navigator.clipboard.writeText(modelId);
                         showNotification();
 
                         // Flash effect
@@ -365,6 +439,7 @@
                     // Clear loading state
                     modelsContainer.innerHTML = "";
 
+                    // Use the full model objects so pricing info is preserved
                     const models = data.data || data.models || data;
 
                     if (Array.isArray(models) && models.length > 0) {

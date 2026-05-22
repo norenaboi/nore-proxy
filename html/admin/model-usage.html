@@ -572,6 +572,7 @@
             </div>
         </main>
 
+        <script src="pricing-utils.js"></script>
         <script>
             let modelsData = [];
             let sortColumn = "total_tokens";
@@ -582,69 +583,31 @@
                 window.location.href = "/admin/login";
             }
 
-            function calculateCost(
-                model,
-                inputTokens,
-                outputTokens,
-                cacheWriteTokens,
-                cacheReadTokens,
-            ) {
-                const modelLower = (model || "").toLowerCase();
-                let inputRate, outputRate, cacheWriteRate, cacheReadRate;
-
-                if (modelLower.includes("sonnet")) {
-                    inputRate = 3 / 1_000_000;
-                    outputRate = 15 / 1_000_000;
-                    cacheWriteRate = 3.75 / 1_000_000;
-                    cacheReadRate = 0.3 / 1_000_000;
-                } else if (modelLower.includes("opus")) {
-                    inputRate = 15 / 1_000_000;
-                    outputRate = 75 / 1_000_000;
-                    cacheWriteRate = 18.75 / 1_000_000;
-                    cacheReadRate = 1.5 / 1_000_000;
-                } else if (modelLower.includes("haiku")) {
-                    inputRate = 0.8 / 1_000_000;
-                    outputRate = 4 / 1_000_000;
-                    cacheWriteRate = 1 / 1_000_000;
-                    cacheReadRate = 0.08 / 1_000_000;
-                } else {
-                    // Default rates (Sonnet)
-                    inputRate = 3 / 1_000_000;
-                    outputRate = 15 / 1_000_000;
-                    cacheWriteRate = 3.75 / 1_000_000;
-                    cacheReadRate = 0.3 / 1_000_000;
-                }
-
-                // Calculate normal input tokens (excluding cache write and cache read tokens)
-                const normalInputTokens =
-                    inputTokens - cacheWriteTokens - cacheReadTokens;
-
-                const inputCost = normalInputTokens * inputRate;
-                const outputCost = outputTokens * outputRate;
-                const cacheWriteCost = cacheWriteTokens * cacheWriteRate;
-                const cacheReadCost = cacheReadTokens * cacheReadRate;
-
-                return inputCost + outputCost + cacheWriteCost + cacheReadCost;
-            }
-
             async function loadModelUsage() {
                 try {
+                    // Fetch model pricing data first
+                    await fetchModelPricing();
+
                     const response = await fetch("/api/model-usage");
                     const data = await response.json();
 
                     // Calculate cost for each model
-                    modelsData = data.models.map((model) => ({
-                        ...model,
-                        cost: calculateCost(
+                    modelsData = data.models.map((model) => {
+                        const costResult = calculateCost(
                             model.model,
                             model.input_tokens,
                             model.output_tokens,
                             model.cache_write_tokens,
                             model.cache_read_tokens,
-                        ),
-                        cache_tokens:
-                            model.cache_write_tokens + model.cache_read_tokens,
-                    }));
+                        );
+                        return {
+                            ...model,
+                            cost: costResult.totalCost,
+                            cache_tokens:
+                                model.cache_write_tokens +
+                                model.cache_read_tokens,
+                        };
+                    });
 
                     sortAndRenderTable();
 

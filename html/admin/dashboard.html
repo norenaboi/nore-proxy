@@ -827,8 +827,11 @@
             </div>
         </main>
 
+        <script src="pricing-utils.js"></script>
         <script>
             async function loadDashboard() {
+                // Fetch model pricing from API
+                await fetchModelPricing();
                 try {
                     const response = await fetch("/api/logs");
 
@@ -845,76 +848,9 @@
 
                     const data = await response.json();
 
-                    // Helper function to calculate cost based on model
-                    function calculateCost(
-                        model,
-                        inputTokens,
-                        outputTokens,
-                        cacheWriteTokens,
-                        cacheReadTokens,
-                    ) {
-                        const modelLower = (model || "").toLowerCase();
-                        let inputRate,
-                            outputRate,
-                            cacheWriteRate,
-                            cacheReadRate;
-
-                        if (modelLower.includes("sonnet")) {
-                            inputRate = 3 / 1_000_000;
-                            outputRate = 15 / 1_000_000;
-                            cacheWriteRate = 3.75 / 1_000_000;
-                            cacheReadRate = 0.3 / 1_000_000;
-                        } else if (modelLower.includes("opus")) {
-                            inputRate = 5 / 1_000_000;
-                            outputRate = 25 / 1_000_000;
-                            cacheWriteRate = 6.25 / 1_000_000;
-                            cacheReadRate = 0.5 / 1_000_000;
-                        } else {
-                            inputRate = 1 / 1_000_000;
-                            outputRate = 1 / 1_000_000;
-                            cacheWriteRate = 1 / 1_000_000;
-                            cacheReadRate = 1 / 1_000_000;
-                        }
-
-                        // Calculate normal input tokens (excluding cache write and cache read tokens)
-                        const normalInputTokens =
-                            inputTokens - cacheWriteTokens - cacheReadTokens;
-
-                        return {
-                            inputCost: normalInputTokens * inputRate,
-                            outputCost: outputTokens * outputRate,
-                            cacheWriteCost: cacheWriteTokens * cacheWriteRate,
-                            cacheReadCost: cacheReadTokens * cacheReadRate,
-                        };
-                    }
-
-                    // Calculate aggregate costs (using average model pricing - sonnet as default)
-                    const totalCosts = calculateCost(
-                        "sonnet",
-                        data.summary.total_input_tokens,
-                        data.summary.total_output_tokens,
-                        data.summary.total_cache_write_tokens || 0,
-                        data.summary.total_cache_read_tokens || 0,
-                    );
-
-                    const dailyCosts = calculateCost(
-                        "sonnet",
-                        data.summary.daily_input_tokens,
-                        data.summary.daily_output_tokens,
-                        data.summary.daily_cache_write_tokens || 0,
-                        data.summary.daily_cache_read_tokens || 0,
-                    );
-
-                    const totalCost =
-                        totalCosts.inputCost +
-                        totalCosts.outputCost +
-                        totalCosts.cacheWriteCost +
-                        totalCosts.cacheReadCost;
-                    const dailyCost =
-                        dailyCosts.inputCost +
-                        dailyCosts.outputCost +
-                        dailyCosts.cacheWriteCost +
-                        dailyCosts.cacheReadCost;
+                    // Use server-computed per-model costs from the API response
+                    const totalCost = data.summary.total_cost || 0;
+                    const dailyCost = data.summary.daily_cost || 0;
 
                     // Update summary cards
                     document.getElementById("dailyRequests").textContent =
@@ -944,23 +880,27 @@
                     document.getElementById("keyCount").textContent =
                         data.summary.total_api_keys.toLocaleString() + " keys";
 
-                    // Update costs
+                    // Update costs (server-computed per-model)
                     document.getElementById("totalInputCost").textContent =
-                        "$" + totalCosts.inputCost.toFixed(4);
+                        "$" + (data.summary.total_input_cost || 0).toFixed(4);
                     document.getElementById("totalOutputCost").textContent =
-                        "$" + totalCosts.outputCost.toFixed(4);
+                        "$" + (data.summary.total_output_cost || 0).toFixed(4);
                     document.getElementById("totalCacheWriteCost").textContent =
-                        "$" + totalCosts.cacheWriteCost.toFixed(4);
+                        "$" +
+                        (data.summary.total_cache_write_cost || 0).toFixed(4);
                     document.getElementById("totalCacheReadCost").textContent =
-                        "$" + totalCosts.cacheReadCost.toFixed(4);
+                        "$" +
+                        (data.summary.total_cache_read_cost || 0).toFixed(4);
                     document.getElementById("dailyInputCost").textContent =
-                        "$" + dailyCosts.inputCost.toFixed(4);
+                        "$" + (data.summary.daily_input_cost || 0).toFixed(4);
                     document.getElementById("dailyOutputCost").textContent =
-                        "$" + dailyCosts.outputCost.toFixed(4);
+                        "$" + (data.summary.daily_output_cost || 0).toFixed(4);
                     document.getElementById("dailyCacheWriteCost").textContent =
-                        "$" + dailyCosts.cacheWriteCost.toFixed(4);
+                        "$" +
+                        (data.summary.daily_cache_write_cost || 0).toFixed(4);
                     document.getElementById("dailyCacheReadCost").textContent =
-                        "$" + dailyCosts.cacheReadCost.toFixed(4);
+                        "$" +
+                        (data.summary.daily_cache_read_cost || 0).toFixed(4);
                     document.getElementById("totalCost").textContent =
                         "$" + totalCost.toFixed(2);
                     document.getElementById("dailyCost").textContent =
@@ -970,18 +910,7 @@
                     const tbody = document.getElementById("apiKeysBody");
                     tbody.innerHTML = data.api_keys
                         .map((key) => {
-                            const keyCosts = calculateCost(
-                                "sonnet",
-                                key.total_input_tokens,
-                                key.total_output_tokens,
-                                key.total_cache_write_tokens || 0,
-                                key.total_cache_read_tokens || 0,
-                            );
-                            const keyTotalCost =
-                                keyCosts.inputCost +
-                                keyCosts.outputCost +
-                                keyCosts.cacheWriteCost +
-                                keyCosts.cacheReadCost;
+                            const keyTotalCost = key.total_cost || 0;
                             return `
                     <tr>
                         <td><strong>${key.name}</strong></td>
@@ -1017,11 +946,7 @@
                                     log.cache_write_tokens || 0,
                                     log.cache_read_tokens || 0,
                                 );
-                                const logTotalCost =
-                                    logCosts.inputCost +
-                                    logCosts.outputCost +
-                                    logCosts.cacheWriteCost +
-                                    logCosts.cacheReadCost;
+                                const logTotalCost = logCosts.totalCost;
 
                                 return `
                             <tr>

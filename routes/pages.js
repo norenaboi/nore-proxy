@@ -27,9 +27,13 @@ function requireSession(req, res, next) {
   next();
 }
 
-function serveHtml(res, filename) {
-  const htmlPath = path.join(__dirname, "..", "html", filename);
-  const errorPath = path.join(__dirname, "..", "html", "404.html");
+const adminDir = path.join(__dirname, "..", "html", "admin");
+const publicDir = path.join(__dirname, "..", "html", "public");
+const assetsDir = path.join(__dirname, "..", "html", "assets");
+
+function serveAdmin(res, filename) {
+  const htmlPath = path.join(adminDir, filename);
+  const errorPath = path.join(publicDir, "404.html");
 
   if (fs.existsSync(htmlPath)) {
     const content = fs.readFileSync(htmlPath, "utf-8");
@@ -42,13 +46,28 @@ function serveHtml(res, filename) {
   }
 }
 
-router.get("/favicon.ico", (req, res) => {
-  const faviconPath = path.join(__dirname, "..", "html", "favicon.ico");
-  res.sendFile(faviconPath);
-});
+function servePublic(res, filename) {
+  const htmlPath = path.join(publicDir, filename);
+  const errorPath = path.join(publicDir, "404.html");
+
+  if (fs.existsSync(htmlPath)) {
+    const content = fs.readFileSync(htmlPath, "utf-8");
+    res.type("html").send(content);
+  } else if (fs.existsSync(errorPath)) {
+    const errorContent = fs.readFileSync(errorPath, "utf-8");
+    res.status(404).type("html").send(errorContent);
+  } else {
+    res.status(404).send("Page not found");
+  }
+}
+
+// Shared static assets (pricing-utils.js, favicon.ico, etc.) served under both prefixes
+const assetsStatic = express.static(assetsDir);
+router.use("/admin", assetsStatic);
+router.use("/", assetsStatic);
 
 router.get("/", (req, res) => {
-  serveHtml(res, "index.html");
+  servePublic(res, "index.html");
 });
 
 router.get("/v1", (req, res) => {
@@ -56,11 +75,11 @@ router.get("/v1", (req, res) => {
 });
 
 router.get("/models", (req, res) => {
-  serveHtml(res, "display.html");
+  servePublic(res, "display.html");
 });
 
 router.get("/usage", (req, res) => {
-  serveHtml(res, "usage.html");
+  servePublic(res, "usage.html");
 });
 
 router.get("/admin", (req, res) => {
@@ -82,35 +101,35 @@ router.get("/admin/login", (req, res) => {
   if (validateSession(cookies.adminSession)) {
     return res.redirect("/admin/dashboard");
   }
-  serveHtml(res, "login.html");
+  serveAdmin(res, "login.html");
 });
 
 router.get("/admin/dashboard", requireSession, (req, res) => {
-  serveHtml(res, "dashboard.html");
+  serveAdmin(res, "dashboard.html");
 });
 
 router.get("/admin/keys", requireSession, (req, res) => {
-  serveHtml(res, "keys.html");
+  serveAdmin(res, "keys.html");
 });
 
 router.get("/admin/models", requireSession, (req, res) => {
-  serveHtml(res, "models.html");
+  serveAdmin(res, "models.html");
 });
 
 router.get("/admin/endpoints", requireSession, (req, res) => {
-  serveHtml(res, "endpoints.html");
+  serveAdmin(res, "endpoints.html");
 });
 
 router.get("/admin/settings", requireSession, (req, res) => {
-  serveHtml(res, "settings.html");
+  serveAdmin(res, "settings.html");
 });
 
 router.get("/admin/users", requireSession, (req, res) => {
-  serveHtml(res, "users.html");
+  serveAdmin(res, "users.html");
 });
 
 router.get("/admin/model-usage", requireSession, (req, res) => {
-  serveHtml(res, "model-usage.html");
+  serveAdmin(res, "model-usage.html");
 });
 
 export default router;

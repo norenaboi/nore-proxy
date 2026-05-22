@@ -9,6 +9,7 @@ import {
   tokenUsage,
   errorCount,
 } from "../services/metricsService.js";
+import { MODEL_PRICING } from "./helpers.js";
 
 // Cost calculation function based on model type
 export function calculateCost(
@@ -18,28 +19,35 @@ export function calculateCost(
   cacheWriteTokens,
   cacheReadTokens,
 ) {
-  const modelLower = (model || "").toLowerCase();
-
   let inputRate, outputRate, cacheWriteRate, cacheReadRate;
 
-  if (modelLower.includes("sonnet")) {
-    // Sonnet pricing
-    inputRate = 3 / 1_000_000;
-    outputRate = 15 / 1_000_000;
-    cacheWriteRate = 3.75 / 1_000_000;
-    cacheReadRate = 0.3 / 1_000_000;
-  } else if (modelLower.includes("opus")) {
-    // Opus pricing
-    inputRate = 5 / 1_000_000;
-    outputRate = 25 / 1_000_000;
-    cacheWriteRate = 6.25 / 1_000_000;
-    cacheReadRate = 0.5 / 1_000_000;
+  // Try to get pricing from MODEL_PRICING first
+  if (MODEL_PRICING[model]) {
+    inputRate = MODEL_PRICING[model].input / 1_000_000;
+    outputRate = MODEL_PRICING[model].output / 1_000_000;
+    cacheWriteRate = MODEL_PRICING[model].cache_write / 1_000_000;
+    cacheReadRate = MODEL_PRICING[model].cache_read / 1_000_000;
   } else {
-    // Default pricing
-    inputRate = 1 / 1_000_000;
-    outputRate = 1 / 1_000_000;
-    cacheWriteRate = 1 / 1_000_000;
-    cacheReadRate = 1 / 1_000_000;
+    // Fallback to pattern matching for backward compatibility
+    const modelLower = (model || "").toLowerCase();
+
+    if (modelLower.includes("sonnet")) {
+      inputRate = 3 / 1_000_000;
+      outputRate = 15 / 1_000_000;
+      cacheWriteRate = 3.75 / 1_000_000;
+      cacheReadRate = 0.3 / 1_000_000;
+    } else if (modelLower.includes("opus")) {
+      inputRate = 5 / 1_000_000;
+      outputRate = 25 / 1_000_000;
+      cacheWriteRate = 6.25 / 1_000_000;
+      cacheReadRate = 0.5 / 1_000_000;
+    } else {
+      // Default pricing
+      inputRate = 1 / 1_000_000;
+      outputRate = 1 / 1_000_000;
+      cacheWriteRate = 1 / 1_000_000;
+      cacheReadRate = 1 / 1_000_000;
+    }
   }
 
   // Calculate normal input tokens (excluding cache write and cache read tokens)

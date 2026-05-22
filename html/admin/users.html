@@ -598,6 +598,7 @@
             <div id="userDetail" class="user-detail"></div>
         </main>
 
+        <script src="pricing-utils.js"></script>
         <script>
             let allUsers = [];
             let currentUser = null;
@@ -609,6 +610,7 @@
 
             async function loadUsers() {
                 try {
+                    await fetchModelPricing();
                     const response = await fetch("/api/users");
                     const data = await response.json();
 
@@ -691,54 +693,19 @@
                 document.getElementById("usersList").style.display = "none";
                 document.getElementById("userDetail").classList.add("show");
 
-                // Calculate costs (using sonnet as default)
-                function calculateCost(
-                    inputTokens,
-                    outputTokens,
-                    cacheWriteTokens,
-                    cacheReadTokens,
-                ) {
-                    const inputRate = 3 / 1_000_000;
-                    const outputRate = 15 / 1_000_000;
-                    const cacheWriteRate = 3.75 / 1_000_000;
-                    const cacheReadRate = 0.3 / 1_000_000;
+                // Use server-computed per-model costs from the API response
+                const totalCost = user.total_cost || 0;
+                const dailyCost = user.daily_cost || 0;
 
-                    // Calculate normal input tokens (excluding cache write and cache read tokens)
-                    const normalInputTokens =
-                        inputTokens - cacheWriteTokens - cacheReadTokens;
-
-                    return {
-                        inputCost: normalInputTokens * inputRate,
-                        outputCost: outputTokens * outputRate,
-                        cacheWriteCost: cacheWriteTokens * cacheWriteRate,
-                        cacheReadCost: cacheReadTokens * cacheReadRate,
-                    };
-                }
-
-                const totalCosts = calculateCost(
-                    user.total_input_tokens,
-                    user.total_output_tokens,
-                    user.total_cache_write_tokens || 0,
-                    user.total_cache_read_tokens || 0,
-                );
-
-                const dailyCosts = calculateCost(
-                    user.daily_input_tokens,
-                    user.daily_output_tokens,
-                    user.daily_cache_write_tokens || 0,
-                    user.daily_cache_read_tokens || 0,
-                );
-
-                const totalCost =
-                    totalCosts.inputCost +
-                    totalCosts.outputCost +
-                    totalCosts.cacheWriteCost +
-                    totalCosts.cacheReadCost;
-                const dailyCost =
-                    dailyCosts.inputCost +
-                    dailyCosts.outputCost +
-                    dailyCosts.cacheWriteCost +
-                    dailyCosts.cacheReadCost;
+                // Per-type cost breakdowns
+                const totalInputCost = user.total_input_cost || 0;
+                const totalOutputCost = user.total_output_cost || 0;
+                const totalCacheWriteCost = user.total_cache_write_cost || 0;
+                const totalCacheReadCost = user.total_cache_read_cost || 0;
+                const dailyInputCost = user.daily_input_cost || 0;
+                const dailyOutputCost = user.daily_output_cost || 0;
+                const dailyCacheWriteCost = user.daily_cache_write_cost || 0;
+                const dailyCacheReadCost = user.daily_cache_read_cost || 0;
 
                 document.getElementById("userDetail").innerHTML = `
                     <div class="detail-header">
@@ -760,12 +727,12 @@
                         <div class="summary-card">
                             <h3>Total Input Tokens</h3>
                             <div class="value">${formatNumber(user.total_input_tokens)}</div>
-                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalCosts.inputCost.toFixed(4)}</div>
+                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalInputCost.toFixed(4)}</div>
                         </div>
                         <div class="summary-card">
                             <h3>Total Output Tokens</h3>
                             <div class="value">${formatNumber(user.total_output_tokens)}</div>
-                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalCosts.outputCost.toFixed(4)}</div>
+                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalOutputCost.toFixed(4)}</div>
                         </div>
                         <div class="summary-card">
                             <h3>Total Estimated Cost</h3>
@@ -778,12 +745,12 @@
                         <div class="summary-card">
                             <h3>Daily Input Tokens</h3>
                             <div class="value">${formatNumber(user.daily_input_tokens)}</div>
-                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyCosts.inputCost.toFixed(4)}</div>
+                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyInputCost.toFixed(4)}</div>
                         </div>
                         <div class="summary-card">
                             <h3>Daily Output Tokens</h3>
                             <div class="value">${formatNumber(user.daily_output_tokens)}</div>
-                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyCosts.outputCost.toFixed(4)}</div>
+                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyOutputCost.toFixed(4)}</div>
                         </div>
                         <div class="summary-card">
                             <h3>Daily Estimated Cost</h3>
@@ -792,22 +759,22 @@
                         <div class="summary-card">
                             <h3>Total Cache Write</h3>
                             <div class="value">${formatNumber(user.total_cache_write_tokens || 0)}</div>
-                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalCosts.cacheWriteCost.toFixed(4)}</div>
+                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalCacheWriteCost.toFixed(4)}</div>
                         </div>
                         <div class="summary-card">
                             <h3>Total Cache Read</h3>
                             <div class="value">${formatNumber(user.total_cache_read_tokens || 0)}</div>
-                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalCosts.cacheReadCost.toFixed(4)}</div>
+                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalCacheReadCost.toFixed(4)}</div>
                         </div>
                         <div class="summary-card">
                             <h3>Daily Cache Write</h3>
                             <div class="value">${formatNumber(user.daily_cache_write_tokens || 0)}</div>
-                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyCosts.cacheWriteCost.toFixed(4)}</div>
+                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyCacheWriteCost.toFixed(4)}</div>
                         </div>
                         <div class="summary-card">
                             <h3>Daily Cache Read</h3>
                             <div class="value">${formatNumber(user.daily_cache_read_tokens || 0)}</div>
-                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyCosts.cacheReadCost.toFixed(4)}</div>
+                            <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyCacheReadCost.toFixed(4)}</div>
                         </div>
                     </div>
 
@@ -841,6 +808,7 @@
                                             date.toLocaleDateString();
 
                                         const reqCosts = calculateCost(
+                                            req.model || "unknown",
                                             req.input_tokens,
                                             req.output_tokens,
                                             req.cache_write_tokens || 0,

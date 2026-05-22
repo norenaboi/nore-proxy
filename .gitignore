@@ -3,7 +3,7 @@ node_modules/
 
 # Environment variables
 .env
-allowed_models.txt
+models.json
 endpoints.txt
 
 # API Keys (sensitive data)

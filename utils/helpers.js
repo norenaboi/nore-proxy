@@ -9,6 +9,7 @@ const __dirname = path.dirname(__filename);
 // Model registry and aliases
 export let MODEL_ALIASES = {};
 export let MODEL_REGISTRY = {};
+export let MODEL_PRICING = {};
 
 export function resolveModelName(modelName) {
   return MODEL_ALIASES[modelName] || modelName;
@@ -17,40 +18,45 @@ export function resolveModelName(modelName) {
 export function loadModelsFromFile() {
   MODEL_REGISTRY = {};
   MODEL_ALIASES = {};
+  MODEL_PRICING = {};
 
-  const filePath = path.join(__dirname, "..", "allowed_models.txt");
+  const jsonPath = path.join(__dirname, "..", "models.json");
 
   try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    const lines = content.split("\n");
+    if (!fs.existsSync(jsonPath)) {
+      console.warn("models.json not found");
+      return;
+    }
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith("#")) {
-        let modelName;
+    const content = fs.readFileSync(jsonPath, "utf-8");
+    const data = JSON.parse(content);
 
-        if (trimmed.includes(":")) {
-          const [alias, actualName] = trimmed.split(":", 2);
-          MODEL_ALIASES[alias.trim()] = actualName.trim();
-          modelName = alias.trim();
-        } else {
-          modelName = trimmed;
-        }
+    for (const [displayName, modelConfig] of Object.entries(
+      data.models || {},
+    )) {
+      const backendName = modelConfig.backend || displayName;
+      const version = modelConfig.version || "";
+      const actualBackend = version ? `${backendName}-${version}` : backendName;
 
-        MODEL_REGISTRY[modelName] = {
-          type: "chat",
-          capabilities: {
-            outputCapabilities: {},
-          },
+      MODEL_ALIASES[displayName] = actualBackend;
+      MODEL_REGISTRY[displayName] = {
+        type: "chat",
+        capabilities: { outputCapabilities: {} },
+        backend: actualBackend,
+        version,
+      };
+
+      if (modelConfig.pricing) {
+        MODEL_PRICING[displayName] = {
+          input: modelConfig.pricing.input ?? 0,
+          output: modelConfig.pricing.output ?? 0,
+          cache_write: modelConfig.pricing.cache_write ?? 0,
+          cache_read: modelConfig.pricing.cache_read ?? 0,
         };
       }
     }
   } catch (error) {
-    if (error.code !== "ENOENT") {
-      console.error("Error loading models:", error);
-    } else {
-      console.warn("allowed_models.txt not found");
-    }
+    console.error("Error loading models:", error);
   }
 }
 
