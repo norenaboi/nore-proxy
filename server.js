@@ -48,7 +48,14 @@ app.use(
           "https://cdnjs.cloudflare.com",
           "https://fonts.gstatic.com",
         ],
-        imgSrc: ["'self'", "data:"],
+        imgSrc: [
+          "'self'",
+          "data:",
+          "https://www.google.com",
+          "https://*.gstatic.com",
+          "https://cdn.simpleicons.org",
+          "https://avatars.githubusercontent.com",
+        ],
         // Allow inline event handlers (onsubmit, onclick, etc.) used throughout the HTML pages
         scriptSrcAttr: ["'unsafe-inline'"],
         connectSrc: ["'self'", "https://cloudflareinsights.com"],

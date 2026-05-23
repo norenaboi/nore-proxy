@@ -4,6 +4,10 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <link rel="icon" type="image/x-icon" href="favicon.ico" />
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+        />
         <title>Model List</title>
         <style>
             * {
@@ -13,7 +17,9 @@
             }
 
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    Oxygen, sans-serif;
                 background: #fafafa;
                 color: #333;
                 min-height: 100vh;
@@ -21,7 +27,7 @@
             }
 
             .container {
-                max-width: 900px;
+                max-width: 1400px;
                 margin: 0 auto;
             }
 
@@ -32,6 +38,7 @@
                 display: inline-flex;
                 align-items: center;
                 gap: 5px;
+                margin-bottom: 20px;
             }
 
             .back-link:hover {
@@ -40,9 +47,9 @@
 
             header {
                 text-align: center;
-                padding: 20px 0 40px;
+                padding: 20px 0 30px;
                 border-bottom: 1px solid #eee;
-                margin-bottom: 40px;
+                margin-bottom: 30px;
             }
 
             h1 {
@@ -56,365 +63,585 @@
                 margin-top: 5px;
             }
 
-            .loading {
-                text-align: center;
-                color: #888;
-                padding: 40px;
-            }
-
             /* Notification */
             .copy-notification {
                 position: fixed;
                 bottom: 30px;
                 left: 50%;
                 transform: translateX(-50%) translateY(100px);
-                border-radius:10px;
-                color: var(--darker-bg);
+                border-radius: 10px;
+                background: white;
+                color: #333;
                 padding: 10px 25px;
-                border-radius: 5px;
                 border: solid 2px black;
                 font-weight: bold;
-                transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+                transition: transform 0.3s
+                    cubic-bezier(0.175, 0.885, 0.32, 1.275);
                 z-index: 100;
-                font-family: 'Cinzel', serif;
                 text-transform: uppercase;
                 letter-spacing: 2px;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
             }
 
-            .copy-notification.show { transform: translateX(-50%) translateY(0); }
+            .copy-notification.show {
+                transform: translateX(-50%) translateY(0);
             }
-        </style>
-        <style>
-            /* Divider - simplified */
-            .divider {
+
+            /* Main Layout */
+            .main-layout {
                 display: flex;
-                align-items: center;
-                justify-content: center;
-                margin: 30px 0;
                 gap: 20px;
+                align-items: flex-start;
             }
 
-            .divider-line {
-                height: 1px;
-                width: 100px;
-                background: #eee;
-            }
-
-            /* Grid Layout */
-            .models-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-                gap: 20px;
-            }
-
-            /* Category Card - Light version */
-            .category-card {
+            .table-container {
+                flex: 1;
                 background: white;
-                border: 1px solid black;
+                border: 1px solid #e0e0e0;
                 border-radius: 8px;
                 overflow: hidden;
-                transition: border-color 0.2s;
             }
 
-            .category-card:hover {
-                border-color: gray;
+            /* Filters Sidebar */
+            .filters-sidebar {
+                width: 220px;
+                background: white;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 20px;
+                position: sticky;
+                top: 20px;
             }
 
-            .category-header {
-                padding: 15px 20px;
-                background: #fafafa;
-                border-bottom: 1px solid #eee;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }
-
-            .category-title {
-                color: black;
+            .filters-title {
                 font-size: 14px;
-                font-weight: 500;
-                letter-spacing: 1px;
+                font-weight: 600;
+                margin-bottom: 15px;
+                color: #333;
                 text-transform: uppercase;
+                letter-spacing: 0.5px;
             }
 
-            .model-count {
-                background: #f5f5f5;
-                padding: 2px 8px;
-                border-radius: 4px;
-                font-size: 12px;
-                color: #888;
-            }
-
-            /* Models List */
-            .models-container {
-                padding: 10px;
-                max-height: 320px;
-                overflow-y: auto;
-            }
-
-            .model-item {
-                padding: 10px 15px;
-                margin: 3px 0;
-                border-radius: 6px;
-                cursor: pointer;
-                transition: all 0.2s;
-                font-size: 14px;
-                color: #555;
+            .filter-item {
                 display: flex;
                 align-items: center;
-                justify-content: space-between;
                 gap: 8px;
+                padding: 8px 0;
+                cursor: pointer;
+                transition: opacity 0.2s;
             }
 
-            .model-item:hover {
+            .filter-item:hover {
+                opacity: 0.7;
+            }
+
+            .filter-checkbox {
+                width: 16px;
+                height: 16px;
+                cursor: pointer;
+                accent-color: #333;
+            }
+
+            .filter-icon {
+                width: 20px;
+                height: 20px;
+                border-radius: 4px;
+                object-fit: contain;
+            }
+
+            .filter-label {
+                font-size: 13px;
+                color: #555;
+                flex: 1;
+            }
+
+            .filter-count {
+                font-size: 11px;
+                color: #999;
                 background: #f5f5f5;
-                color: gray;
+                padding: 2px 6px;
+                border-radius: 3px;
             }
 
-            .model-item-left {
-                display: flex;
-                flex-direction: column;
-                gap: 3px;
-                min-width: 0;
+            /* Table */
+            .models-table {
+                width: 100%;
+                border-collapse: collapse;
             }
 
-            .model-item-name {
+            .models-table thead {
+                background: #fafafa;
+                border-bottom: 2px solid #e0e0e0;
+            }
+
+            .models-table th {
+                padding: 15px 20px;
+                text-align: left;
+                font-size: 12px;
+                font-weight: 600;
+                color: #666;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                cursor: pointer;
+                user-select: none;
+                white-space: nowrap;
+            }
+
+            .models-table th:hover {
+                background: #f0f0f0;
+            }
+
+            .models-table th .sort-icon {
+                margin-left: 5px;
+                font-size: 10px;
+                color: #999;
+            }
+
+            .models-table th.sorted-asc .sort-icon::before {
+                content: "▲";
+                color: #333;
+            }
+
+            .models-table th.sorted-desc .sort-icon::before {
+                content: "▼";
+                color: #333;
+            }
+
+            .models-table tbody tr {
+                border-bottom: 1px solid #f0f0f0;
+                transition: background 0.15s;
+                cursor: pointer;
+            }
+
+            .models-table tbody tr:hover {
+                background: #fafafa;
+            }
+
+            .models-table td {
+                padding: 15px 20px;
                 font-size: 14px;
                 color: #444;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
             }
 
-            .model-item-pricing {
+            .model-name-cell {
                 display: flex;
-                gap: 6px;
-                flex-wrap: wrap;
+                align-items: center;
+                gap: 12px;
             }
 
-            .price-tag {
-                font-size: 10px;
-                background: #f0f0f0;
+            .model-icon {
+                width: 24px;
+                height: 24px;
                 border-radius: 4px;
-                padding: 1px 5px;
-                color: #888;
-                font-family: monospace;
-            }
-
-            .price-tag b {
-                color: #555;
-                font-weight: 600;
-            }
-
-            .model-item i.copy-icon {
-                opacity: 0;
-                transition: 0.2s;
-                color: gray;
+                object-fit: contain;
                 flex-shrink: 0;
             }
 
-            .model-item:hover i.copy-icon {
+            .model-name {
+                font-weight: 500;
+                color: #333;
+            }
+
+            .provider-cell {
+                color: #666;
+                font-size: 13px;
+            }
+
+            .pricing-cell {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 6px;
+                font-size: 11px;
+                font-family: "SF Mono", Monaco, "Cascadia Code", monospace;
+            }
+
+            .price-item {
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+            }
+
+            .price-label {
+                color: #999;
+                font-size: 10px;
+                text-transform: uppercase;
+            }
+
+            .price-value {
+                color: #333;
+                font-weight: 500;
+            }
+
+            .copy-icon {
+                opacity: 0;
+                transition: opacity 0.2s;
+                color: #999;
+                font-size: 14px;
+            }
+
+            .models-table tbody tr:hover .copy-icon {
                 opacity: 1;
+            }
+
+            .loading {
+                text-align: center;
+                color: #888;
+                padding: 60px 20px;
+            }
+
+            .no-results {
+                text-align: center;
+                padding: 60px 20px;
+                color: #999;
+            }
+
+            @media (max-width: 1024px) {
+                .main-layout {
+                    flex-direction: column;
+                }
+
+                .filters-sidebar {
+                    width: 100%;
+                    position: static;
+                }
+
+                .pricing-cell {
+                    font-size: 10px;
+                }
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <a href="/" class="back-link">← Return to main menu</a>
+            <a href="/" class="back-link">
+                <i class="fa-solid fa-arrow-left"></i> Return to main menu
+            </a>
 
             <header>
                 <h1>Models</h1>
                 <p class="subtitle">Select your model of choice</p>
             </header>
 
-            <div id="model-list-container">
-                <!-- Models will be injected here -->
-                <div style="text-align: center; color: var(--gold)">
-                    <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
-                    <p style="margin-top: 15px">Loading models...</p>
+            <div class="main-layout">
+                <div class="table-container" id="table-container">
+                    <div class="loading">
+                        <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
+                        <p style="margin-top: 15px">Loading models...</p>
+                    </div>
+                </div>
+
+                <div class="filters-sidebar">
+                    <div class="filters-title">Providers</div>
+                    <div id="filters-list"></div>
                 </div>
             </div>
         </div>
 
-        <div
-            id="notification"
-            class="copy-notification"
-            data-translate="notification"
-        >
+        <div id="notification" class="copy-notification">
             <i class="fa-solid fa-check"></i> Copied to Clipboard
         </div>
 
         <script>
-            // Model Logic — keeps full model objects so pricing passes through
-            function categorizeModels(models) {
-                const categories = {
-                    Sonnet: [],
-                    Opus: [],
-                    Claude: [],
-                    DeepSeek: [],
-                    Gemini: [],
-                    GPT: [],
-                    GLM: [],
-                    Grok: [],
-                    Kimi: [],
-                    Others: [],
-                };
+            let allModels = [];
+            let filteredModels = [];
+            let currentSort = { column: "name", direction: "asc" };
+            let activeFilters = new Set();
+            const iconCache = new Map();
 
-                models.forEach((model) => {
-                    const modelId =
-                        typeof model === "string"
-                            ? model
-                            : model.id || model.name || model.model;
-                    const lowerName = modelId.toLowerCase();
+            // Preload icons to prevent delayed loading
+            function preloadIcon(url) {
+                if (iconCache.has(url)) {
+                    return iconCache.get(url);
+                }
 
-                    // Keep the full object so pricing propagates
-                    const entry = typeof model === "string" ? model : model;
-
-                    if (lowerName.includes("gemini")) {
-                        categories["Gemini"].push(entry);
-                    } else if (
-                        lowerName.includes("claude") ||
-                        lowerName.includes("sonnet") ||
-                        lowerName.includes("opus")
-                    ) {
-                        categories["Claude"].push(entry);
-                    } else if (
-                        lowerName.includes("gpt") ||
-                        lowerName.includes("chatgpt") ||
-                        lowerName.startsWith("o")
-                    ) {
-                        categories["GPT"].push(entry);
-                    } else if (lowerName.includes("deepseek")) {
-                        categories["DeepSeek"].push(entry);
-                    } else if (lowerName.includes("glm")) {
-                        categories["GLM"].push(entry);
-                    } else if (lowerName.includes("grok")) {
-                        categories["Grok"].push(entry);
-                    } else if (lowerName.includes("kimi")) {
-                        categories["Kimi"].push(entry);
-                    } else {
-                        categories["Others"].push(entry);
-                    }
+                return new Promise((resolve) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        iconCache.set(url, url);
+                        resolve(url);
+                    };
+                    img.onerror = () => {
+                        iconCache.set(url, null);
+                        resolve(null);
+                    };
+                    img.src = url;
                 });
-
-                // Remove empty categories
-                Object.keys(categories).forEach((key) => {
-                    if (categories[key].length === 0) delete categories[key];
-                });
-
-                return categories;
             }
 
-            function getCategoryIcon(category) {
+            async function preloadAllIcons() {
+                const providers = [
+                    "Anthropic",
+                    "Google",
+                    "OpenAI",
+                    "DeepSeek",
+                    "ZhipuAI",
+                    "xAI",
+                    "MoonshotAI",
+                    "Qwen",
+                    "Others",
+                ];
+                const promises = providers.map((provider) =>
+                    preloadIcon(getProviderIcon(provider)),
+                );
+                await Promise.all(promises);
+            }
+
+            function getProvider(modelId) {
+                const lowerName = modelId.toLowerCase();
+
+                if (
+                    lowerName.includes("gemini") ||
+                    lowerName.includes("google") ||
+                    lowerName.includes("gemma") ||
+                    lowerName.includes("veo") ||
+                    lowerName.includes("nanobanana")
+                ) {
+                    return "Google";
+                } else if (
+                    lowerName.includes("claude") ||
+                    lowerName.includes("sonnet") ||
+                    lowerName.includes("opus")
+                ) {
+                    return "Anthropic";
+                } else if (
+                    lowerName.includes("gpt") ||
+                    lowerName.includes("chatgpt") ||
+                    lowerName.startsWith("o")
+                ) {
+                    return "OpenAI";
+                } else if (lowerName.includes("deepseek")) {
+                    return "DeepSeek";
+                } else if (lowerName.includes("glm")) {
+                    return "ZhipuAI";
+                } else if (lowerName.includes("grok")) {
+                    return "xAI";
+                } else if (lowerName.includes("kimi")) {
+                    return "MoonshotAI";
+                } else if (lowerName.includes("qwen")) {
+                    return "Qwen";
+                } else {
+                    return "Others";
+                }
+            }
+
+            function getProviderIcon(provider) {
                 const icons = {
-                    Sonnet: "fa-pen-nib",
-                    Opus: "fa-scroll",
-                    GPT: "fa-brain",
-                    Claude: "fa-feather",
-                    DeepSeek: "fa-magnifying-glass",
-                    Gemini: "fa-star",
-                    Others: "fa-box-open",
+                    Anthropic:
+                        "https://www.google.com/s2/favicons?domain=anthropic.com&sz=128",
+                    Google: "https://www.google.com/s2/favicons?domain=gemini.google.com&sz=128",
+                    OpenAI: "https://www.google.com/s2/favicons?domain=openai.com&sz=128",
+                    DeepSeek:
+                        "https://www.google.com/s2/favicons?domain=deepseek.com&sz=128",
+                    ZhipuAI:
+                        "https://www.google.com/s2/favicons?domain=zhipuai.cn&sz=128",
+                    xAI: "https://www.google.com/s2/favicons?domain=x.ai&sz=128",
+                    MoonshotAI:
+                        "https://www.google.com/s2/favicons?domain=kimi.ai&sz=128",
+                    Qwen: "https://www.google.com/s2/favicons?domain=tongyi.aliyun.com&sz=128",
+                    Others: "https://www.google.com/s2/favicons?domain=openrouter.ai&sz=128",
                 };
-                return icons[category] || "fa-microchip";
+                return icons[provider] || icons.Others;
             }
 
-            function fmtPrice(v) {
-                if (v == null || v === "") return null;
-                const n = parseFloat(v);
-                if (n === 0) return null;
-                return `$${n % 1 === 0 ? n : n.toFixed(n < 1 ? 3 : 2)}`;
+            function formatPrice(value) {
+                if (value == null || value === "" || value === 0) {
+                    return "$0.00";
+                }
+                const n = parseFloat(value);
+                if (n === 0) return "$0.00";
+                return `$${n.toFixed(3)}`;
             }
 
-            function createCategoryCard(categoryName, models, index) {
-                const card = document.createElement("div");
-                card.className = `category-card`;
-                card.style.animationDelay = `${index * 0.1}s`;
+            function sortModels(models, column, direction) {
+                return [...models].sort((a, b) => {
+                    let aVal, bVal;
 
-                // Create header
-                const header = document.createElement("div");
-                header.className = "category-header";
+                    if (column === "name") {
+                        aVal = a.id.toLowerCase();
+                        bVal = b.id.toLowerCase();
+                    } else if (column === "provider") {
+                        aVal = a.provider.toLowerCase();
+                        bVal = b.provider.toLowerCase();
+                    } else if (column === "price") {
+                        // Sort by input price
+                        aVal = a.pricing?.input || 0;
+                        bVal = b.pricing?.input || 0;
+                    }
 
-                const title = document.createElement("h3");
-                title.className = "category-title";
-                const iconClass = getCategoryIcon(categoryName);
+                    if (aVal < bVal) return direction === "asc" ? -1 : 1;
+                    if (aVal > bVal) return direction === "asc" ? 1 : -1;
+                    return 0;
+                });
+            }
 
-                title.innerHTML = `
-                    <i class="fa-solid ${iconClass}"></i>
-                    ${categoryName}
-                    <span class="model-count">${models.length}</span>
+            function filterModels() {
+                if (activeFilters.size === 0) {
+                    filteredModels = allModels;
+                } else {
+                    filteredModels = allModels.filter((model) =>
+                        activeFilters.has(model.provider),
+                    );
+                }
+                renderTable();
+            }
+
+            function renderFilters() {
+                const providerCounts = {};
+                allModels.forEach((model) => {
+                    providerCounts[model.provider] =
+                        (providerCounts[model.provider] || 0) + 1;
+                });
+
+                const providers = Object.keys(providerCounts).sort();
+                const filtersList = document.getElementById("filters-list");
+
+                filtersList.innerHTML = providers
+                    .map(
+                        (provider) => `
+                    <div class="filter-item" onclick="toggleFilter('${provider}')">
+                        <input
+                            type="checkbox"
+                            class="filter-checkbox"
+                            id="filter-${provider}"
+                            ${activeFilters.has(provider) ? "checked" : ""}
+                        />
+                        <img src="${getProviderIcon(provider)}" class="filter-icon" alt="${provider}" onerror="this.style.display='none'" />
+                        <span class="filter-label">${provider}</span>
+                        <span class="filter-count">${providerCounts[provider]}</span>
+                    </div>
+                `,
+                    )
+                    .join("");
+            }
+
+            function toggleFilter(provider) {
+                const checkbox = document.getElementById(`filter-${provider}`);
+
+                if (activeFilters.has(provider)) {
+                    activeFilters.delete(provider);
+                    checkbox.checked = false;
+                } else {
+                    activeFilters.add(provider);
+                    checkbox.checked = true;
+                }
+
+                filterModels();
+            }
+
+            function renderTable() {
+                const container = document.getElementById("table-container");
+                const sorted = sortModels(
+                    filteredModels,
+                    currentSort.column,
+                    currentSort.direction,
+                );
+
+                if (sorted.length === 0) {
+                    container.innerHTML = `
+                        <div class="no-results">
+                            <i class="fa-solid fa-filter fa-2x" style="color: #ccc"></i>
+                            <p style="margin-top: 15px">No models match your filters</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                const tableHTML = `
+                    <table class="models-table">
+                        <thead>
+                            <tr>
+                                <th onclick="sortBy('name')" class="${currentSort.column === "name" ? "sorted-" + currentSort.direction : ""}">
+                                    Model <span class="sort-icon"></span>
+                                </th>
+                                <th onclick="sortBy('provider')" class="${currentSort.column === "provider" ? "sorted-" + currentSort.direction : ""}">
+                                    Provider <span class="sort-icon"></span>
+                                </th>
+                                <th onclick="sortBy('price')" class="${currentSort.column === "price" ? "sorted-" + currentSort.direction : ""}">
+                                    Pricing <span class="sort-icon"></span>
+                                </th>
+                                <th style="width: 50px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${sorted
+                                .map(
+                                    (model) => `
+                                <tr onclick="copyModelName('${model.id}', event)">
+                                    <td>
+                                        <div class="model-name-cell">
+                                            <img src="${getProviderIcon(model.provider)}" class="model-icon" alt="${model.provider}" onerror="this.style.display='none'" />
+                                            <span class="model-name">${model.id}</span>
+                                        </div>
+                                    </td>
+                                    <td class="provider-cell">${model.provider}</td>
+                                    <td>
+                                        <div class="pricing-cell">
+                                            <div class="price-item">
+                                                <span class="price-label">Input</span>
+                                                <span class="price-value">${formatPrice(model.pricing?.input)}/M tokens</span>
+                                            </div>
+                                            <div class="price-item">
+                                                <span class="price-label">Output</span>
+                                                <span class="price-value">${formatPrice(model.pricing?.output)}/M tokens</span>
+                                            </div>
+                                            ${
+                                                model.pricing?.cache_write !=
+                                                    null &&
+                                                model.pricing.cache_write !== 0
+                                                    ? `
+                                            <div class="price-item">
+                                                <span class="price-label">Cache Write</span>
+                                                <span class="price-value">${formatPrice(model.pricing.cache_write)}/M tokens</span>
+                                            </div>`
+                                                    : ""
+                                            }
+                                            ${
+                                                model.pricing?.cache_read !=
+                                                    null &&
+                                                model.pricing.cache_read !== 0
+                                                    ? `
+                                            <div class="price-item">
+                                                <span class="price-label">Cache Read</span>
+                                                <span class="price-value">${formatPrice(model.pricing.cache_read)}/M tokens</span>
+                                            </div>`
+                                                    : ""
+                                            }
+                                        </div>
+                                    </td>
+                                    <td style="text-align: center;">
+                                        <i class="fa-regular fa-copy copy-icon"></i>
+                                    </td>
+                                </tr>
+                            `,
+                                )
+                                .join("")}
+                        </tbody>
+                    </table>
                 `;
 
-                header.appendChild(title);
+                container.innerHTML = tableHTML;
+            }
 
-                // Create models container
-                const modelsContainer = document.createElement("div");
-                modelsContainer.className = "models-container";
+            function sortBy(column) {
+                if (currentSort.column === column) {
+                    currentSort.direction =
+                        currentSort.direction === "asc" ? "desc" : "asc";
+                } else {
+                    currentSort.column = column;
+                    currentSort.direction = "asc";
+                }
+                renderTable();
+            }
 
-                // Add each model
-                models.forEach((model, modelIndex) => {
-                    // model may be a string (id) or an object {id, pricing}
-                    const modelId =
-                        typeof model === "string" ? model : model.id;
-                    const pricing =
-                        typeof model === "object" ? model.pricing : null;
+            function copyModelName(modelId, event) {
+                navigator.clipboard.writeText(modelId);
+                showNotification();
 
-                    const modelItem = document.createElement("div");
-                    modelItem.className = "model-item";
-                    modelItem.style.animationDelay = `${index * 0.1 + modelIndex * 0.02}s`;
-
-                    // Build pricing tags if available
-                    let pricingHtml = "";
-                    if (pricing) {
-                        const inp = fmtPrice(pricing.input);
-                        const out = fmtPrice(pricing.output);
-                        const cw = fmtPrice(pricing.cache_write);
-                        const cr = fmtPrice(pricing.cache_read);
-                        const tags = [
-                            inp
-                                ? `<span class="price-tag"><b>in</b> ${inp}</span>`
-                                : "",
-                            out
-                                ? `<span class="price-tag"><b>out</b> ${out}</span>`
-                                : "",
-                            cw
-                                ? `<span class="price-tag"><b>cw</b> ${cw}</span>`
-                                : "",
-                            cr
-                                ? `<span class="price-tag"><b>cr</b> ${cr}</span>`
-                                : "",
-                        ]
-                            .filter(Boolean)
-                            .join("");
-                        if (tags)
-                            pricingHtml = `<div class="model-item-pricing">${tags}</div>`;
-                    }
-
-                    modelItem.innerHTML = `
-                        <div class="model-item-left">
-                            <span class="model-item-name">${modelId}</span>
-                            ${pricingHtml}
-                        </div>
-                        <i class="fa-regular fa-copy copy-icon"></i>`;
-
-                    // Add click event
-                    modelItem.addEventListener("click", () => {
-                        navigator.clipboard.writeText(modelId);
-                        showNotification();
-
-                        // Flash effect
-                        modelItem.style.background = "rgba(212, 175, 55, 0.3)";
-                        setTimeout(() => {
-                            modelItem.style.background = "";
-                        }, 200);
-                    });
-
-                    modelsContainer.appendChild(modelItem);
-                });
-
-                card.appendChild(header);
-                card.appendChild(modelsContainer);
-
-                return card;
+                const row = event.currentTarget;
+                row.style.background = "rgba(212, 175, 55, 0.2)";
+                setTimeout(() => {
+                    row.style.background = "";
+                }, 300);
             }
 
             function showNotification() {
@@ -425,59 +652,62 @@
                 }, 2000);
             }
 
-            async function displayModels() {
-                const modelsContainer = document.getElementById(
-                    "model-list-container",
-                );
-
+            async function loadModels() {
                 try {
                     const response = await fetch("/v1/models");
                     const data = await response.json();
-
-                    if (!modelsContainer) return;
-
-                    // Clear loading state
-                    modelsContainer.innerHTML = "";
-
-                    // Use the full model objects so pricing info is preserved
                     const models = data.data || data.models || data;
 
-                    if (Array.isArray(models) && models.length > 0) {
-                        const categorizedModels = categorizeModels(models);
-
-                        const gridContainer = document.createElement("div");
-                        gridContainer.className = "models-grid";
-
-                        Object.entries(categorizedModels).forEach(
-                            ([categoryName, categoryModels], index) => {
-                                const card = createCategoryCard(
-                                    categoryName,
-                                    categoryModels,
-                                    index,
-                                );
-                                gridContainer.appendChild(card);
-                            },
-                        );
-
-                        modelsContainer.appendChild(gridContainer);
-                    } else {
-                        modelsContainer.innerHTML = `
-                            <div style="text-align: center; margin-top: 50px;">
-                                <i class="fa-solid fa-skull-crossbones fa-3x" style="color: gray"></i>
-                                <p style="margin-top: 20px; font-size: 1.2rem;">No model found.</p>
-                            </div>`;
+                    if (!Array.isArray(models) || models.length === 0) {
+                        document.getElementById("table-container").innerHTML = `
+                            <div class="no-results">
+                                <i class="fa-solid fa-skull-crossbones fa-2x" style="color: #ccc"></i>
+                                <p style="margin-top: 15px">No models found</p>
+                            </div>
+                        `;
+                        return;
                     }
+
+                    allModels = models.map((model) => {
+                        const modelId =
+                            typeof model === "string"
+                                ? model
+                                : model.id || model.name || model.model;
+                        const pricing =
+                            typeof model === "object" ? model.pricing : null;
+                        const provider = getProvider(modelId);
+
+                        return {
+                            id: modelId,
+                            provider: provider,
+                            pricing: pricing || {
+                                input: 0,
+                                output: 0,
+                                cache_write: 0,
+                                cache_read: 0,
+                            },
+                        };
+                    });
+
+                    filteredModels = allModels;
+
+                    // Preload all icons before rendering
+                    await preloadAllIcons();
+
+                    renderFilters();
+                    renderTable();
                 } catch (error) {
                     console.error("Failed to fetch models", error);
-                    modelsContainer.innerHTML = `
-                        <div style="text-align: center; margin-top: 50px;">
-                            <i class="fa-solid fa-triangle-exclamation fa-3x" style="color: red"></i>
-                            <p style="margin-top: 20px; font-size: 1.2rem;">Failed to retrieve models.</p>
-                        </div>`;
+                    document.getElementById("table-container").innerHTML = `
+                        <div class="no-results">
+                            <i class="fa-solid fa-triangle-exclamation fa-2x" style="color: #e74c3c"></i>
+                            <p style="margin-top: 15px">Failed to load models</p>
+                        </div>
+                    `;
                 }
             }
 
-            document.addEventListener("DOMContentLoaded", displayModels);
+            document.addEventListener("DOMContentLoaded", loadModels);
         </script>
     </body>
 </html>
