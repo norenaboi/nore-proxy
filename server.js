@@ -6,6 +6,7 @@ import Config from "./config/index.js";
 import { loadModelsFromFile, MODEL_REGISTRY } from "./utils/helpers.js";
 import apiKeyManager from "./services/apiKeyManager.js";
 import realtimeStats from "./services/realtimeStats.js";
+import logService from "./services/logService.js";
 
 // Import routes
 import rateLimiter from "./middleware/rateLimiter.js";
@@ -14,6 +15,7 @@ import modelsRoutes from "./routes/models.js";
 import statsRoutes, { setStartupTime } from "./routes/stats.js";
 import adminRoutes from "./routes/admin.js";
 import pagesRoutes from "./routes/pages.js";
+import logsRoutes from "./routes/logs.js";
 
 const app = express();
 
@@ -143,6 +145,7 @@ app.use(modelsRoutes);
 app.use(statsRoutes);
 app.use(adminRoutes);
 app.use(pagesRoutes);
+app.use(logsRoutes);
 
 // Health check
 app.get("/health", (req, res) => {

@@ -132,4 +132,8 @@ router.get("/admin/model-usage", requireSession, (req, res) => {
   serveAdmin(res, "model-usage.html");
 });
 
+router.get("/admin/logs", requireSession, (req, res) => {
+  serveAdmin(res, "logs.html");
+});
+
 export default router;
