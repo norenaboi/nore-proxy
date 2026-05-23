@@ -1,14 +1,8 @@
 import logManager from "../services/logManager.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import realtimeStats from "../services/realtimeStats.js";
-import requestDetailsStorage from "../services/requestDetailsStorage.js";
 import performanceMonitor from "../services/performanceMonitor.js";
-import {
-  requestCount,
-  requestDuration,
-  tokenUsage,
-  errorCount,
-} from "../services/metricsService.js";
+import requestDetailsStorage from "../services/requestDetailsStorage.js";
 import { MODEL_PRICING } from "./helpers.js";
 
 // Cost calculation function based on model type
@@ -158,14 +152,6 @@ export function logRequestEnd(
 
   performanceMonitor.recordRequest(model, duration, success);
 
-  // Prometheus metrics
-  requestCount
-    .labels({ model, status: success ? "success" : "failed", type: "chat" })
-    .inc();
-  requestDuration.labels({ model, type: "chat" }).observe(duration);
-  tokenUsage.labels({ model, token_type: "input" }).inc(inputTokens);
-  tokenUsage.labels({ model, token_type: "output" }).inc(outputTokens);
-
   // Store request details — no message content or response body to limit PII exposure
   const details = {
     request_id: requestId,
@@ -222,10 +208,6 @@ export function logError(requestId, errorType, errorMessage, stackTrace = "") {
   };
 
   realtimeStats.addRecentError(errorData);
-
-  // Prometheus
-  const model = realtimeStats.activeRequests.get(requestId)?.model || "unknown";
-  errorCount.labels({ error_type: errorType, model }).inc();
 
   logManager.writeErrorLog(errorData);
 }

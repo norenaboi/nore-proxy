@@ -400,7 +400,6 @@ async function makeBackendRequest(
 
     const data = {
       model: actualModel,
-      stream: false,
       messages,
       max_tokens: openaiReq.max_tokens,
       temperature: openaiReq.temperature,
@@ -461,6 +460,16 @@ async function makeBackendRequest(
     return responseData;
   } catch (error) {
     console.error(`BACKEND [ID: ${requestId}]: Error:`, error.message);
+    if (error.response) {
+      console.error(
+        `BACKEND [ID: ${requestId}]: Status:`,
+        error.response.status,
+      );
+      console.error(
+        `BACKEND [ID: ${requestId}]: Response:`,
+        JSON.stringify(error.response.data, null, 2),
+      );
+    }
     logError(requestId, error.name || "Error", error.message, error.stack);
     logRequestEnd(requestId, false, 0, 0, error.message);
     throw error;

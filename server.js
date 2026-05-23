@@ -6,11 +6,6 @@ import Config from "./config/index.js";
 import { loadModelsFromFile, MODEL_REGISTRY } from "./utils/helpers.js";
 import apiKeyManager from "./services/apiKeyManager.js";
 import realtimeStats from "./services/realtimeStats.js";
-import {
-  activeRequestsGauge,
-  modelRegistryGauge,
-} from "./services/metricsService.js";
-import prometheusClient from "./services/metricsService.js";
 
 // Import routes
 import rateLimiter from "./middleware/rateLimiter.js";
@@ -125,10 +120,6 @@ function startBackgroundTasks() {
     try {
       realtimeStats.cleanupOldRequests();
 
-      // Update Prometheus gauges
-      activeRequestsGauge.set(realtimeStats.activeRequests.size);
-      modelRegistryGauge.set(Object.keys(MODEL_REGISTRY).length);
-
       // Cleanup complete (debug: active requests = realtimeStats.activeRequests.size)
     } catch (error) {
       console.error("Error in cleanup task:", error);
@@ -152,28 +143,6 @@ app.use(modelsRoutes);
 app.use(statsRoutes);
 app.use(adminRoutes);
 app.use(pagesRoutes);
-
-// Prometheus metrics endpoint — protected by master key
-app.get("/metrics", async (req, res) => {
-  const provided = req.headers.authorization || "";
-  const expected = Config.MASTER_KEY;
-  let authorized = false;
-  try {
-    authorized =
-      provided.length === expected.length &&
-      crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
-  } catch (_) {}
-  if (!authorized) return res.status(403).end("Forbidden");
-
-  try {
-    res.set("Content-Type", prometheusClient.register.contentType);
-    const metrics = await prometheusClient.register.metrics();
-    res.end(metrics);
-  } catch (error) {
-    console.error("Metrics error:", error);
-    res.status(500).end("Internal server error");
-  }
-});
 
 // Health check
 app.get("/health", (req, res) => {
