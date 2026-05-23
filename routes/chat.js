@@ -28,7 +28,7 @@ router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
 
   const openaiReq = req.body;
   const requestId = uuidv4();
-  const isStreaming = openaiReq.stream !== false;
+  const isStreaming = openaiReq.stream === true;
   const modelName = openaiReq.model;
 
   // Extract and remove cache_depth before forwarding.
@@ -114,14 +114,26 @@ async function streamFromBackend(
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
 
-    const errorResponse = {
+    const errorChunk = {
+      id: `chatcmpl-${requestId}`,
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model: modelName,
+      choices: [
+        {
+          index: 0,
+          delta: {},
+          finish_reason: "error",
+        },
+      ],
       error: {
         message: "Error 404: Can't find the model you're looking for.",
         type: "server_error",
         code: 404,
       },
     };
-    res.write(`data: ${JSON.stringify(errorResponse)}\n\ndata: [DONE]\n\n`);
+    res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
+    res.write(`data: [DONE]\n\n`);
     res.end();
     return;
   }
@@ -185,19 +197,33 @@ async function streamFromBackend(
     });
 
     if (response.status !== 200) {
-      const errorResponse = {
+      const errorChunk = {
+        id: `chatcmpl-${requestId}`,
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model: modelName,
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: "error",
+          },
+        ],
         error: {
           message: `Error ${response.status}: ${response.data.statusMessage}`,
           type: "server_error",
           code: response.status,
         },
       };
-      res.write(`data: ${JSON.stringify(errorResponse)}\n\ndata: [DONE]\n\n`);
+      res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
+      res.write(`data: [DONE]\n\n`);
       res.end();
       return;
     }
 
     let buffer = "";
+    const streamId = `chatcmpl-${requestId}`;
+    const streamCreated = Math.floor(Date.now() / 1000);
 
     response.data.on("data", (chunk) => {
       buffer += chunk.toString();
@@ -229,9 +255,27 @@ async function streamFromBackend(
               if (chunkData.usage) {
                 streamUsage = chunkData.usage;
               }
-            }
 
-            res.write(`data: ${payload}\n\n`);
+              // Ensure OpenAI-compatible structure
+              const openaiChunk = {
+                id: chunkData.id || streamId,
+                object: "chat.completion.chunk",
+                created: chunkData.created || streamCreated,
+                model: modelName,
+                choices: choices.map((choice, index) => ({
+                  index: choice.index !== undefined ? choice.index : index,
+                  delta: choice.delta || {},
+                  finish_reason: choice.finish_reason || null,
+                })),
+              };
+
+              // Include usage if present (for final chunk)
+              if (chunkData.usage) {
+                openaiChunk.usage = chunkData.usage;
+              }
+
+              res.write(`data: ${JSON.stringify(openaiChunk)}\n\n`);
+            }
           } catch (e) {
             console.warn(`BACKEND [ID: ${requestId}]: Invalid JSON in stream.`);
           }
@@ -265,14 +309,26 @@ async function streamFromBackend(
 
     response.data.on("error", (error) => {
       console.error(`BACKEND [ID: ${requestId}]: Stream error:`, error);
-      const errorResponse = {
+      const errorChunk = {
+        id: `chatcmpl-${requestId}`,
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model: modelName,
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: "error",
+          },
+        ],
         error: {
-          message: `Error ${response.status}: ${response.data.statusMessage}`,
+          message: error.message || "Stream error occurred",
           type: "server_error",
           code: 500,
         },
       };
-      res.write(`data: ${JSON.stringify(errorResponse)}\n\ndata: [DONE]\n\n`);
+      res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
+      res.write(`data: [DONE]\n\n`);
       logError(requestId, error.name, error.message, error.stack);
       logRequestEnd(requestId, false, 0, 0, error.message);
       res.end();
@@ -280,14 +336,26 @@ async function streamFromBackend(
   } catch (error) {
     console.error(`BACKEND [ID: ${requestId}]: Stream error:`, error);
 
-    const errorResponse = {
+    const errorChunk = {
+      id: `chatcmpl-${requestId}`,
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model: modelName,
+      choices: [
+        {
+          index: 0,
+          delta: {},
+          finish_reason: "error",
+        },
+      ],
       error: {
-        message: `Error 500: Unknown error`,
+        message: error.message || "Unknown error",
         type: "server_error",
         code: 500,
       },
     };
-    res.write(`data: ${JSON.stringify(errorResponse)}\n\ndata: [DONE]\n\n`);
+    res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
+    res.write(`data: [DONE]\n\n`);
     logError(requestId, error.name || "Error", error.message, error.stack);
     logRequestEnd(requestId, false, 0, 0, error.message);
     res.end();
