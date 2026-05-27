@@ -15,186 +15,9 @@
             crossorigin="anonymous"
             referrerpolicy="no-referrer"
         />
+        <link rel="stylesheet" href="shared.css" />
+        <script src="theme.js"></script>
         <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-
-            :root {
-                --primary: #6366f1;
-                --primary-dark: #4f46e5;
-                --primary-light: #a5b4fc;
-                --success: #10b981;
-                --warning: #f59e0b;
-                --danger: #ef4444;
-                --dark: #1e1b4b;
-                --gray-50: #f8fafc;
-                --gray-100: #f1f5f9;
-                --gray-200: #e2e8f0;
-                --gray-300: #cbd5e1;
-                --gray-400: #94a3b8;
-                --gray-500: #64748b;
-                --gray-600: #475569;
-                --gray-700: #334155;
-                --gray-800: #1e293b;
-                --gray-900: #0f172a;
-                --card-shadow:
-                    0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.1);
-                --card-shadow-hover: 0 10px 40px rgba(0, 0, 0, 0.1);
-            }
-
-            body {
-                font-family:
-                    "Inter",
-                    -apple-system,
-                    BlinkMacSystemFont,
-                    sans-serif;
-                background: var(--gray-300);
-                min-height: 100vh;
-            }
-
-            /* Sidebar */
-            .sidebar {
-                position: fixed;
-                left: 0;
-                top: 0;
-                bottom: 0;
-                width: 260px;
-                background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
-                padding: 24px;
-                display: flex;
-                flex-direction: column;
-                z-index: 100;
-            }
-
-            .logo {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                margin-bottom: 40px;
-            }
-
-            .logo-icon {
-                width: 40px;
-                height: 40px;
-                background: linear-gradient(
-                    135deg,
-                    var(--primary) 0%,
-                    #8b5cf6 100%
-                );
-                border-radius: 12px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-
-            .logo-icon svg {
-                width: 24px;
-                height: 24px;
-                fill: white;
-            }
-
-            .logo-text {
-                color: white;
-                font-size: 20px;
-                font-weight: 700;
-            }
-
-            .nav-menu {
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-                flex: 1;
-            }
-
-            .nav-item {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                padding: 12px 16px;
-                border-radius: 10px;
-                color: var(--gray-400);
-                text-decoration: none;
-                transition: all 0.2s ease;
-                cursor: pointer;
-            }
-
-            .nav-item:hover {
-                background: rgba(255, 255, 255, 0.05);
-                color: white;
-            }
-
-            .nav-item.active {
-                background: linear-gradient(
-                    135deg,
-                    var(--primary) 0%,
-                    #8b5cf6 100%
-                );
-                color: white;
-            }
-
-            .nav-item svg {
-                width: 20px;
-                height: 20px;
-                fill: currentColor;
-            }
-
-            .logout {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                padding: 12px 16px;
-                border-radius: 10px;
-                color: var(--danger);
-                text-decoration: none;
-                transition: all 0.2s ease;
-                cursor: pointer;
-                border: none;
-                background: rgba(239, 68, 68, 0.1);
-                font-size: 14px;
-                font-family: inherit;
-                width: 100%;
-            }
-
-            .logout:hover {
-                background: rgba(239, 68, 68, 0.2);
-            }
-
-            .logout svg {
-                width: 20px;
-                height: 20px;
-                fill: currentColor;
-            }
-
-            /* Main Content */
-            .main-content {
-                margin-left: 260px;
-                padding: 32px;
-                min-height: 100vh;
-            }
-
-            .header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 32px;
-            }
-
-            h1 {
-                color: var(--gray-900);
-                font-size: 28px;
-                font-weight: 700;
-            }
-
-            .header-actions {
-                display: flex;
-                align-items: center;
-                gap: 16px;
-            }
-
-            /* Summary Cards */
             .summary-cards {
                 display: grid;
                 grid-template-columns: repeat(4, 1fr);
@@ -203,7 +26,7 @@
             }
 
             .summary-card {
-                background: white;
+                background: var(--card-bg);
                 border-radius: 16px;
                 padding: 24px;
                 box-shadow: var(--card-shadow);
@@ -225,7 +48,7 @@
             }
 
             .summary-card h3 {
-                color: var(--gray-500);
+                color: var(--text-secondary);
                 font-size: 13px;
                 font-weight: 500;
                 text-transform: uppercase;
@@ -251,13 +74,13 @@
             .summary-card .value {
                 font-size: 32px;
                 font-weight: 700;
-                color: var(--gray-900);
+                color: var(--text-primary);
                 margin-bottom: 8px;
             }
 
             .card-trend {
                 font-size: 12px;
-                color: var(--gray-500);
+                color: var(--text-secondary);
             }
 
             .card-cost {
@@ -277,7 +100,6 @@
                 color: var(--danger);
             }
 
-            /* Tables Container */
             .tables-grid {
                 display: flex;
                 flex-direction: column;
@@ -285,7 +107,7 @@
             }
 
             .table-card {
-                background: white;
+                background: var(--card-bg);
                 border-radius: 16px;
                 box-shadow: var(--card-shadow);
                 overflow: hidden;
@@ -302,7 +124,7 @@
             .table-header h2 {
                 font-size: 18px;
                 font-weight: 600;
-                color: var(--gray-800);
+                color: var(--text-primary);
                 display: flex;
                 align-items: center;
                 gap: 10px;
@@ -334,7 +156,7 @@
                 text-align: left;
                 font-weight: 600;
                 font-size: 12px;
-                color: var(--gray-500);
+                color: var(--text-secondary);
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
                 border-bottom: 1px solid var(--gray-200);
@@ -344,7 +166,7 @@
                 padding: 16px 20px;
                 border-bottom: 1px solid var(--gray-100);
                 font-size: 14px;
-                color: var(--gray-700);
+                color: var(--text-primary);
             }
 
             tr:last-child td {
@@ -390,7 +212,7 @@
 
             .name-text {
                 font-weight: 600;
-                color: var(--gray-800);
+                color: var(--text-primary);
             }
 
             .model-badge {
@@ -403,7 +225,7 @@
             }
 
             .timestamp {
-                color: var(--gray-500);
+                color: var(--text-secondary);
                 font-size: 13px;
             }
 
@@ -429,7 +251,6 @@
                 color: var(--success);
             }
 
-            /* Loading & Error States */
             .loading {
                 display: flex;
                 flex-direction: column;
@@ -474,19 +295,9 @@
                 fill: var(--danger);
             }
 
-            /* Responsive */
             @media (max-width: 1400px) {
                 .summary-cards {
                     grid-template-columns: repeat(2, 1fr);
-                }
-            }
-
-            @media (max-width: 1024px) {
-                .sidebar {
-                    transform: translateX(-100%);
-                }
-                .main-content {
-                    margin-left: 0;
                 }
             }
 
@@ -494,35 +305,12 @@
                 .summary-cards {
                     grid-template-columns: 1fr;
                 }
-                .main-content {
-                    padding: 20px;
-                }
                 table {
                     display: block;
                     overflow-x: auto;
                 }
             }
 
-            /* Scrollbar Styling */
-            ::-webkit-scrollbar {
-                width: 8px;
-                height: 8px;
-            }
-
-            ::-webkit-scrollbar-track {
-                background: var(--gray-100);
-            }
-
-            ::-webkit-scrollbar-thumb {
-                background: var(--gray-300);
-                border-radius: 4px;
-            }
-
-            ::-webkit-scrollbar-thumb:hover {
-                background: var(--gray-400);
-            }
-
-            /* Empty State */
             .empty-state {
                 text-align: center;
                 padding: 48px 24px;
@@ -538,7 +326,6 @@
         </style>
     </head>
     <body>
-        <!-- Sidebar -->
         <aside class="sidebar">
             <div class="logo">
                 <div class="logo-icon">
@@ -552,13 +339,13 @@
                     <i class="fa-brands fa-quinscape"></i>
                     <span>Dashboard</span>
                 </a>
-                <a class="nav-item" href="/admin/users">
-                    <i class="fa-solid fa-users"></i>
-                    <span>Users</span>
-                </a>
                 <a class="nav-item" href="/admin/model-usage">
                     <i class="fa-solid fa-chart-line"></i>
                     <span>Model Usage</span>
+                </a>
+                <a class="nav-item" href="/admin/users">
+                    <i class="fa-solid fa-users"></i>
+                    <span>Users</span>
                 </a>
                 <a class="nav-item" href="/admin/keys">
                     <i class="fa-solid fa-key"></i>
@@ -572,13 +359,13 @@
                     <i class="fa-solid fa-comment-nodes"></i>
                     <span>Models</span>
                 </a>
-                <a class="nav-item" href="/admin/settings">
-                    <i class="fa-solid fa-sliders"></i>
-                    <span>Settings</span>
-                </a>
                 <a class="nav-item" href="/admin/logs">
                     <i class="fa-solid fa-terminal"></i>
                     <span>Logs</span>
+                </a>
+                <a class="nav-item" href="/admin/settings">
+                    <i class="fa-solid fa-sliders"></i>
+                    <span>Settings</span>
                 </a>
             </nav>
 
@@ -588,7 +375,6 @@
             </button>
         </aside>
 
-        <!-- Main Content -->
         <main class="main-content">
             <div id="loading" class="loading">
                 <div class="loading-spinner"></div>
@@ -602,9 +388,19 @@
             <div id="dashboard" style="display: none">
                 <header class="header">
                     <h1>API Usage Dashboard</h1>
+                    <div class="header-actions">
+                        <button
+                            class="theme-toggle"
+                            onclick="toggleTheme()"
+                            aria-label="Toggle theme"
+                        >
+                            <span class="theme-toggle-slider">
+                                <i class="fa-solid fa-sun"></i>
+                            </span>
+                        </button>
+                    </div>
                 </header>
 
-                <!-- Summary Cards -->
                 <div class="summary-cards">
                     <div class="summary-card">
                         <div class="card-header">
@@ -769,9 +565,7 @@
                     </div>
                 </div>
 
-                <!-- Tables -->
                 <div class="tables-grid">
-                    <!-- API Keys Table -->
                     <div class="table-card">
                         <div class="table-header">
                             <h2>
@@ -801,7 +595,6 @@
                         </table>
                     </div>
 
-                    <!-- Recent Logs Table -->
                     <div class="table-card">
                         <div class="table-header">
                             <h2>

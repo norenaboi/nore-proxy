@@ -8,173 +8,15 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
           crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="shared.css" />
+    <script src="theme.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        :root {
-            --primary: #6366f1;
-            --primary-dark: #4f46e5;
-            --primary-light: #a5b4fc;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --dark: #1e1b4b;
-            --gray-50: #f8fafc;
-            --gray-100: #f1f5f9;
-            --gray-200: #e2e8f0;
-            --gray-300: #cbd5e1;
-            --gray-400: #94a3b8;
-            --gray-500: #64748b;
-            --gray-600: #475569;
-            --gray-700: #334155;
-            --gray-800: #1e293b;
-            --gray-900: #0f172a;
-            --card-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.1);
-            --card-shadow-hover: 0 10px 40px rgba(0,0,0,0.1);
-        }
-
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--gray-300);
-            min-height: 100vh;
-        }
-
-        /* Sidebar */
-        .sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: 260px;
-            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
-            padding: 24px;
-            display: flex;
-            flex-direction: column;
-            z-index: 100;
-        }
-
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 40px;
-        }
-
-        .logo-icon {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .logo-icon svg {
-            width: 24px;
-            height: 24px;
-            fill: white;
-        }
-
-        .logo-text {
-            color: white;
-            font-size: 20px;
-            font-weight: 700;
-        }
-
-        .nav-menu {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            flex: 1;
-        }
-
-        .nav-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 16px;
-            border-radius: 10px;
-            color: var(--gray-400);
-            text-decoration: none;
-            transition: all 0.2s ease;
-            cursor: pointer;
-        }
-
-        .nav-item:hover {
-            background: rgba(255,255,255,0.05);
-            color: white;
-        }
-
-        .nav-item.active {
-            background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
-            color: white;
-        }
-
-        .nav-item svg {
-            width: 20px;
-            height: 20px;
-            fill: currentColor;
-        }
-
-        .logout {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 16px;
-            border-radius: 10px;
-            color: var(--danger);
-            text-decoration: none;
-            transition: all 0.2s ease;
-            cursor: pointer;
-            border: none;
-            background: rgba(239, 68, 68, 0.1);
-            font-size: 14px;
-            font-family: inherit;
-            width: 100%;
-        }
-
-        .logout:hover {
-            background: rgba(239, 68, 68, 0.2);
-        }
-
-        .logout svg {
-            width: 20px;
-            height: 20px;
-            fill: currentColor;
-        }
-
-        /* Main Content */
-        .main-content {
-            margin-left: 260px;
-            padding: 32px;
-            min-height: 100vh;
-        }
-
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 32px;
-        }
-
-        h1 {
-            color: var(--gray-900);
-            font-size: 28px;
-            font-weight: 700;
-        }
-
         .header-actions {
             display: flex;
             align-items: center;
             gap: 16px;
         }
 
-        /* Loading & Error States */
         .loading {
             display: flex;
             flex-direction: column;
@@ -217,41 +59,7 @@
             fill: var(--danger);
         }
 
-        @media (max-width: 1024px) {
-            .sidebar {
-                transform: translateX(-100%);
-            }
-            .main-content {
-                margin-left: 0;
-            }
-        }
 
-        @media (max-width: 768px) {
-            .main-content {
-                padding: 20px;
-            }
-        }
-
-        /* Scrollbar Styling */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: var(--gray-100);
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: var(--gray-300);
-            border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--gray-400);
-        }
-
-        /* Empty State */
         .empty-state {
             text-align: center;
             padding: 48px 24px;
@@ -264,9 +72,8 @@
             fill: var(--gray-300);
             margin-bottom: 16px;
         }
-    </style>
-    <style>
-        /* Button Styles */
+
+
         .btn {
             display: inline-flex;
             align-items: center;
@@ -314,9 +121,9 @@
             font-size: 12px;
         }
 
-        /* Card Styles */
+
         .card {
-            background: white;
+            background: var(--card-bg);
             border-radius: 16px;
             box-shadow: var(--card-shadow);
             overflow: hidden;
@@ -340,7 +147,7 @@
             padding: 24px;
         }
 
-        /* Models List */
+
         .models-list {
             display: flex;
             flex-direction: column;
@@ -464,7 +271,7 @@
             gap: 8px;
         }
 
-        /* Modal Styles */
+
         .modal-overlay {
             position: fixed;
             top: 0;
@@ -488,7 +295,7 @@
         }
 
         .modal {
-            background: white;
+            background: var(--card-bg);
             border-radius: 16px;
             width: 100%;
             max-width: 560px;
@@ -546,7 +353,6 @@
             gap: 12px;
         }
 
-        /* Form Styles */
         .form-group {
             margin-bottom: 18px;
         }
@@ -577,7 +383,7 @@
             outline: none;
             border-color: var(--primary);
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-            background: white;
+            background: var(--card-bg);
         }
 
         .form-input::placeholder {
@@ -611,7 +417,6 @@
             gap: 6px;
         }
 
-        /* Toast Notification */
         .toast {
             position: fixed;
             bottom: 24px;
@@ -642,7 +447,6 @@
             background: var(--danger);
         }
 
-        /* Stats Badge */
         .stats-badge {
             display: inline-flex;
             align-items: center;
@@ -660,7 +464,7 @@
     </style>
 </head>
 <body>
-    <!-- Sidebar -->
+
     <aside class="sidebar">
         <div class="logo">
             <div class="logo-icon">
@@ -674,13 +478,13 @@
                 <i class="fa-brands fa-quinscape"></i>
                 <span>Dashboard</span>
             </a>
-            <a class="nav-item" href="/admin/users">
-                <i class="fa-solid fa-users"></i>
-                <span>Users</span>
-            </a>
             <a class="nav-item" href="/admin/model-usage">
                 <i class="fa-solid fa-chart-line"></i>
                 <span>Model Usage</span>
+            </a>
+            <a class="nav-item" href="/admin/users">
+                <i class="fa-solid fa-users"></i>
+                <span>Users</span>
             </a>
             <a class="nav-item" href="/admin/keys">
                 <i class="fa-solid fa-key"></i>
@@ -694,13 +498,13 @@
                 <i class="fa-solid fa-comment-nodes"></i>
                 <span>Models</span>
             </a>
-            <a class="nav-item" href="/admin/settings">
-                <i class="fa-solid fa-sliders"></i>
-                <span>Settings</span>
-            </a>
             <a class="nav-item" href="/admin/logs">
                 <i class="fa-solid fa-terminal"></i>
                 <span>Logs</span>
+            </a>
+            <a class="nav-item" href="/admin/settings">
+                <i class="fa-solid fa-sliders"></i>
+                <span>Settings</span>
             </a>
         </nav>
 
@@ -710,7 +514,7 @@
         </button>
     </aside>
 
-    <!-- Main Content -->
+
     <main class="main-content">
         <div id="loading" class="loading">
             <div class="loading-spinner"></div>
@@ -732,6 +536,11 @@
                 </span>
             </div>
             <div class="header-actions">
+                <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+                    <span class="theme-toggle-slider">
+                        <i class="fa-solid fa-sun"></i>
+                    </span>
+                </button>
                 <button class="btn btn-primary" onclick="openAddModal()">
                     <i class="fa-solid fa-plus"></i>
                     Add Model
@@ -745,7 +554,7 @@
             </div>
             <div class="card-body">
                 <div id="modelsList" class="models-list">
-                    <!-- Models will be rendered here -->
+
                 </div>
                 <div id="emptyState" class="empty-state" style="display: none;">
                     <i class="fa-solid fa-cube"></i>
@@ -757,7 +566,7 @@
             </div>
         </div>
 
-        <!-- Add/Edit Modal -->
+
         <div id="modelModal" class="modal-overlay">
             <div class="modal">
                 <div class="modal-header">
@@ -767,7 +576,7 @@
                     </button>
                 </div>
                 <div class="modal-body">
-                    <!-- Row 1: Display Name | Actual Name | Version -->
+
                     <div class="form-group">
                         <div class="form-row form-row-3">
                             <div>
@@ -784,7 +593,7 @@
                             </div>
                         </div>
                     </div>
-                    <!-- Pricing section -->
+
                     <div class="form-section-label">
                         <i class="fa-solid fa-tag" style="font-size:10px;"></i>
                         Pricing &mdash; $/MTok &nbsp;<span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--gray-400);">(optional, leave blank for 0)</span>
@@ -817,7 +626,7 @@
             </div>
         </div>
 
-        <!-- Delete Confirmation Modal -->
+
         <div id="deleteModal" class="modal-overlay">
             <div class="modal">
                 <div class="modal-header">
@@ -838,7 +647,7 @@
         </div>
     </div>
 
-    <!-- Toast -->
+
     <div id="toast" class="toast"></div>
     </main>
     <script>

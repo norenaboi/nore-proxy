@@ -1,12 +1,10 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import crypto from "crypto";
 import Config from "./config/index.js";
 import { loadModelsFromFile, MODEL_REGISTRY } from "./utils/helpers.js";
 import apiKeyManager from "./services/apiKeyManager.js";
 import realtimeStats from "./services/realtimeStats.js";
-import logService from "./services/logService.js";
 
 // Import routes
 import rateLimiter from "./middleware/rateLimiter.js";

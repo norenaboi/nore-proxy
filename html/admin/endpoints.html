@@ -1,938 +1,742 @@
 ﻿<!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/x-icon" href="favicon.ico" />
-    <title>Admin Endpoints</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
-          crossorigin="anonymous" referrerpolicy="no-referrer" />
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        :root {
-            --primary: #6366f1;
-            --primary-dark: #4f46e5;
-            --primary-light: #a5b4fc;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --dark: #1e1b4b;
-            --gray-50: #f8fafc;
-            --gray-100: #f1f5f9;
-            --gray-200: #e2e8f0;
-            --gray-300: #cbd5e1;
-            --gray-400: #94a3b8;
-            --gray-500: #64748b;
-            --gray-600: #475569;
-            --gray-700: #334155;
-            --gray-800: #1e293b;
-            --gray-900: #0f172a;
-            --card-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.1);
-            --card-shadow-hover: 0 10px 40px rgba(0,0,0,0.1);
-        }
-
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--gray-300);
-            min-height: 100vh;
-        }
-
-        /* Sidebar */
-        .sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: 260px;
-            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
-            padding: 24px;
-            display: flex;
-            flex-direction: column;
-            z-index: 100;
-        }
-
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 40px;
-        }
-
-        .logo-icon {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .logo-icon svg {
-            width: 24px;
-            height: 24px;
-            fill: white;
-        }
-
-        .logo-text {
-            color: white;
-            font-size: 20px;
-            font-weight: 700;
-        }
-
-        .nav-menu {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            flex: 1;
-        }
-
-        .nav-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 16px;
-            border-radius: 10px;
-            color: var(--gray-400);
-            text-decoration: none;
-            transition: all 0.2s ease;
-            cursor: pointer;
-        }
-
-        .nav-item:hover {
-            background: rgba(255,255,255,0.05);
-            color: white;
-        }
-
-        .nav-item.active {
-            background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
-            color: white;
-        }
-
-        .nav-item svg {
-            width: 20px;
-            height: 20px;
-            fill: currentColor;
-        }
-
-        .logout {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 16px;
-            border-radius: 10px;
-            color: var(--danger);
-            text-decoration: none;
-            transition: all 0.2s ease;
-            cursor: pointer;
-            border: none;
-            background: rgba(239, 68, 68, 0.1);
-            font-size: 14px;
-            font-family: inherit;
-            width: 100%;
-        }
-
-        .logout:hover {
-            background: rgba(239, 68, 68, 0.2);
-        }
-
-        .logout svg {
-            width: 20px;
-            height: 20px;
-            fill: currentColor;
-        }
-
-        /* Main Content */
-        .main-content {
-            margin-left: 260px;
-            padding: 32px;
-            min-height: 100vh;
-        }
-
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 32px;
-        }
-
-        h1 {
-            color: var(--gray-900);
-            font-size: 28px;
-            font-weight: 700;
-        }
-
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        /* Loading & Error States */
-        .loading {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 80px;
-            color: var(--gray-600);
-        }
-
-        .loading-spinner {
-            width: 48px;
-            height: 48px;
-            border: 4px solid var(--gray-200);
-            border-top-color: var(--primary);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 16px;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .error {
-            background: rgba(239, 68, 68, 0.1);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            color: white;
-            padding: 20px 24px;
-            border-radius: 12px;
-            margin-bottom: 24px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .error svg {
-            width: 24px;
-            height: 24px;
-            fill: var(--danger);
-        }
-
-        @media (max-width: 1024px) {
-            .sidebar {
-                transform: translateX(-100%);
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="icon" type="image/x-icon" href="favicon.ico" />
+        <title>Admin Endpoints</title>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
+            crossorigin="anonymous" referrerpolicy="no-referrer" />
+        <link rel="stylesheet" href="shared.css" />
+        <script src="theme.js"></script>
+        <style>
+            .loading {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 80px;
+                color: var(--gray-600);
             }
-            .main-content {
-                margin-left: 0;
+
+            .loading-spinner {
+                width: 48px;
+                height: 48px;
+                border: 4px solid var(--gray-200);
+                border-top-color: var(--primary);
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin-bottom: 16px;
             }
-        }
 
-        @media (max-width: 768px) {
-            .main-content {
-                padding: 20px;
+            @keyframes spin {
+                to { transform: rotate(360deg); }
             }
-        }
 
-        /* Scrollbar Styling */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
+            .error {
+                background: rgba(239, 68, 68, 0.1);
+                backdrop-filter: blur(10px);
+                border: 1px solid rgba(239, 68, 68, 0.3);
+                color: white;
+                padding: 20px 24px;
+                border-radius: 12px;
+                margin-bottom: 24px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
 
-        ::-webkit-scrollbar-track {
-            background: var(--gray-100);
-        }
+            .error svg {
+                width: 24px;
+                height: 24px;
+                fill: var(--danger);
+            }
 
-        ::-webkit-scrollbar-thumb {
-            background: var(--gray-300);
-            border-radius: 4px;
-        }
+            .empty-state {
+                text-align: center;
+                padding: 48px 24px;
+                color: var(--gray-400);
+            }
 
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--gray-400);
-        }
+            .empty-state svg {
+                width: 48px;
+                height: 48px;
+                fill: var(--gray-300);
+                margin-bottom: 16px;
+            }
 
-        /* Empty State */
-        .empty-state {
-            text-align: center;
-            padding: 48px 24px;
-            color: var(--gray-400);
-        }
+            .btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 10px 20px;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                border: none;
+                font-family: inherit;
+            }
 
-        .empty-state svg {
-            width: 48px;
-            height: 48px;
-            fill: var(--gray-300);
-            margin-bottom: 16px;
-        }
-    </style>
-    <style>
-        /* Button Styles */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 10px 20px;
-            border-radius: 10px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            border: none;
-            font-family: inherit;
-        }
+            .btn-primary {
+                background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
+                color: white;
+            }
 
-        .btn-primary {
-            background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
-            color: white;
-        }
+            .btn-primary:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+            }
 
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-        }
+            .btn-danger {
+                background: var(--danger);
+                color: white;
+            }
 
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
+            .btn-danger:hover {
+                background: #dc2626;
+            }
 
-        .btn-danger:hover {
-            background: #dc2626;
-        }
+            .btn-secondary {
+                background: var(--gray-200);
+                color: var(--gray-700);
+            }
 
-        .btn-secondary {
-            background: var(--gray-200);
-            color: var(--gray-700);
-        }
+            .btn-secondary:hover {
+                background: var(--gray-300);
+            }
 
-        .btn-secondary:hover {
-            background: var(--gray-300);
-        }
+            .btn-sm {
+                padding: 6px 12px;
+                font-size: 12px;
+            }
 
-        .btn-sm {
-            padding: 6px 12px;
-            font-size: 12px;
-        }
 
-        /* Card Styles */
-        .card {
-            background: white;
-            border-radius: 16px;
-            box-shadow: var(--card-shadow);
-            overflow: hidden;
-        }
+            .card {
+                background: var(--card-bg);
+                border-radius: 16px;
+                box-shadow: var(--card-shadow);
+                overflow: hidden;
+            }
 
-        .card-header {
-            padding: 20px 24px;
-            border-bottom: 1px solid var(--gray-100);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
+            .card-header {
+                padding: 20px 24px;
+                border-bottom: 1px solid var(--gray-100);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
 
-        .card-title {
-            font-size: 16px;
-            font-weight: 600;
-            color: var(--gray-800);
-        }
+            .card-title {
+                font-size: 16px;
+                font-weight: 600;
+                color: var(--gray-800);
+            }
 
-        .card-body {
-            padding: 24px;
-        }
+            .card-body {
+                padding: 24px;
+            }
 
-        /* Models List */
-        .models-list {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
 
-        .model-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 16px 20px;
-            background: var(--gray-50);
-            border-radius: 12px;
-            border: 1px solid var(--gray-200);
-            transition: all 0.2s ease;
-        }
+            .models-list {
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+            }
 
-        .model-item:hover {
-            border-color: var(--primary-light);
-            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.1);
-        }
+            .model-item {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 16px 20px;
+                background: var(--gray-50);
+                border-radius: 12px;
+                border: 1px solid var(--gray-200);
+                transition: all 0.2s ease;
+            }
 
-        .model-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            flex: 1;
-        }
+            .model-item:hover {
+                border-color: var(--primary-light);
+                box-shadow: 0 2px 8px rgba(99, 102, 241, 0.1);
+            }
 
-        .model-icon {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-        }
+            .model-info {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                flex: 1;
+            }
 
-        .model-name {
-            font-weight: 500;
-            color: var(--gray-800);
-        }
+            .model-icon {
+                width: 40px;
+                height: 40px;
+                background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
+                border-radius: 10px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+            }
 
-        .model-mapping {
-            font-size: 12px;
-            color: var(--gray-500);
-            margin-top: 2px;
-        }
+            .model-name {
+                font-weight: 500;
+                color: var(--gray-800);
+            }
 
-        .model-actions {
-            display: flex;
-            gap: 8px;
-        }
+            .model-mapping {
+                font-size: 12px;
+                color: var(--gray-500);
+                margin-top: 2px;
+            }
 
-        /* Modal Styles */
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(4px);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            opacity: 0;
-            visibility: hidden;
-            transition: all 0.3s ease;
-        }
+            .model-actions {
+                display: flex;
+                gap: 8px;
+            }
 
-        .modal-overlay.active {
-            opacity: 1;
-            visibility: visible;
-        }
 
-        .modal {
-            background: white;
-            border-radius: 16px;
-            width: 100%;
-            max-width: 480px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            transform: scale(0.9);
-            transition: transform 0.3s ease;
-        }
+            .modal-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                backdrop-filter: blur(4px);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 1000;
+                opacity: 0;
+                visibility: hidden;
+                transition: all 0.3s ease;
+            }
 
-        .modal-overlay.active .modal {
-            transform: scale(1);
-        }
+            .modal-overlay.active {
+                opacity: 1;
+                visibility: visible;
+            }
 
-        .modal-header {
-            padding: 20px 24px;
-            border-bottom: 1px solid var(--gray-100);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
+            .modal {
+                background: var(--card-bg);
+                border-radius: 16px;
+                width: 100%;
+                max-width: 480px;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                transform: scale(0.9);
+                transition: transform 0.3s ease;
+            }
 
-        .modal-title {
-            font-size: 18px;
-            font-weight: 600;
-            color: var(--gray-800);
-        }
+            .modal-overlay.active .modal {
+                transform: scale(1);
+            }
 
-        .modal-close {
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            border: none;
-            background: var(--gray-100);
-            color: var(--gray-500);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.2s ease;
-        }
+            .modal-header {
+                padding: 20px 24px;
+                border-bottom: 1px solid var(--gray-100);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
 
-        .modal-close:hover {
-            background: var(--gray-200);
-            color: var(--gray-700);
-        }
+            .modal-title {
+                font-size: 18px;
+                font-weight: 600;
+                color: var(--gray-800);
+            }
 
-        .modal-body {
-            padding: 24px;
-        }
+            .modal-close {
+                width: 32px;
+                height: 32px;
+                border-radius: 8px;
+                border: none;
+                background: var(--gray-100);
+                color: var(--gray-500);
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.2s ease;
+            }
 
-        .modal-footer {
-            padding: 16px 24px;
-            border-top: 1px solid var(--gray-100);
-            display: flex;
-            justify-content: flex-end;
-            gap: 12px;
-        }
+            .modal-close:hover {
+                background: var(--gray-200);
+                color: var(--gray-700);
+            }
 
-        /* Form Styles */
-        .form-group {
-            margin-bottom: 20px;
-        }
+            .modal-body {
+                padding: 24px;
+            }
 
-        .form-label {
-            display: block;
-            font-size: 14px;
-            font-weight: 500;
-            color: var(--gray-700);
-            margin-bottom: 8px;
-        }
+            .modal-footer {
+                padding: 16px 24px;
+                border-top: 1px solid var(--gray-100);
+                display: flex;
+                justify-content: flex-end;
+                gap: 12px;
+            }
 
-        .form-input {
-            width: 100%;
-            padding: 12px 16px;
-            border: 1px solid var(--gray-200);
-            border-radius: 10px;
-            font-size: 14px;
-            font-family: inherit;
-            transition: all 0.2s ease;
-            background: var(--gray-50);
-        }
 
-        .form-input:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-            background: white;
-        }
+            .form-group {
+                margin-bottom: 20px;
+            }
 
-        .form-hint {
-            font-size: 12px;
-            color: var(--gray-500);
-            margin-top: 6px;
-        }
+            .form-label {
+                display: block;
+                font-size: 14px;
+                font-weight: 500;
+                color: var(--gray-700);
+                margin-bottom: 8px;
+            }
 
-        /* Toast Notification */
-        .toast {
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            padding: 16px 24px;
-            border-radius: 12px;
-            color: white;
-            font-weight: 500;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            transform: translateY(100px);
-            opacity: 0;
-            transition: all 0.3s ease;
-            z-index: 2000;
-        }
+            .form-input {
+                width: 100%;
+                padding: 12px 16px;
+                border: 1px solid var(--gray-200);
+                border-radius: 10px;
+                font-size: 14px;
+                font-family: inherit;
+                transition: all 0.2s ease;
+                background: var(--gray-50);
+            }
 
-        .toast.show {
-            transform: translateY(0);
-            opacity: 1;
-        }
+            .form-input:focus {
+                outline: none;
+                border-color: var(--primary);
+                box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+                background: var(--card-bg);
+            }
 
-        .toast.success {
-            background: var(--success);
-        }
+            .form-hint {
+                font-size: 12px;
+                color: var(--gray-500);
+                margin-top: 6px;
+            }
 
-        .toast.error {
-            background: var(--danger);
-        }
 
-        /* Stats Badge */
-        .stats-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            background: var(--gray-100);
-            border-radius: 20px;
-            font-size: 13px;
-            color: var(--gray-600);
-        }
+            .toast {
+                position: fixed;
+                bottom: 24px;
+                right: 24px;
+                padding: 16px 24px;
+                border-radius: 12px;
+                color: white;
+                font-weight: 500;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                transform: translateY(100px);
+                opacity: 0;
+                transition: all 0.3s ease;
+                z-index: 2000;
+            }
 
-        .stats-badge i {
-            color: var(--primary);
-        }
-    </style>
-</head>
-<body>
-    <!-- Sidebar -->
-    <aside class="sidebar">
-        <div class="logo">
-            <div class="logo-icon">
-                <i class="fa-brands fa-square-web-awesome-stroke"></i>
-            </div>
-            <span class="logo-text">Admin Panel</span>
-        </div>
+            .toast.show {
+                transform: translateY(0);
+                opacity: 1;
+            }
 
-        <nav class="nav-menu">
-            <a class="nav-item" href="/admin/dashboard">
-                <i class="fa-brands fa-quinscape"></i>
-                <span>Dashboard</span>
-            </a>
-            <a class="nav-item" href="/admin/users">
-                <i class="fa-solid fa-users"></i>
-                <span>Users</span>
-            </a>
-            <a class="nav-item" href="/admin/model-usage">
-                <i class="fa-solid fa-chart-line"></i>
-                <span>Model Usage</span>
-            </a>
-            <a class="nav-item" href="/admin/keys">
-                <i class="fa-solid fa-key"></i>
-                <span>API Keys</span>
-            </a>
-            <a class="nav-item active">
-                <i class="fa-solid fa-hexagon-nodes"></i>
-                <span>Endpoints</span>
-            </a>
-            <a class="nav-item" href="/admin/models">
-                <i class="fa-solid fa-comment-nodes"></i>
-                <span>Models</span>
-            </a>
-            <a class="nav-item" href="/admin/settings">
-                <i class="fa-solid fa-sliders"></i>
-                <span>Settings</span>
-            </a>
-            <a class="nav-item" href="/admin/logs">
-                <i class="fa-solid fa-terminal"></i>
-                <span>Logs</span>
-            </a>
-        </nav>
+            .toast.success {
+                background: var(--success);
+            }
 
-        <button class="logout" onclick="logout()">
-            <i class="fa-solid fa-right-from-bracket"></i>
-            <span>Logout</span>
-        </button>
-    </aside>
+            .toast.error {
+                background: var(--danger);
+            }
 
-    <!-- Main Content -->
-    <main class="main-content">
-        <div id="loading" class="loading">
-            <div class="loading-spinner"></div>
-            <span>Loading endpoints...</span>
-        </div>
 
-        <div id="error" class="error" style="display: none;">
-            <span id="errorText">Error message here</span>
-        </div>
-    </div>
+            .stats-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 6px 12px;
+                background: var(--gray-100);
+                border-radius: 20px;
+                font-size: 13px;
+                color: var(--gray-600);
+            }
 
-    <div id="dashboard" style="display: none;">
-        <header class="header">
-            <div>
-                <h1>Endpoints</h1>
-                <span class="stats-badge" id="endpointCount">
-                    <i class="fa-solid fa-hexagon-nodes"></i>
-                    <span>0 endpoints</span>
-                </span>
-            </div>
-            <div class="header-actions">
-                <button class="btn btn-primary" onclick="openAddModal()">
-                    <i class="fa-solid fa-plus"></i>
-                    Add Endpoint
-                </button>
-            </div>
-        </header>
+            .stats-badge i {
+                color: var(--primary);
+            }
+        </style>
+    </head>
+    <body>
 
-        <div class="card">
-            <div class="card-header">
-                <span class="card-title">Backend Endpoints</span>
-            </div>
-            <div class="card-body">
-                <div id="endpointsList" class="models-list">
-                    <!-- Endpoints will be rendered here -->
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">
+                    <i class="fa-brands fa-square-web-awesome-stroke"></i>
                 </div>
-                <div id="emptyState" class="empty-state" style="display: none;">
+                <span class="logo-text">Admin Panel</span>
+            </div>
+
+            <nav class="nav-menu">
+                <a class="nav-item" href="/admin/dashboard">
+                    <i class="fa-brands fa-quinscape"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a class="nav-item" href="/admin/model-usage">
+                    <i class="fa-solid fa-chart-line"></i>
+                    <span>Model Usage</span>
+                </a>
+                <a class="nav-item" href="/admin/users">
+                    <i class="fa-solid fa-users"></i>
+                    <span>Users</span>
+                </a>
+                <a class="nav-item" href="/admin/keys">
+                    <i class="fa-solid fa-key"></i>
+                    <span>API Keys</span>
+                </a>
+                <a class="nav-item active">
                     <i class="fa-solid fa-hexagon-nodes"></i>
-                    <p>No endpoints configured yet</p>
-                    <button class="btn btn-primary" onclick="openAddModal()" style="margin-top: 16px;">
-                        Add Your First Endpoint
+                    <span>Endpoints</span>
+                </a>
+                <a class="nav-item" href="/admin/models">
+                    <i class="fa-solid fa-comment-nodes"></i>
+                    <span>Models</span>
+                </a>
+                <a class="nav-item" href="/admin/logs">
+                    <i class="fa-solid fa-terminal"></i>
+                    <span>Logs</span>
+                </a>
+                <a class="nav-item" href="/admin/settings">
+                    <i class="fa-solid fa-sliders"></i>
+                    <span>Settings</span>
+                </a>
+            </nav>
+
+            <button class="logout" onclick="logout()">
+                <i class="fa-solid fa-right-from-bracket"></i>
+                <span>Logout</span>
+            </button>
+        </aside>
+
+
+        <main class="main-content">
+            <div id="loading" class="loading">
+                <div class="loading-spinner"></div>
+                <span>Loading endpoints...</span>
+            </div>
+
+            <div id="error" class="error" style="display: none;">
+                <span id="errorText">Error message here</span>
+            </div>
+        </div>
+
+        <div id="dashboard" style="display: none;">
+            <header class="header">
+                <div>
+                    <h1>Endpoints</h1>
+                    <span class="stats-badge" id="endpointCount">
+                        <i class="fa-solid fa-hexagon-nodes"></i>
+                        <span>0 endpoints</span>
+                    </span>
+                </div>
+                <div class="header-actions">
+                    <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+                        <span class="theme-toggle-slider">
+                            <i class="fa-solid fa-sun"></i>
+                        </span>
+                    </button>
+                    <button class="btn btn-primary" onclick="openAddModal()">
+                        <i class="fa-solid fa-plus"></i>
+                        Add Endpoint
                     </button>
                 </div>
-            </div>
-        </div>
+            </header>
 
-        <!-- Add/Edit Modal -->
-        <div id="endpointModal" class="modal-overlay">
-            <div class="modal">
-                <div class="modal-header">
-                    <span class="modal-title" id="modalTitle">Add Endpoint</span>
-                    <button class="modal-close" onclick="closeModal()">
-                        <i class="fa-solid fa-xmark"></i>
-                    </button>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Backend Endpoints</span>
                 </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label class="form-label">Endpoint URL</label>
-                        <input type="text" id="urlInput" class="form-input" placeholder="e.g., http://localhost:8081/v1">
-                        <p class="form-hint">The base URL for the API endpoint</p>
+                <div class="card-body">
+                    <div id="endpointsList" class="models-list">
+
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">API Token</label>
-                        <input type="text" id="tokenInput" class="form-input" placeholder="e.g., sk-your-token">
-                        <p class="form-hint">Authentication token for this endpoint</p>
+                    <div id="emptyState" class="empty-state" style="display: none;">
+                        <i class="fa-solid fa-hexagon-nodes"></i>
+                        <p>No endpoints configured yet</p>
+                        <button class="btn btn-primary" onclick="openAddModal()" style="margin-top: 16px;">
+                            Add Your First Endpoint
+                        </button>
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                    <button class="btn btn-primary" id="modalSubmit" onclick="submitEndpoint()">Add Endpoint</button>
-                </div>
             </div>
-        </div>
 
-        <!-- Delete Confirmation Modal -->
-        <div id="deleteModal" class="modal-overlay">
-            <div class="modal">
-                <div class="modal-header">
-                    <span class="modal-title">Delete Endpoint</span>
-                    <button class="modal-close" onclick="closeDeleteModal()">
-                        <i class="fa-solid fa-xmark"></i>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <p>Are you sure you want to delete <strong id="deleteEndpointName"></strong>?</p>
-                    <p style="color: var(--gray-500); margin-top: 8px; font-size: 14px;">This action cannot be undone.</p>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="closeDeleteModal()">Cancel</button>
-                    <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
-                </div>
-            </div>
-        </div>
-    </div>
 
-    <!-- Toast -->
-    <div id="toast" class="toast"></div>
-    </main>
-    <script>
-        let endpoints = [];
-        let editingEndpoint = null;
-        let deletingEndpoint = null;
-
-        // Logout
-        async function logout() {
-            await fetch('/admin/logout', { method: 'POST' }).catch(() => {});
-            window.location.href = '/admin/login';
-        }
-
-        // Load endpoints on page load
-        document.addEventListener('DOMContentLoaded', loadEndpoints);
-
-        async function loadEndpoints() {
-            try {
-                const response = await fetch('/api/endpoints', {
-                    method: 'GET',
-                });
-
-                if (!response.ok) throw new Error('Failed to load endpoints');
-
-                const data = await response.json();
-                endpoints = data.endpoints || [];
-                renderEndpoints();
-
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('dashboard').style.display = 'block';
-            } catch (error) {
-                showError(error.message);
-            }
-        }
-
-        function renderEndpoints() {
-            const list = document.getElementById('endpointsList');
-            const emptyState = document.getElementById('emptyState');
-            const countBadge = document.getElementById('endpointCount');
-
-            countBadge.innerHTML = `<i class="fa-solid fa-hexagon-nodes"></i><span>${endpoints.length} endpoint${endpoints.length !== 1 ? 's' : ''}</span>`;
-
-            if (endpoints.length === 0) {
-                list.style.display = 'none';
-                emptyState.style.display = 'block';
-                return;
-            }
-
-            list.style.display = 'flex';
-            emptyState.style.display = 'none';
-
-            list.innerHTML = endpoints.map((endpoint) => {
-                const maskedToken = endpoint.token.substring(0, 7) + '...' + endpoint.token.substring(endpoint.token.length - 4);
-
-                return `
-                    <div class="model-item">
-                        <div class="model-info">
-                            <div class="model-icon">
-                                <i class="fa-solid fa-server"></i>
-                            </div>
-                            <div>
-                                <div class="model-name">V${endpoint.index}</div>
-                                <div class="model-mapping">${escapeHtml(endpoint.url)}</div>
-                                <div class="model-mapping" style="color: var(--gray-400); font-family: monospace;">${escapeHtml(maskedToken)}</div>
-                            </div>
+            <div id="endpointModal" class="modal-overlay">
+                <div class="modal">
+                    <div class="modal-header">
+                        <span class="modal-title" id="modalTitle">Add Endpoint</span>
+                        <button class="modal-close" onclick="closeModal()">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label class="form-label">Endpoint URL</label>
+                            <input type="text" id="urlInput" class="form-input" placeholder="e.g., http://localhost:8081/v1">
+                            <p class="form-hint">The base URL for the API endpoint</p>
                         </div>
-                        <div class="model-actions">
-                            <button class="btn btn-secondary btn-sm" onclick="openEditModal(${endpoint.index})">
-                                <i class="fa-solid fa-pen"></i>
-                                Edit
-                            </button>
-                            <button class="btn btn-danger btn-sm" onclick="openDeleteModal(${endpoint.index})">
-                                <i class="fa-solid fa-trash"></i>
-                            </button>
+                        <div class="form-group">
+                            <label class="form-label">API Token</label>
+                            <input type="text" id="tokenInput" class="form-input" placeholder="e.g., sk-your-token">
+                            <p class="form-hint">Authentication token for this endpoint</p>
                         </div>
                     </div>
-                `;
-            }).join('');
-        }
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                        <button class="btn btn-primary" id="modalSubmit" onclick="submitEndpoint()">Add Endpoint</button>
+                    </div>
+                </div>
+            </div>
 
-        function openAddModal() {
-            editingEndpoint = null;
-            document.getElementById('modalTitle').textContent = 'Add Endpoint';
-            document.getElementById('modalSubmit').textContent = 'Add Endpoint';
-            document.getElementById('urlInput').value = '';
-            document.getElementById('tokenInput').value = '';
-            document.getElementById('endpointModal').classList.add('active');
-        }
 
-        function openEditModal(index) {
-            const endpoint = endpoints.find(e => e.index === index);
-            if (!endpoint) return;
+            <div id="deleteModal" class="modal-overlay">
+                <div class="modal">
+                    <div class="modal-header">
+                        <span class="modal-title">Delete Endpoint</span>
+                        <button class="modal-close" onclick="closeDeleteModal()">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Are you sure you want to delete <strong id="deleteEndpointName"></strong>?</p>
+                        <p style="color: var(--gray-500); margin-top: 8px; font-size: 14px;">This action cannot be undone.</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="closeDeleteModal()">Cancel</button>
+                        <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-            editingEndpoint = index;
-            document.getElementById('modalTitle').textContent = 'Edit Endpoint';
-            document.getElementById('modalSubmit').textContent = 'Save Changes';
-            document.getElementById('urlInput').value = endpoint.url;
-            // Token is masked server-side — clear the field so the user
-            // can optionally enter a new token; leaving it blank keeps the existing one.
-            document.getElementById('tokenInput').value = '';
-            document.getElementById('tokenInput').placeholder = 'Leave blank to keep existing token';
-            document.getElementById('endpointModal').classList.add('active');
-        }
 
-        function closeModal() {
-            document.getElementById('endpointModal').classList.remove('active');
-            editingEndpoint = null;
-        }
+        <div id="toast" class="toast"></div>
+        </main>
+        <script>
+            let endpoints = [];
+            let editingEndpoint = null;
+            let deletingEndpoint = null;
 
-        function openDeleteModal(index) {
-            deletingEndpoint = index;
-            document.getElementById('deleteEndpointName').textContent = `Endpoint V${index}`;
-            document.getElementById('deleteModal').classList.add('active');
-        }
-
-        function closeDeleteModal() {
-            document.getElementById('deleteModal').classList.remove('active');
-            deletingEndpoint = null;
-        }
-
-        async function submitEndpoint() {
-            const url = document.getElementById('urlInput').value.trim();
-            const token = document.getElementById('tokenInput').value.trim();
-
-            if (!url || !token) {
-                showToast('Please enter both URL and token', 'error');
-                return;
+            // Logout
+            async function logout() {
+                await fetch('/admin/logout', { method: 'POST' }).catch(() => {});
+                window.location.href = '/admin/login';
             }
 
-            try {
-                if (editingEndpoint) {
-                    // Update existing endpoint
+            // Load endpoints on page load
+            document.addEventListener('DOMContentLoaded', loadEndpoints);
+
+            async function loadEndpoints() {
+                try {
                     const response = await fetch('/api/endpoints', {
-                        method: 'PUT',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ index: editingEndpoint, url, token })
+                        method: 'GET',
                     });
 
-                    if (!response.ok) {
-                        const data = await response.json();
-                        throw new Error(data.error || 'Failed to update endpoint');
-                    }
+                    if (!response.ok) throw new Error('Failed to load endpoints');
 
-                    showToast('Endpoint updated successfully', 'success');
-                } else {
-                    // Add new endpoint
-                    const response = await fetch('/api/endpoints', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ url, token })
-                    });
-
-                    if (!response.ok) {
-                        const data = await response.json();
-                        throw new Error(data.error || 'Failed to add endpoint');
-                    }
-
-                    showToast('Endpoint added successfully', 'success');
-                }
-
-                closeModal();
-                loadEndpoints();
-            } catch (error) {
-                showToast(error.message, 'error');
-            }
-        }
-
-        async function confirmDelete() {
-            if (!deletingEndpoint) return;
-
-            try {
-                const response = await fetch('/api/endpoints', {
-                    method: 'DELETE',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ index: deletingEndpoint })
-                });
-
-                if (!response.ok) {
                     const data = await response.json();
-                    throw new Error(data.error || 'Failed to delete endpoint');
+                    endpoints = data.endpoints || [];
+                    renderEndpoints();
+
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('dashboard').style.display = 'block';
+                } catch (error) {
+                    showError(error.message);
+                }
+            }
+
+            function renderEndpoints() {
+                const list = document.getElementById('endpointsList');
+                const emptyState = document.getElementById('emptyState');
+                const countBadge = document.getElementById('endpointCount');
+
+                countBadge.innerHTML = `<i class="fa-solid fa-hexagon-nodes"></i><span>${endpoints.length} endpoint${endpoints.length !== 1 ? 's' : ''}</span>`;
+
+                if (endpoints.length === 0) {
+                    list.style.display = 'none';
+                    emptyState.style.display = 'block';
+                    return;
                 }
 
-                showToast('Endpoint deleted successfully', 'success');
-                closeDeleteModal();
-                loadEndpoints();
-            } catch (error) {
-                showToast(error.message, 'error');
+                list.style.display = 'flex';
+                emptyState.style.display = 'none';
+
+                list.innerHTML = endpoints.map((endpoint) => {
+                    const maskedToken = endpoint.token.substring(0, 7) + '...' + endpoint.token.substring(endpoint.token.length - 4);
+
+                    return `
+                        <div class="model-item">
+                            <div class="model-info">
+                                <div class="model-icon">
+                                    <i class="fa-solid fa-server"></i>
+                                </div>
+                                <div>
+                                    <div class="model-name">V${endpoint.index}</div>
+                                    <div class="model-mapping">${escapeHtml(endpoint.url)}</div>
+                                    <div class="model-mapping" style="color: var(--gray-400); font-family: monospace;">${escapeHtml(maskedToken)}</div>
+                                </div>
+                            </div>
+                            <div class="model-actions">
+                                <button class="btn btn-secondary btn-sm" onclick="openEditModal(${endpoint.index})">
+                                    <i class="fa-solid fa-pen"></i>
+                                    Edit
+                                </button>
+                                <button class="btn btn-danger btn-sm" onclick="openDeleteModal(${endpoint.index})">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
             }
-        }
 
-        function showError(message) {
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('error').style.display = 'flex';
-            document.getElementById('errorText').textContent = message;
-        }
+            function openAddModal() {
+                editingEndpoint = null;
+                document.getElementById('modalTitle').textContent = 'Add Endpoint';
+                document.getElementById('modalSubmit').textContent = 'Add Endpoint';
+                document.getElementById('urlInput').value = '';
+                document.getElementById('tokenInput').value = '';
+                document.getElementById('endpointModal').classList.add('active');
+            }
 
-        function showToast(message, type = 'success') {
-            const toast = document.getElementById('toast');
-            toast.className = `toast ${type}`;
-            toast.innerHTML = `
-                <i class="fa-solid fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
-                ${message}
-            `;
-            toast.classList.add('show');
+            function openEditModal(index) {
+                const endpoint = endpoints.find(e => e.index === index);
+                if (!endpoint) return;
 
-            setTimeout(() => {
-                toast.classList.remove('show');
-            }, 3000);
-        }
+                editingEndpoint = index;
+                document.getElementById('modalTitle').textContent = 'Edit Endpoint';
+                document.getElementById('modalSubmit').textContent = 'Save Changes';
+                document.getElementById('urlInput').value = endpoint.url;
+                // Token is masked server-side — clear the field so the user
+                // can optionally enter a new token; leaving it blank keeps the existing one.
+                document.getElementById('tokenInput').value = '';
+                document.getElementById('tokenInput').placeholder = 'Leave blank to keep existing token';
+                document.getElementById('endpointModal').classList.add('active');
+            }
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-    </script>
-</body>
+            function closeModal() {
+                document.getElementById('endpointModal').classList.remove('active');
+                editingEndpoint = null;
+            }
+
+            function openDeleteModal(index) {
+                deletingEndpoint = index;
+                document.getElementById('deleteEndpointName').textContent = `Endpoint V${index}`;
+                document.getElementById('deleteModal').classList.add('active');
+            }
+
+            function closeDeleteModal() {
+                document.getElementById('deleteModal').classList.remove('active');
+                deletingEndpoint = null;
+            }
+
+            async function submitEndpoint() {
+                const url = document.getElementById('urlInput').value.trim();
+                const token = document.getElementById('tokenInput').value.trim();
+
+                if (!url || !token) {
+                    showToast('Please enter both URL and token', 'error');
+                    return;
+                }
+
+                try {
+                    if (editingEndpoint) {
+                        // Update existing endpoint
+                        const response = await fetch('/api/endpoints', {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ index: editingEndpoint, url, token })
+                        });
+
+                        if (!response.ok) {
+                            const data = await response.json();
+                            throw new Error(data.error || 'Failed to update endpoint');
+                        }
+
+                        showToast('Endpoint updated successfully', 'success');
+                    } else {
+                        // Add new endpoint
+                        const response = await fetch('/api/endpoints', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ url, token })
+                        });
+
+                        if (!response.ok) {
+                            const data = await response.json();
+                            throw new Error(data.error || 'Failed to add endpoint');
+                        }
+
+                        showToast('Endpoint added successfully', 'success');
+                    }
+
+                    closeModal();
+                    loadEndpoints();
+                } catch (error) {
+                    showToast(error.message, 'error');
+                }
+            }
+
+            async function confirmDelete() {
+                if (!deletingEndpoint) return;
+
+                try {
+                    const response = await fetch('/api/endpoints', {
+                        method: 'DELETE',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ index: deletingEndpoint })
+                    });
+
+                    if (!response.ok) {
+                        const data = await response.json();
+                        throw new Error(data.error || 'Failed to delete endpoint');
+                    }
+
+                    showToast('Endpoint deleted successfully', 'success');
+                    closeDeleteModal();
+                    loadEndpoints();
+                } catch (error) {
+                    showToast(error.message, 'error');
+                }
+            }
+
+            function showError(message) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'flex';
+                document.getElementById('errorText').textContent = message;
+            }
+
+            function showToast(message, type = 'success') {
+                const toast = document.getElementById('toast');
+                toast.className = `toast ${type}`;
+                toast.innerHTML = `
+                    <i class="fa-solid fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
+                    ${message}
+                `;
+                toast.classList.add('show');
+
+                setTimeout(() => {
+                    toast.classList.remove('show');
+                }, 3000);
+            }
+
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+        </script>
+    </body>
 </html>

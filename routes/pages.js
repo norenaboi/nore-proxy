@@ -61,7 +61,6 @@ function servePublic(res, filename) {
   }
 }
 
-// Shared static assets (pricing-utils.js, favicon.ico, etc.) served under both prefixes
 const assetsStatic = express.static(assetsDir);
 router.use("/admin", assetsStatic);
 router.use("/", assetsStatic);
