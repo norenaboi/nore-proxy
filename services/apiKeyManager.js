@@ -1,9 +1,7 @@
 import Database from "better-sqlite3";
 import path from "path";
-import { fileURLToPath } from "url";
 import Config from "../config/index.js";
 import logManager from "./logManager.js";
-import fs from "fs";
 
 class APIKeyManager {
   constructor(dbFile = "api_keys.db") {
@@ -17,18 +15,43 @@ class APIKeyManager {
         active INTEGER,
         usage_today INTEGER,
         rpd INTEGER,
+        rpm INTEGER,
         last_reset_date TEXT
       )
     `);
 
+    // Migration: Add rpm column if it doesn't exist
+    this.migrateSchema();
+
     this.stmtInsert = this.db.prepare(`
-      INSERT INTO api_keys (api_key, name, active, usage_today, rpd, last_reset_date)
-      VALUES (@api_key, @name, @active, @usage_today, @rpd, @last_reset_date)
+      INSERT INTO api_keys (api_key, name, active, usage_today, rpd, rpm, last_reset_date)
+      VALUES (@api_key, @name, @active, @usage_today, @rpd, @rpm, @last_reset_date)
     `);
     this.stmtDeleteAll = this.db.prepare("DELETE FROM api_keys");
 
     this.keys = {};
     this.loadKeys();
+  }
+
+  migrateSchema() {
+    try {
+      // Check if rpm column exists
+      const tableInfo = this.db.prepare("PRAGMA table_info(api_keys)").all();
+      const hasRpmColumn = tableInfo.some((col) => col.name === "rpm");
+
+      if (!hasRpmColumn) {
+        console.log("Migrating database: adding rpm column...");
+        this.db.exec(`ALTER TABLE api_keys ADD COLUMN rpm INTEGER`);
+
+        // Set default RPM for existing keys
+        this.db.exec(
+          `UPDATE api_keys SET rpm = ${Config.RPM_DEFAULT} WHERE rpm IS NULL`,
+        );
+        console.log("Database migration completed successfully.");
+      }
+    } catch (error) {
+      console.error("Error during schema migration:", error);
+    }
   }
 
   loadKeys() {
@@ -43,6 +66,7 @@ class APIKeyManager {
           active: Boolean(row.active),
           usage_today: row.usage_today,
           rpd: row.rpd,
+          rpm: row.rpm,
           last_reset_date: row.last_reset_date,
         };
       }
@@ -63,6 +87,7 @@ class APIKeyManager {
           active: data.active ? 1 : 0,
           usage_today: data.usage_today,
           rpd: data.rpd,
+          rpm: data.rpm,
           last_reset_date: data.last_reset_date,
         });
       }
@@ -78,6 +103,7 @@ class APIKeyManager {
       active: this.keys[key].active || false,
       usage_today: this.keys[key].usage_today ?? "NaN",
       rpd: this.keys[key].rpd ?? "NaN",
+      rpm: this.keys[key].rpm ?? "NaN",
     }));
   }
 
@@ -118,8 +144,9 @@ class APIKeyManager {
       throw error;
     }
 
-    // Check rate limit (RPM)
-    rateLimiter.checkRateLimit(apiKey, Config.RPM_DEFAULT);
+    // Check rate limit (RPM) - use key-specific RPM or default
+    const rpmLimit = keyData.rpm || Config.RPM_DEFAULT;
+    rateLimiter.checkRateLimit(apiKey, rpmLimit);
 
     // Increment usage
     this.rateLimitIncrement(apiKey);
@@ -153,11 +180,18 @@ class APIKeyManager {
     this.saveKeys();
   }
 
-  addKey(apiKey, name, rpd = Config.RPD_DEFAULT, usage_today = 0) {
+  addKey(
+    apiKey,
+    name,
+    rpd = Config.RPD_DEFAULT,
+    rpm = Config.RPM_DEFAULT,
+    usage_today = 0,
+  ) {
     this.keys[apiKey] = {
       name,
       active: true,
       rpd,
+      rpm,
       usage_today: usage_today,
       last_reset_date: new Date().toISOString().split("T")[0],
     };
@@ -173,10 +207,11 @@ class APIKeyManager {
     return false;
   }
 
-  updateKey(apiKey, name, rpd, active) {
+  updateKey(apiKey, name, rpd, rpm, active) {
     if (this.keys[apiKey]) {
       this.keys[apiKey].name = name;
       this.keys[apiKey].rpd = rpd;
+      this.keys[apiKey].rpm = rpm;
       this.keys[apiKey].active = active;
       this.saveKeys();
     } else {
@@ -251,6 +286,7 @@ class APIKeyManager {
         0,
       ),
       rate_limit: this.keys[apiKey]?.rpd || 0,
+      rate_limit_rpm: this.keys[apiKey]?.rpm || 0,
       active: this.keys[apiKey]?.active || false,
     };
   }

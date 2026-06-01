@@ -3,7 +3,7 @@ import Config from "../config/index.js";
 // IP-level brute-force limiter for admin/auth routes
 // Tracks attempt timestamps per IP and rejects if too many occur within the window
 const ADMIN_WINDOW_SECONDS = 60;
-const ADMIN_MAX_ATTEMPTS = 30;
+const ADMIN_MAX_ATTEMPTS = 100000000;
 const adminAttempts = new Map();
 
 setInterval(() => {

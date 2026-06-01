@@ -731,7 +731,8 @@
                             <th style="justify-content: center; display:flex;">Status</th>
                             <th>Name</th>
                             <th>API Key</th>
-                            <th>Quota</th>
+                            <th>RPD Quota</th>
+                            <th>RPM Limit</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -766,7 +767,11 @@
                         </td>
                         <td>
                             <span class="key-quota-display">${escapeHtml(key.usage_today)}/${escapeHtml(key.rpd)}</span>
-                            <input type="text" class="edit-rpd" style="display: none;" value="${escapeHtml(key.rpd)}">
+                            <input type="number" class="edit-rpd" style="display: none;" value="${escapeHtml(key.rpd)}">
+                        </td>
+                        <td>
+                            <span class="key-rpm-display">${escapeHtml(key.rpm)}</span>
+                            <input type="number" class="edit-rpm" style="display: none;" value="${escapeHtml(key.rpm)}">
                         </td>
                         <td>
                             <div class="actions" style="">
@@ -815,12 +820,14 @@
                 }
 
                 try {
+                    const body = { api_key: apiKey, name: name };
+
                     const response = await fetch("/api/keys", {
                         method: "POST",
                         headers: {
                             "Content-Type": "application/json",
                         },
-                        body: JSON.stringify({ api_key: apiKey, name: name }),
+                        body: JSON.stringify(body),
                     });
 
                     if (response.status === 401) {
@@ -844,7 +851,7 @@
 
             async function userCount() {
                 try {
-                    const response = await fetch("/api/stats/summary");
+                    const response = await fetch("/api/summary");
                     const data = await response.json();
 
                     const element = document.getElementById("keyCountText");
@@ -861,10 +868,12 @@
 
                 const nameDisplay = row.querySelector(".key-name-display");
                 const rpdDisplay = row.querySelector(".key-quota-display");
+                const rpmDisplay = row.querySelector(".key-rpm-display");
                 const activeDisplay = row.querySelector(".key-active-display");
 
                 const nameInput = row.querySelector(".edit-name");
                 const rpdInput = row.querySelector(".edit-rpd");
+                const rpmInput = row.querySelector(".edit-rpm");
                 const activeInput = row.querySelector(".edit-active");
 
                 const editBtn = row.querySelector(".btn-primary");
@@ -872,16 +881,19 @@
 
                 nameDisplay.style.display = "none";
                 rpdDisplay.style.display = "none";
+                rpmDisplay.style.display = "none";
                 activeDisplay.style.display = "none";
 
                 nameInput.style.display = "block";
                 rpdInput.style.display = "block";
+                rpmInput.style.display = "block";
                 activeInput.style.display = "block";
 
                 editBtn.style.display = "none";
                 saveBtn.style.display = "inline-block";
                 nameInput.focus();
                 rpdInput.focus();
+                rpmInput.focus();
                 activeInput.focus();
             }
 
@@ -890,10 +902,12 @@
                 const row = document.getElementById(`key-row-${apiKey}`);
                 const nameInput = row.querySelector(".edit-name");
                 const rpdInput = row.querySelector(".edit-rpd");
+                const rpmInput = row.querySelector(".edit-rpm");
                 const activeInput = row.querySelector(".edit-active");
 
                 const newName = nameInput.value.trim();
                 const newRpd = rpdInput.value.trim();
+                const newRpm = rpmInput.value.trim();
                 const newActive = activeInput.checked;
 
                 if (!newName) {
@@ -911,6 +925,7 @@
                             name: newName,
                             api_key: apiKey,
                             rpd: newRpd,
+                            rpm: newRpm,
                             active: newActive,
                         }),
                     });

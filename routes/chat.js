@@ -9,7 +9,6 @@ import {
   MODEL_REGISTRY,
   getEndpointForModel,
   estimateTokens,
-  resolveModelName,
   isClaudeModel,
   applyClaudePromptCaching,
 } from "../utils/helpers.js";
