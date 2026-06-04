@@ -358,6 +358,12 @@
 
                     if (!response.ok) {
                         const data = await response.json();
+                        if (response.status === 429) {
+                            throw new Error(
+                                data.detail ||
+                                    "Too many requests. Please wait and try again.",
+                            );
+                        }
                         throw new Error(data.detail || "Error: Request Denied");
                     }
 
