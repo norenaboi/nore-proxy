@@ -33,6 +33,10 @@ class Config {
   })();
   static RPD_DEFAULT = parseInt(process.env.RPD_DEFAULT || "500", 10);
   static RPM_DEFAULT = parseInt(process.env.RPM_DEFAULT || "10", 10);
+  static MAX_CONTEXT_SIZE_DEFAULT = parseInt(
+    process.env.MAX_CONTEXT_SIZE_DEFAULT || "0",
+    10,
+  );
 
   static ENDPOINTS = {};
 
@@ -88,6 +92,10 @@ class Config {
     this.MASTER_KEY = key;
     this.RPD_DEFAULT = parseInt(process.env.RPD_DEFAULT || "500", 10);
     this.RPM_DEFAULT = parseInt(process.env.RPM_DEFAULT || "10", 10);
+    this.MAX_CONTEXT_SIZE_DEFAULT = parseInt(
+      process.env.MAX_CONTEXT_SIZE_DEFAULT || "0",
+      10,
+    );
     this.loadEndpoints();
   }
 }

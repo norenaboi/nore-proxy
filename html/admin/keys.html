@@ -344,6 +344,12 @@
             .actions {
                 display: flex;
                 gap: 8px;
+                white-space: nowrap;
+            }
+
+            .keys-table td:last-child {
+                white-space: nowrap;
+                width: 1%;
             }
 
             .edit-input {
@@ -733,6 +739,7 @@
                             <th>API Key</th>
                             <th>RPD Quota</th>
                             <th>RPM Limit</th>
+                            <th>Max Context</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -763,7 +770,7 @@
                             <input type="text" class="edit-name" style="display: none;" value="${escapeHtml(key.name)}">
                         </td>
                         <td>
-                            <span class="key-display">${escapeHtml(key.api_key)}</span>
+                            <span class="key-display" data-full-key="${escapeHtml(key.api_key)}">${escapeHtml(key.api_key)}</span>
                         </td>
                         <td>
                             <span class="key-quota-display">${escapeHtml(key.usage_today)}/${escapeHtml(key.rpd)}</span>
@@ -772,6 +779,10 @@
                         <td>
                             <span class="key-rpm-display">${escapeHtml(key.rpm)}</span>
                             <input type="number" class="edit-rpm" style="display: none;" value="${escapeHtml(key.rpm)}">
+                        </td>
+                        <td>
+                            <span class="key-max-context-display">${key.max_context_size > 0 ? escapeHtml(String(key.max_context_size)) : "&#8734;"}</span>
+                            <input type="number" class="edit-max-context" style="display: none;" value="${escapeHtml(String(key.max_context_size ?? 0))}" min="0">
                         </td>
                         <td>
                             <div class="actions" style="">
@@ -820,7 +831,10 @@
                 }
 
                 try {
-                    const body = { api_key: apiKey, name: name };
+                    const body = {
+                        api_key: apiKey,
+                        name: name,
+                    };
 
                     const response = await fetch("/api/keys", {
                         method: "POST",
@@ -867,26 +881,35 @@
                 const row = document.getElementById(`key-row-${apiKey}`);
 
                 const nameDisplay = row.querySelector(".key-name-display");
+                const keyDisplay = row.querySelector(".key-display");
                 const rpdDisplay = row.querySelector(".key-quota-display");
                 const rpmDisplay = row.querySelector(".key-rpm-display");
+                const maxContextDisplay = row.querySelector(
+                    ".key-max-context-display",
+                );
                 const activeDisplay = row.querySelector(".key-active-display");
 
                 const nameInput = row.querySelector(".edit-name");
                 const rpdInput = row.querySelector(".edit-rpd");
                 const rpmInput = row.querySelector(".edit-rpm");
+                const maxContextInput = row.querySelector(".edit-max-context");
                 const activeInput = row.querySelector(".edit-active");
 
                 const editBtn = row.querySelector(".btn-primary");
                 const saveBtn = row.querySelector(".btn-success");
 
                 nameDisplay.style.display = "none";
+                const fullKey = keyDisplay.getAttribute("data-full-key");
+                keyDisplay.textContent = fullKey.substring(0, 5) + "...";
                 rpdDisplay.style.display = "none";
                 rpmDisplay.style.display = "none";
+                maxContextDisplay.style.display = "none";
                 activeDisplay.style.display = "none";
 
                 nameInput.style.display = "block";
                 rpdInput.style.display = "block";
                 rpmInput.style.display = "block";
+                maxContextInput.style.display = "block";
                 activeInput.style.display = "block";
 
                 editBtn.style.display = "none";
@@ -894,6 +917,7 @@
                 nameInput.focus();
                 rpdInput.focus();
                 rpmInput.focus();
+                maxContextInput.focus();
                 activeInput.focus();
             }
 
@@ -903,11 +927,14 @@
                 const nameInput = row.querySelector(".edit-name");
                 const rpdInput = row.querySelector(".edit-rpd");
                 const rpmInput = row.querySelector(".edit-rpm");
+                const maxContextInput = row.querySelector(".edit-max-context");
                 const activeInput = row.querySelector(".edit-active");
 
                 const newName = nameInput.value.trim();
                 const newRpd = rpdInput.value.trim();
                 const newRpm = rpmInput.value.trim();
+                const newMaxContextSize =
+                    parseInt(maxContextInput.value, 10) || 0;
                 const newActive = activeInput.checked;
 
                 if (!newName) {
@@ -926,6 +953,7 @@
                             api_key: apiKey,
                             rpd: newRpd,
                             rpm: newRpm,
+                            max_context_size: newMaxContextSize,
                             active: newActive,
                         }),
                     });

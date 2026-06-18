@@ -19,8 +19,10 @@ const router = express.Router();
 router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
   const apiKey = req.apiKey;
 
+  const contextTokens = estimateTokens(JSON.stringify(req.body.messages || []));
+
   try {
-    apiKeyManager.checkForGeneration(apiKey, rateLimiter);
+    apiKeyManager.checkForGeneration(apiKey, rateLimiter, contextTokens);
   } catch (error) {
     return res.status(error.statusCode || 500).json({ error: error.message });
   }

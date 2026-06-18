@@ -266,6 +266,10 @@ router.post("/api/keys", verifySession, async (req, res) => {
     const name = (req.body.name || "").trim();
     const rpd = req.body.rpd || Config.RPD_DEFAULT;
     const rpm = req.body.rpm || Config.RPM_DEFAULT;
+    const max_context_size =
+      req.body.max_context_size !== undefined
+        ? parseInt(req.body.max_context_size, 10)
+        : Config.MAX_CONTEXT_SIZE_DEFAULT;
 
     if (!apiKey || !name) {
       return res.status(400).json({ error: "API key and name are required" });
@@ -275,7 +279,7 @@ router.post("/api/keys", verifySession, async (req, res) => {
       return res.status(400).json({ error: "API key already exists" });
     }
 
-    apiKeyManager.addKey(apiKey, name, rpd, rpm);
+    apiKeyManager.addKey(apiKey, name, rpd, rpm, max_context_size);
     console.log(`Added new API key: ${name}`);
 
     res.json({ message: "API key added successfully" });
@@ -292,6 +296,10 @@ router.put("/api/keys", verifySession, async (req, res) => {
     const apiKey = (req.body.api_key || "").trim();
     const rpd = req.body.rpd;
     const rpm = req.body.rpm;
+    const max_context_size =
+      req.body.max_context_size !== undefined
+        ? parseInt(req.body.max_context_size, 10)
+        : Config.MAX_CONTEXT_SIZE_DEFAULT;
     const active = req.body.active;
 
     if (!newName) {
@@ -304,7 +312,14 @@ router.put("/api/keys", verifySession, async (req, res) => {
       return res.status(400).json({ error: "RPM is required" });
     }
 
-    apiKeyManager.updateKey(apiKey, newName, rpd, rpm, active);
+    apiKeyManager.updateKey(
+      apiKey,
+      newName,
+      rpd,
+      rpm,
+      max_context_size,
+      active,
+    );
     res.json({ message: "API key updated successfully" });
   } catch (error) {
     console.error("Error updating key:", error);

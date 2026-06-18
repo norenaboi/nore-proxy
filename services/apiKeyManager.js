@@ -16,6 +16,7 @@ class APIKeyManager {
         usage_today INTEGER,
         rpd INTEGER,
         rpm INTEGER,
+        max_context_size INTEGER,
         last_reset_date TEXT
       )
     `);
@@ -24,8 +25,8 @@ class APIKeyManager {
     this.migrateSchema();
 
     this.stmtInsert = this.db.prepare(`
-      INSERT INTO api_keys (api_key, name, active, usage_today, rpd, rpm, last_reset_date)
-      VALUES (@api_key, @name, @active, @usage_today, @rpd, @rpm, @last_reset_date)
+      INSERT INTO api_keys (api_key, name, active, usage_today, rpd, rpm, max_context_size, last_reset_date)
+      VALUES (@api_key, @name, @active, @usage_today, @rpd, @rpm, @max_context_size, @last_reset_date)
     `);
     this.stmtDeleteAll = this.db.prepare("DELETE FROM api_keys");
 
@@ -35,19 +36,29 @@ class APIKeyManager {
 
   migrateSchema() {
     try {
-      // Check if rpm column exists
       const tableInfo = this.db.prepare("PRAGMA table_info(api_keys)").all();
-      const hasRpmColumn = tableInfo.some((col) => col.name === "rpm");
+      const columns = tableInfo.map((col) => col.name);
 
-      if (!hasRpmColumn) {
+      if (!columns.includes("rpm")) {
         console.log("Migrating database: adding rpm column...");
         this.db.exec(`ALTER TABLE api_keys ADD COLUMN rpm INTEGER`);
-
-        // Set default RPM for existing keys
         this.db.exec(
           `UPDATE api_keys SET rpm = ${Config.RPM_DEFAULT} WHERE rpm IS NULL`,
         );
-        console.log("Database migration completed successfully.");
+        console.log("Database migration (rpm) completed successfully.");
+      }
+
+      if (!columns.includes("max_context_size")) {
+        console.log("Migrating database: adding max_context_size column...");
+        this.db.exec(
+          `ALTER TABLE api_keys ADD COLUMN max_context_size INTEGER`,
+        );
+        this.db.exec(
+          `UPDATE api_keys SET max_context_size = ${Config.MAX_CONTEXT_SIZE_DEFAULT} WHERE max_context_size IS NULL`,
+        );
+        console.log(
+          "Database migration (max_context_size) completed successfully.",
+        );
       }
     } catch (error) {
       console.error("Error during schema migration:", error);
@@ -67,6 +78,7 @@ class APIKeyManager {
           usage_today: row.usage_today,
           rpd: row.rpd,
           rpm: row.rpm,
+          max_context_size: row.max_context_size,
           last_reset_date: row.last_reset_date,
         };
       }
@@ -88,6 +100,7 @@ class APIKeyManager {
           usage_today: data.usage_today,
           rpd: data.rpd,
           rpm: data.rpm,
+          max_context_size: data.max_context_size,
           last_reset_date: data.last_reset_date,
         });
       }
@@ -104,6 +117,7 @@ class APIKeyManager {
       usage_today: this.keys[key].usage_today ?? "NaN",
       rpd: this.keys[key].rpd ?? "NaN",
       rpm: this.keys[key].rpm ?? "NaN",
+      max_context_size: this.keys[key].max_context_size ?? 0,
     }));
   }
 
@@ -116,7 +130,7 @@ class APIKeyManager {
     return true;
   }
 
-  checkForGeneration(apiKey, rateLimiter) {
+  checkForGeneration(apiKey, rateLimiter, contextTokens = 0) {
     if (!this.keys[apiKey]) {
       const error = new Error("Invalid API Key");
       error.statusCode = 401;
@@ -147,6 +161,17 @@ class APIKeyManager {
     // Check rate limit (RPM) - use key-specific RPM or default
     const rpmLimit = keyData.rpm || Config.RPM_DEFAULT;
     rateLimiter.checkRateLimit(apiKey, rpmLimit);
+
+    // Check context size limit (0 means unlimited)
+    const maxContextSize =
+      keyData.max_context_size ?? Config.MAX_CONTEXT_SIZE_DEFAULT;
+    if (maxContextSize > 0 && contextTokens > maxContextSize) {
+      const error = new Error(
+        `Your request context (${contextTokens} tokens) exceeds the maximum allowed context size of ${maxContextSize} tokens for your API key.`,
+      );
+      error.statusCode = 413;
+      throw error;
+    }
 
     // Increment usage
     this.rateLimitIncrement(apiKey);
@@ -185,6 +210,7 @@ class APIKeyManager {
     name,
     rpd = Config.RPD_DEFAULT,
     rpm = Config.RPM_DEFAULT,
+    max_context_size = Config.MAX_CONTEXT_SIZE_DEFAULT,
     usage_today = 0,
   ) {
     this.keys[apiKey] = {
@@ -192,6 +218,7 @@ class APIKeyManager {
       active: true,
       rpd,
       rpm,
+      max_context_size,
       usage_today: usage_today,
       last_reset_date: new Date().toISOString().split("T")[0],
     };
@@ -207,11 +234,12 @@ class APIKeyManager {
     return false;
   }
 
-  updateKey(apiKey, name, rpd, rpm, active) {
+  updateKey(apiKey, name, rpd, rpm, max_context_size, active) {
     if (this.keys[apiKey]) {
       this.keys[apiKey].name = name;
       this.keys[apiKey].rpd = rpd;
       this.keys[apiKey].rpm = rpm;
+      this.keys[apiKey].max_context_size = max_context_size;
       this.keys[apiKey].active = active;
       this.saveKeys();
     } else {
@@ -287,6 +315,7 @@ class APIKeyManager {
       ),
       rate_limit: this.keys[apiKey]?.rpd || 0,
       rate_limit_rpm: this.keys[apiKey]?.rpm || 0,
+      max_context_size: this.keys[apiKey]?.max_context_size ?? 0,
       active: this.keys[apiKey]?.active || false,
     };
   }
