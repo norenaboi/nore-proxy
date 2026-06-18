@@ -8,7 +8,10 @@ export function verifyApiKey(req, res, next) {
 
   if (!authorization || !authorization.startsWith("Bearer ")) {
     return res.status(401).json({
-      error: "Invalid authorization header format. Expected 'Bearer <token>'",
+      error: {
+        message:
+          "Invalid authorization header format. Expected 'Bearer <token>'",
+      },
     });
   }
 
@@ -20,7 +23,7 @@ export function verifyApiKey(req, res, next) {
     next();
   } catch (error) {
     return res.status(error.statusCode || 401).json({
-      error: error.message || "Invalid or missing API key",
+      error: { message: error.message || "Invalid or missing API key" },
     });
   }
 }
@@ -30,7 +33,10 @@ export function verifyApiKeyForStats(req, res, next) {
 
   if (!authorization || !authorization.startsWith("Bearer ")) {
     return res.status(401).json({
-      error: "Invalid authorization header format. Expected 'Bearer <token>'",
+      error: {
+        message:
+          "Invalid authorization header format. Expected 'Bearer <token>'",
+      },
     });
   }
 
@@ -42,7 +48,7 @@ export function verifyApiKeyForStats(req, res, next) {
     next();
   } catch (error) {
     return res.status(error.statusCode || 401).json({
-      error: error.message || "Invalid or missing API key",
+      error: { message: error.message || "Invalid or missing API key" },
     });
   }
 }

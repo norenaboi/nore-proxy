@@ -24,7 +24,9 @@ router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
   try {
     apiKeyManager.checkForGeneration(apiKey, rateLimiter, contextTokens);
   } catch (error) {
-    return res.status(error.statusCode || 500).json({ error: error.message });
+    return res
+      .status(error.statusCode || 500)
+      .json({ error: { message: error.message } });
   }
 
   const openaiReq = req.body;
