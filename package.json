@@ -5,7 +5,7 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "dev": "nodemon --ext ts,html,css",
+    "dev": "nodemon --ext js,html,css",
     "start": "node server.js"
   },
   "dependencies": {

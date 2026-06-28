@@ -484,7 +484,7 @@
                 grid.innerHTML = allUsers
                     .map(
                         (user) => `
-                    <div class="user-card" onclick="showUserDetail('${escapeHtml(user.api_key)}')">
+                    <div class="user-card" onclick="showUserDetail('${escapeHtml(user.api_key_full)}')">
                         <div class="user-header">
                             <div class="user-avatar">${user.name.charAt(0).toUpperCase()}</div>
                             <div class="user-info">

@@ -1,8 +1,6 @@
 import logManager from "../services/logManager.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import realtimeStats from "../services/realtimeStats.js";
-import performanceMonitor from "../services/performanceMonitor.js";
-import requestDetailsStorage from "../services/requestDetailsStorage.js";
 import { MODEL_PRICING } from "./helpers.js";
 
 // Cost calculation function based on model type
@@ -139,41 +137,13 @@ export function logRequestEnd(
   lines.push("");
   console.log(lines.join("\n"));
 
-  realtimeStats.addRecentRequest({ ...req });
-
-  const model = req.model;
-  const stats = realtimeStats.getModelUsage(model);
-  stats.requests++;
-  if (success) {
-    stats.tokens += inputTokens + outputTokens;
-  } else {
-    stats.errors++;
-  }
-
-  performanceMonitor.recordRequest(model, duration, success);
-
-  // Store request details — no message content or response body to limit PII exposure
-  const details = {
-    request_id: requestId,
-    timestamp: req.start_time,
-    model,
-    status: success ? "success" : "failed",
-    duration,
-    input_tokens: inputTokens,
-    output_tokens: outputTokens,
-    error,
-    request_params: req.params || {},
-    headers: {},
-  };
-  requestDetailsStorage.add(details);
-
   // Write to log file
   const resolvedKey = apiKey || req.api_key;
   const logEntry = {
     type: "request_end",
     timestamp: Date.now() / 1000,
     request_id: requestId,
-    model,
+    model: req.model,
     status: success ? "success" : "failed",
     duration,
     input_tokens: inputTokens,
@@ -206,8 +176,6 @@ export function logError(requestId, errorType, errorMessage, stackTrace = "") {
     error_message: errorMessage,
     // stack_trace intentionally omitted from DB storage
   };
-
-  realtimeStats.addRecentError(errorData);
 
   logManager.writeErrorLog(errorData);
 }

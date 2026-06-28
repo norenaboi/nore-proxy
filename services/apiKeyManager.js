@@ -280,7 +280,7 @@ class APIKeyManager {
     return {
       name: this.keys[apiKey]?.name || "",
       daily_requests: this.keys[apiKey]?.usage_today || 0,
-      total_requests: apiKeyLogsAll.length,
+      total_requests: apiKeyLogsAll.length || 0,
       total_input_tokens: apiKeyLogsAll.reduce(
         (sum, log) => sum + (log.input_tokens || 0),
         0,

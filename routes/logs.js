@@ -1,36 +1,11 @@
 import express from "express";
 import logService from "../services/logService.js";
-import { validateSession } from "../services/sessionManager.js";
+import { verifySession } from "../middleware/auth.js";
 
 const router = express.Router();
 
-function requireSession(req, res, next) {
-  const cookies = {};
-  const header = req.headers.cookie;
-  if (header) {
-    for (const part of header.split(";")) {
-      const idx = part.indexOf("=");
-      if (idx < 0) continue;
-      cookies[part.slice(0, idx).trim()] = decodeURIComponent(
-        part.slice(idx + 1).trim(),
-      );
-    }
-  }
-  if (!validateSession(cookies.adminSession)) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  next();
-}
-
-// Get recent logs
-router.get("/api/logs", requireSession, (req, res) => {
-  const limit = parseInt(req.query.limit) || 100;
-  const logs = logService.getLogs(limit);
-  res.json({ logs });
-});
-
 // SSE endpoint for live logs
-router.get("/api/logs/stream", requireSession, (req, res) => {
+router.get("/api/logs/stream", verifySession, (req, res) => {
   // Set headers for SSE
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -43,9 +18,7 @@ router.get("/api/logs/stream", requireSession, (req, res) => {
   // Send recent logs on connection
   const recentLogs = logService.getLogs(50);
   res.write(
-    "data: " +
-      JSON.stringify({ type: "initial", logs: recentLogs }) +
-      "\n\n",
+    "data: " + JSON.stringify({ type: "initial", logs: recentLogs }) + "\n\n",
   );
 
   // Listen for new logs
@@ -70,7 +43,7 @@ router.get("/api/logs/stream", requireSession, (req, res) => {
 });
 
 // Clear logs
-router.post("/api/logs/clear", requireSession, (req, res) => {
+router.post("/api/logs/clear", verifySession, (req, res) => {
   logService.clearLogs();
   res.json({ success: true, message: "Logs cleared" });
 });

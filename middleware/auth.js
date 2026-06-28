@@ -28,31 +28,6 @@ export function verifyApiKey(req, res, next) {
   }
 }
 
-export function verifyApiKeyForStats(req, res, next) {
-  const authorization = req.headers.authorization;
-
-  if (!authorization || !authorization.startsWith("Bearer ")) {
-    return res.status(401).json({
-      error: {
-        message:
-          "Invalid authorization header format. Expected 'Bearer <token>'",
-      },
-    });
-  }
-
-  const apiKey = authorization.replace("Bearer ", "");
-
-  try {
-    apiKeyManager.validateKey(apiKey);
-    req.apiKey = apiKey;
-    next();
-  } catch (error) {
-    return res.status(error.statusCode || 401).json({
-      error: { message: error.message || "Invalid or missing API key" },
-    });
-  }
-}
-
 export function verifyMasterKey(req, res, next) {
   const provided = req.headers.authorization || "";
   const expected = Config.MASTER_KEY;

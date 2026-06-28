@@ -188,7 +188,7 @@ process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 // Start server
-const server = app.listen(Config.PORT, Config.HOST, async () => {
+const server = app.listen(Config.PORT, async () => {
   await initialize();
 
   const datetime = new Date().toISOString().replace("T", " ").slice(0, 19);

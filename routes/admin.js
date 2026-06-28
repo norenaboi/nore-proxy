@@ -791,6 +791,7 @@ router.get("/api/users", verifySession, async (req, res) => {
       users.push({
         name: stats.name || "Unnamed",
         api_key: apiKey.length > 5 ? apiKey.substring(0, 5) + "..." : apiKey,
+        api_key_full: apiKey, // Send full key for routing (admin-only endpoint, already behind session auth)
         active: stats.active,
         daily_requests: stats.daily_requests || 0,
         total_requests: stats.total_requests || 0,
@@ -818,16 +819,10 @@ router.get("/api/users", verifySession, async (req, res) => {
 // Get individual user details with recent requests
 router.get("/api/users/:apiKey", verifySession, async (req, res) => {
   try {
-    const apiKey = req.params.apiKey;
+    const fullApiKey = req.params.apiKey;
 
-    // Find the full API key from the masked version
-    const allApiKeys = Object.keys(apiKeyManager.keys);
-    const fullApiKey = allApiKeys.find((key) => {
-      const masked = key.length > 5 ? key.substring(0, 5) + "..." : key;
-      return masked === apiKey;
-    });
-
-    if (!fullApiKey) {
+    // Validate that the key exists
+    if (!apiKeyManager.keys[fullApiKey]) {
       return res.status(404).json({ error: "User not found" });
     }
 
@@ -863,7 +858,7 @@ router.get("/api/users/:apiKey", verifySession, async (req, res) => {
 
     res.json({
       name: stats.name || "Unnamed",
-      api_key: apiKey,
+      api_key: fullApiKey.length > 5 ? fullApiKey.substring(0, 5) + "..." : fullApiKey,
       active: stats.active,
       daily_requests: stats.daily_requests || 0,
       total_requests: stats.total_requests || 0,

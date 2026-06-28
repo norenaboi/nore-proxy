@@ -18,9 +18,7 @@ class LogManager {
         timestamp TEXT,
         type TEXT,
         model TEXT,
-        data TEXT,
-        cache_write_tokens INTEGER DEFAULT 0,
-        cache_read_tokens INTEGER DEFAULT 0
+        data TEXT
       );
       CREATE TABLE IF NOT EXISTS error_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

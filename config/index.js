@@ -14,7 +14,6 @@ class Config {
   static PORT = parseInt(process.env.PORT || 8741);
 
   static REQUEST_TIMEOUT_SECONDS = 180;
-  static STATS_UPDATE_INTERVAL = 5;
   static CLEANUP_INTERVAL = 300;
 
   static MAX_LOG_MEMORY_ITEMS = 1000;
