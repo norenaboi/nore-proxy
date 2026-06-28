@@ -187,6 +187,7 @@ export function getEndpointForModel(modelName) {
         url: endpoint.url,
         token: endpoint.token,
         actualModel,
+        customHeaders: endpoint.headers || {},
       };
     }
   }

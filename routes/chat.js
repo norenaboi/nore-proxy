@@ -141,7 +141,7 @@ async function streamFromBackend(
     return;
   }
 
-  const { url: backendUrl, token: backendToken, actualModel } = endpointInfo;
+  const { url: backendUrl, token: backendToken, actualModel, customHeaders } = endpointInfo;
   const fullUrl = `${backendUrl}/chat/completions`;
 
   // Set streaming headers
@@ -191,6 +191,7 @@ async function streamFromBackend(
       method: "post",
       url: fullUrl,
       headers: {
+        ...customHeaders,
         Authorization: `Bearer ${backendToken}`,
         "Content-Type": "application/json",
       },
@@ -380,7 +381,7 @@ async function makeBackendRequest(
     throw error;
   }
 
-  const { url: backendUrl, token: backendToken, actualModel } = endpointInfo;
+  const { url: backendUrl, token: backendToken, actualModel, customHeaders } = endpointInfo;
   const fullUrl = `${backendUrl}/chat/completions`;
 
   try {
@@ -422,6 +423,7 @@ async function makeBackendRequest(
       method: "post",
       url: fullUrl,
       headers: {
+        ...customHeaders,
         Authorization: `Bearer ${backendToken}`,
         "Content-Type": "application/json",
       },

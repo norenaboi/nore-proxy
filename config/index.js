@@ -58,23 +58,40 @@ class Config {
 
     const urlMap = {};
     const tokenMap = {};
+    const headersMap = {};
 
     for (const line of lines) {
       const urlMatch = line.match(/^V(\d+)_URL=(.+)$/);
       const tokenMatch = line.match(/^V(\d+)_TOKEN=(.+)$/);
+      const headersMatch = line.match(/^V(\d+)_HEADERS=(.+)$/);
 
       if (urlMatch) {
         urlMap[urlMatch[1]] = urlMatch[2];
       } else if (tokenMatch) {
         tokenMap[tokenMatch[1]] = tokenMatch[2];
+      } else if (headersMatch) {
+        headersMap[headersMatch[1]] = headersMatch[2];
       }
     }
 
     for (const index of Object.keys(urlMap)) {
       if (tokenMap[index]) {
+        let headers = {};
+        if (headersMap[index]) {
+          try {
+            headers = JSON.parse(headersMap[index]);
+          } catch (e) {
+            console.warn(
+              `Warning: Invalid JSON in V${index}_HEADERS — falling back to {}. Error: ${e.message}`,
+            );
+            headers = {};
+          }
+        }
+
         this.ENDPOINTS[`v${index}`] = {
           url: urlMap[index],
           token: tokenMap[index],
+          headers,
         };
       }
     }

@@ -496,24 +496,40 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
       : "";
     const lines = content.split("\n").filter((line) => line.trim());
 
+    // Build maps keyed by index so HEADERS (optional) doesn't break iteration
+    const urlMap = {};
+    const tokenMap = {};
+    const headersMap = {};
+
+    for (const line of lines) {
+      const urlMatch = line.match(/^V(\d+)_URL=(.+)$/);
+      if (urlMatch) { urlMap[urlMatch[1]] = urlMatch[2]; continue; }
+      const tokenMatch = line.match(/^V(\d+)_TOKEN=(.+)$/);
+      if (tokenMatch) { tokenMap[tokenMatch[1]] = tokenMatch[2]; continue; }
+      const headersMatch = line.match(/^V(\d+)_HEADERS=(.+)$/);
+      if (headersMatch) { headersMap[headersMatch[1]] = headersMatch[2]; }
+    }
+
     const endpoints = [];
-    for (let i = 0; i < lines.length; i += 2) {
-      const urlMatch = lines[i]?.match(/^V(\d+)_URL=(.+)$/);
-      const tokenMatch = lines[i + 1]?.match(/^V(\d+)_TOKEN=(.+)$/);
-      if (urlMatch && tokenMatch && urlMatch[1] === tokenMatch[1]) {
-        const rawToken = tokenMatch[2];
-        const maskedToken =
-          rawToken.length > 8
-            ? rawToken.substring(0, 4) +
-              "****" +
-              rawToken.substring(rawToken.length - 4)
-            : "****";
-        endpoints.push({
-          index: parseInt(urlMatch[1]),
-          url: urlMatch[2],
-          token: maskedToken,
-        });
+    for (const idx of Object.keys(urlMap).sort((a, b) => parseInt(a) - parseInt(b))) {
+      if (!tokenMap[idx]) continue;
+      const rawToken = tokenMap[idx];
+      const maskedToken =
+        rawToken.length > 8
+          ? rawToken.substring(0, 4) +
+            "****" +
+            rawToken.substring(rawToken.length - 4)
+          : "****";
+      let headers = {};
+      if (headersMap[idx]) {
+        try { headers = JSON.parse(headersMap[idx]); } catch (_) { headers = {}; }
       }
+      endpoints.push({
+        index: parseInt(idx),
+        url: urlMap[idx],
+        token: maskedToken,
+        headers,
+      });
     }
 
     res.json({ endpoints });
@@ -529,6 +545,19 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
     const token = (req.body.token || "").trim();
     if (!url || !token)
       return res.status(400).json({ error: "URL and token required" });
+
+    // Validate optional headers if provided
+    let headersObj = null;
+    if (req.body.headers !== undefined) {
+      if (
+        typeof req.body.headers !== "object" ||
+        req.body.headers === null ||
+        Array.isArray(req.body.headers)
+      ) {
+        return res.status(400).json({ error: "headers must be a JSON object" });
+      }
+      headersObj = req.body.headers;
+    }
 
     // Validate URL is well-formed and uses http or https
     try {
@@ -555,10 +584,14 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
     }
 
     const newIndex = maxIndex + 1;
+    let endpointBlock = `V${newIndex}_URL=${url}\nV${newIndex}_TOKEN=${token}`;
+    if (headersObj && Object.keys(headersObj).length > 0) {
+      endpointBlock += `\nV${newIndex}_HEADERS=${JSON.stringify(headersObj)}`;
+    }
     const newContent =
       content.trim() +
       (content.trim() ? "\n\n" : "") +
-      `V${newIndex}_URL=${url}\nV${newIndex}_TOKEN=${token}`;
+      endpointBlock;
     fs.writeFileSync(endpointsPath, newContent);
     res.json({ message: "Endpoint added", index: newIndex });
   } catch (error) {
@@ -578,6 +611,20 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     // Validate index is a plain positive integer to prevent RegExp injection
     if (!/^\d+$/.test(String(index)))
       return res.status(400).json({ error: "Invalid endpoint index" });
+
+    // Validate optional headers if provided
+    let headersProvided = req.body.headers !== undefined;
+    let headersObj = null;
+    if (headersProvided) {
+      if (
+        typeof req.body.headers !== "object" ||
+        req.body.headers === null ||
+        Array.isArray(req.body.headers)
+      ) {
+        return res.status(400).json({ error: "headers must be a JSON object" });
+      }
+      headersObj = req.body.headers;
+    }
 
     // Validate URL is well-formed and uses http or https
     try {
@@ -610,6 +657,31 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     if (updated === content)
       return res.status(404).json({ error: "Endpoint not found" });
 
+    // Handle headers update
+    if (headersProvided) {
+      const headersLineRegex = new RegExp(`^V${index}_HEADERS=.+$`, "m");
+      if (headersObj && Object.keys(headersObj).length > 0) {
+        // Add or replace the HEADERS line
+        if (headersLineRegex.test(updated)) {
+          updated = updated.replace(
+            headersLineRegex,
+            `V${index}_HEADERS=${JSON.stringify(headersObj)}`,
+          );
+        } else {
+          // Insert after the TOKEN line
+          updated = updated.replace(
+            new RegExp(`^(V${index}_TOKEN=.+)$`, "m"),
+            `$1\nV${index}_HEADERS=${JSON.stringify(headersObj)}`,
+          );
+        }
+      } else {
+        // Empty headers object — remove the HEADERS line if it exists
+        updated = updated
+          .replace(new RegExp(`\\nV${index}_HEADERS=.*`, "m"), "")
+          .replace(new RegExp(`^V${index}_HEADERS=.*\\n?`, "m"), "");
+      }
+    }
+
     fs.writeFileSync(endpointsPath, updated);
     res.json({ message: "Endpoint updated" });
   } catch (error) {
@@ -635,7 +707,8 @@ router.delete("/api/endpoints", verifySession, async (req, res) => {
       const trimmed = line.trim();
       return (
         !trimmed.startsWith(`V${index}_URL=`) &&
-        !trimmed.startsWith(`V${index}_TOKEN=`)
+        !trimmed.startsWith(`V${index}_TOKEN=`) &&
+        !trimmed.startsWith(`V${index}_HEADERS=`)
       );
     });
 

@@ -223,7 +223,7 @@
                 background: var(--card-bg);
                 border-radius: 16px;
                 width: 100%;
-                max-width: 480px;
+                max-width: 540px;
                 box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
                 transform: scale(0.9);
                 transition: transform 0.3s ease;
@@ -483,8 +483,15 @@
                         </div>
                         <div class="form-group">
                             <label class="form-label">API Token</label>
-                            <input type="text" id="tokenInput" class="form-input" placeholder="e.g., sk-your-token">
+                            <input type="text" id="tokenInput" class="form-input" placeholder="e.g., ***">
                             <p class="form-hint">Authentication token for this endpoint</p>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Custom Headers (JSON)</label>
+                            <textarea id="headersInput" class="form-input" rows="4"
+                                placeholder='{ "X-Custom-Header": "value" }'
+                                style="font-family: monospace; font-size: 13px; resize: vertical;"></textarea>
+                            <p class="form-hint">Add custom request headers as JSON. Example: {"X-Custom-Header": "value"}</p>
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -580,6 +587,7 @@
                                     <div class="model-name">V${endpoint.index}</div>
                                     <div class="model-mapping">${escapeHtml(endpoint.url)}</div>
                                     <div class="model-mapping" style="color: var(--gray-400); font-family: monospace;">${escapeHtml(maskedToken)}</div>
+                                    ${Object.keys(endpoint.headers || {}).length > 0 ? `<div class="model-mapping" style="color: var(--gray-400); font-size: 11px;"><i class="fa-solid fa-code" style="margin-right: 4px;"></i>${Object.keys(endpoint.headers).length} custom header${Object.keys(endpoint.headers).length !== 1 ? 's' : ''}</div>` : ''}
                                 </div>
                             </div>
                             <div class="model-actions">
@@ -602,6 +610,7 @@
                 document.getElementById('modalSubmit').textContent = 'Add Endpoint';
                 document.getElementById('urlInput').value = '';
                 document.getElementById('tokenInput').value = '';
+                document.getElementById('headersInput').value = '';
                 document.getElementById('endpointModal').classList.add('active');
             }
 
@@ -617,6 +626,8 @@
                 // can optionally enter a new token; leaving it blank keeps the existing one.
                 document.getElementById('tokenInput').value = '';
                 document.getElementById('tokenInput').placeholder = 'Leave blank to keep existing token';
+                const headersObj = endpoint.headers || {};
+                document.getElementById('headersInput').value = Object.keys(headersObj).length > 0 ? JSON.stringify(headersObj, null, 2) : '';
                 document.getElementById('endpointModal').classList.add('active');
             }
 
@@ -639,21 +650,38 @@
             async function submitEndpoint() {
                 const url = document.getElementById('urlInput').value.trim();
                 const token = document.getElementById('tokenInput').value.trim();
+                const headersRaw = document.getElementById('headersInput').value.trim();
 
                 if (!url || !token) {
                     showToast('Please enter both URL and token', 'error');
                     return;
                 }
 
+                let headers = {};
+                if (headersRaw) {
+                    let parsed;
+                    try {
+                        parsed = JSON.parse(headersRaw);
+                    } catch (_) {
+                        showToast('Invalid JSON in custom headers', 'error');
+                        return;
+                    }
+                    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                        showToast('Custom headers must be a JSON object', 'error');
+                        return;
+                    }
+                    headers = parsed;
+                }
+
                 try {
                     if (editingEndpoint) {
-                        // Update existing endpoint
+                        // Update existing endpoint — always send headers so server can clear if needed
                         const response = await fetch('/api/endpoints', {
                             method: 'PUT',
                             headers: {
                                 'Content-Type': 'application/json',
                             },
-                            body: JSON.stringify({ index: editingEndpoint, url, token })
+                            body: JSON.stringify({ index: editingEndpoint, url, token, headers })
                         });
 
                         if (!response.ok) {
@@ -669,7 +697,7 @@
                             headers: {
                                 'Content-Type': 'application/json',
                             },
-                            body: JSON.stringify({ url, token })
+                            body: JSON.stringify({ url, token, headers })
                         });
 
                         if (!response.ok) {
