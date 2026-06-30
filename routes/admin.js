@@ -498,14 +498,25 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
 
     // Build maps keyed by index so HEADERS (optional) doesn't break iteration
     const urlMap = {};
+    // tokenMap stores arrays of tokens per index
     const tokenMap = {};
     const headersMap = {};
 
     for (const line of lines) {
       const urlMatch = line.match(/^V(\d+)_URL=(.+)$/);
       if (urlMatch) { urlMap[urlMatch[1]] = urlMatch[2]; continue; }
+      // V{n}_TOKENS — comma-separated; takes precedence
+      const tokensMatch = line.match(/^V(\d+)_TOKENS=(.+)$/);
+      if (tokensMatch) {
+        tokenMap[tokensMatch[1]] = tokensMatch[2].split(",").map((t) => t.trim()).filter(Boolean);
+        continue;
+      }
+      // V{n}_TOKEN — legacy single token; only set if TOKENS hasn't been set
       const tokenMatch = line.match(/^V(\d+)_TOKEN=(.+)$/);
-      if (tokenMatch) { tokenMap[tokenMatch[1]] = tokenMatch[2]; continue; }
+      if (tokenMatch) {
+        if (!tokenMap[tokenMatch[1]]) tokenMap[tokenMatch[1]] = [tokenMatch[2]];
+        continue;
+      }
       const headersMatch = line.match(/^V(\d+)_HEADERS=(.+)$/);
       if (headersMatch) { headersMap[headersMatch[1]] = headersMatch[2]; }
     }
@@ -513,13 +524,12 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
     const endpoints = [];
     for (const idx of Object.keys(urlMap).sort((a, b) => parseInt(a) - parseInt(b))) {
       if (!tokenMap[idx]) continue;
-      const rawToken = tokenMap[idx];
-      const maskedToken =
-        rawToken.length > 8
-          ? rawToken.substring(0, 4) +
-            "****" +
-            rawToken.substring(rawToken.length - 4)
-          : "****";
+      const rawTokens = tokenMap[idx];
+      const maskedTokens = rawTokens.map((t) =>
+        t.length > 8
+          ? t.substring(0, 4) + "****" + t.substring(t.length - 4)
+          : "****"
+      );
       let headers = {};
       if (headersMap[idx]) {
         try { headers = JSON.parse(headersMap[idx]); } catch (_) { headers = {}; }
@@ -527,7 +537,8 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
       endpoints.push({
         index: parseInt(idx),
         url: urlMap[idx],
-        token: maskedToken,
+        token: maskedTokens[0],
+        tokens: maskedTokens,
         headers,
       });
     }
@@ -542,9 +553,18 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
 router.post("/api/endpoints", verifySession, async (req, res) => {
   try {
     const url = (req.body.url || "").trim();
-    const token = (req.body.token || "").trim();
-    if (!url || !token)
-      return res.status(400).json({ error: "URL and token required" });
+
+    // Accept either `tokens` (array) or legacy `token` (string)
+    let tokens = [];
+    if (Array.isArray(req.body.tokens)) {
+      tokens = req.body.tokens.map((t) => String(t).trim()).filter(Boolean);
+    } else if (req.body.token) {
+      const single = String(req.body.token).trim();
+      if (single) tokens = [single];
+    }
+
+    if (!url || tokens.length === 0)
+      return res.status(400).json({ error: "URL and at least one token are required" });
 
     // Validate optional headers if provided
     let headersObj = null;
@@ -584,7 +604,11 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
     }
 
     const newIndex = maxIndex + 1;
-    let endpointBlock = `V${newIndex}_URL=${url}\nV${newIndex}_TOKEN=${token}`;
+    // Use TOKENS (plural) for multi-key; fall back to TOKEN for a single key
+    const tokenLine = tokens.length === 1
+      ? `V${newIndex}_TOKEN=${tokens[0]}`
+      : `V${newIndex}_TOKENS=${tokens.join(",")}`;
+    let endpointBlock = `V${newIndex}_URL=${url}\n${tokenLine}`;
     if (headersObj && Object.keys(headersObj).length > 0) {
       endpointBlock += `\nV${newIndex}_HEADERS=${JSON.stringify(headersObj)}`;
     }
@@ -593,6 +617,7 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       (content.trim() ? "\n\n" : "") +
       endpointBlock;
     fs.writeFileSync(endpointsPath, newContent);
+    Config.loadEndpoints();
     res.json({ message: "Endpoint added", index: newIndex });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -604,13 +629,72 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
   try {
     const index = req.body.index;
     const url = (req.body.url || "").trim();
-    const token = (req.body.token || "").trim();
     if (!index || !url)
       return res.status(400).json({ error: "Index and URL are required" });
 
     // Validate index is a plain positive integer to prevent RegExp injection
     if (!/^\d+$/.test(String(index)))
       return res.status(400).json({ error: "Invalid endpoint index" });
+
+    // Accept either `tokens` (array) or legacy `token` (string).
+    // undefined tokens field = keep existing untouched (no tokens key sent at all).
+    // Empty array = caller explicitly wants to keep existing (shouldn't happen from UI but handle it).
+    let incomingTokens = null; // null means "don't touch token lines"
+    if (Array.isArray(req.body.tokens)) {
+      incomingTokens = req.body.tokens.map((t) => String(t).trim()).filter(Boolean);
+    } else if (req.body.token !== undefined) {
+      const single = String(req.body.token || "").trim();
+      incomingTokens = single ? [single] : [];
+    }
+
+    // Resolve the final token list to write:
+    //  - If no tokens field was sent at all, keep existing (resolvedTokens = null)
+    //  - Otherwise read the current stored tokens, build a map of maskedForm→realToken,
+    //    then replace each masked pill with its real value and keep real (new) tokens as-is.
+    //    The result is exactly what the user sees in the pills, de-masked.
+    let resolvedTokens = null;
+    if (incomingTokens !== null) {
+      if (incomingTokens.length === 0) {
+        // Shouldn't happen from the UI (we validate at least one token), but be safe
+        return res.status(400).json({ error: "At least one token is required" });
+      }
+
+      const hasMasked = incomingTokens.some((t) => t.includes("****"));
+
+      if (hasMasked) {
+        // Read the real stored tokens so we can de-mask
+        const rawContent = fs.readFileSync(
+          path.join(__dirname, "../endpoints.txt"),
+          "utf-8"
+        );
+        const storedMatch = rawContent.match(
+          new RegExp(`^V${String(index)}_TOKENS?=(.+)$`, "m")
+        );
+        let storedTokens = [];
+        if (storedMatch) {
+          const val = storedMatch[1];
+          storedTokens = val.includes(",")
+            ? val.split(",").map((t) => t.trim()).filter(Boolean)
+            : [val.trim()];
+        }
+
+        // Build masked→real lookup (same masking logic as GET handler)
+        const maskedToReal = new Map();
+        for (const t of storedTokens) {
+          const masked = t.length > 8
+            ? t.substring(0, 4) + "****" + t.substring(t.length - 4)
+            : "****";
+          maskedToReal.set(masked, t);
+        }
+
+        resolvedTokens = incomingTokens.map((t) =>
+          t.includes("****") ? (maskedToReal.get(t) ?? t) : t
+        );
+      } else {
+        // All real (new) tokens — use directly
+        resolvedTokens = incomingTokens;
+      }
+    }
 
     // Validate optional headers if provided
     let headersProvided = req.body.headers !== undefined;
@@ -641,21 +725,32 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     const endpointsPath = path.join(__dirname, "../endpoints.txt");
     const content = fs.readFileSync(endpointsPath, "utf-8");
 
+    // Check the endpoint actually exists before doing anything
+    if (!new RegExp(`^V${index}_URL=`, "m").test(content))
+      return res.status(404).json({ error: "Endpoint not found" });
+
     let updated = content.replace(
       new RegExp(`^V${index}_URL=.+$`, "m"),
       `V${index}_URL=${url}`,
     );
 
-    // Only replace token if a new (non-masked) one was provided
-    if (token && !token.includes("****")) {
+    // Update tokens if resolved tokens are available
+    if (resolvedTokens !== null) {
+      const tokenLine = resolvedTokens.length === 1
+        ? `V${index}_TOKEN=${resolvedTokens[0]}`
+        : `V${index}_TOKENS=${resolvedTokens.join(",")}`;
+
+      // Remove both old TOKEN and TOKENS lines first
+      updated = updated
+        .replace(new RegExp(`^V${index}_TOKEN=.+$\\n?`, "m"), "")
+        .replace(new RegExp(`^V${index}_TOKENS=.+$\\n?`, "m"), "");
+
+      // Insert the new token line after the URL line
       updated = updated.replace(
-        new RegExp(`^V${index}_TOKEN=.+$`, "m"),
-        `V${index}_TOKEN=${token}`,
+        new RegExp(`^(V${index}_URL=.+)$`, "m"),
+        `$1\n${tokenLine}`,
       );
     }
-
-    if (updated === content)
-      return res.status(404).json({ error: "Endpoint not found" });
 
     // Handle headers update
     if (headersProvided) {
@@ -668,21 +763,30 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
             `V${index}_HEADERS=${JSON.stringify(headersObj)}`,
           );
         } else {
-          // Insert after the TOKEN line
-          updated = updated.replace(
-            new RegExp(`^(V${index}_TOKEN=.+)$`, "m"),
-            `$1\nV${index}_HEADERS=${JSON.stringify(headersObj)}`,
-          );
+          // Insert after the last token-related line for this index
+          const tokenLineRegex = new RegExp(`^(V${index}_TOKENS?=.+)$`, "m");
+          if (tokenLineRegex.test(updated)) {
+            updated = updated.replace(
+              tokenLineRegex,
+              `$1\nV${index}_HEADERS=${JSON.stringify(headersObj)}`,
+            );
+          } else {
+            updated = updated.replace(
+              new RegExp(`^(V${index}_URL=.+)$`, "m"),
+              `$1\nV${index}_HEADERS=${JSON.stringify(headersObj)}`,
+            );
+          }
         }
       } else {
         // Empty headers object — remove the HEADERS line if it exists
         updated = updated
-          .replace(new RegExp(`\\nV${index}_HEADERS=.*`, "m"), "")
-          .replace(new RegExp(`^V${index}_HEADERS=.*\\n?`, "m"), "");
+          .replace(new RegExp(`\nV${index}_HEADERS=.*`, "m"), "")
+          .replace(new RegExp(`^V${index}_HEADERS=.*\n?`, "m"), "");
       }
     }
 
     fs.writeFileSync(endpointsPath, updated);
+    Config.loadEndpoints();
     res.json({ message: "Endpoint updated" });
   } catch (error) {
     console.error("Error updating endpoint:", error);
@@ -708,6 +812,7 @@ router.delete("/api/endpoints", verifySession, async (req, res) => {
       return (
         !trimmed.startsWith(`V${index}_URL=`) &&
         !trimmed.startsWith(`V${index}_TOKEN=`) &&
+        !trimmed.startsWith(`V${index}_TOKENS=`) &&
         !trimmed.startsWith(`V${index}_HEADERS=`)
       );
     });
@@ -719,6 +824,7 @@ router.delete("/api/endpoints", verifySession, async (req, res) => {
         .replace(/\n{3,}/g, "\n\n")
         .trim(),
     );
+    Config.loadEndpoints();
     res.json({ message: "Endpoint deleted" });
   } catch (error) {
     res.status(500).json({ error: error.message });

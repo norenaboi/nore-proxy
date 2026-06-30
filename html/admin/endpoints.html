@@ -482,9 +482,13 @@
                             <p class="form-hint">The base URL for the API endpoint</p>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">API Token</label>
-                            <input type="text" id="tokenInput" class="form-input" placeholder="e.g., ***">
-                            <p class="form-hint">Authentication token for this endpoint</p>
+                            <label class="form-label">API Tokens <span id="tokenCountBadge" style="font-size:11px;color:var(--gray-500);font-weight:400;"></span></label>
+                            <div id="tokensList" style="display:flex;flex-wrap:wrap;gap:8px;min-height:36px;padding:8px;border:1px solid var(--gray-200);border-radius:10px;background:var(--gray-50);margin-bottom:8px;"></div>
+                            <div style="display:flex;gap:8px;">
+                                <input type="text" id="tokenInput" class="form-input" placeholder="Paste a token and press Add" style="flex:1;">
+                                <button type="button" class="btn btn-secondary" onclick="addTokenFromInput()" style="white-space:nowrap;">Add</button>
+                            </div>
+                            <p class="form-hint" id="tokenHint">Add one or more tokens. Requests will be round-robined across all tokens.</p>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Custom Headers (JSON)</label>
@@ -529,6 +533,9 @@
             let endpoints = [];
             let editingEndpoint = null;
             let deletingEndpoint = null;
+            // pendingTokens holds the current token list being edited in the modal
+            // Masked tokens (with ****) represent existing server-side tokens the user hasn't replaced.
+            let pendingTokens = [];
 
             // Logout
             async function logout() {
@@ -537,20 +544,21 @@
             }
 
             // Load endpoints on page load
-            document.addEventListener('DOMContentLoaded', loadEndpoints);
+            document.addEventListener('DOMContentLoaded', () => {
+                loadEndpoints();
+                // Allow pressing Enter in the token input to add it
+                document.getElementById('tokenInput').addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); addTokenFromInput(); }
+                });
+            });
 
             async function loadEndpoints() {
                 try {
-                    const response = await fetch('/api/endpoints', {
-                        method: 'GET',
-                    });
-
+                    const response = await fetch('/api/endpoints', { method: 'GET' });
                     if (!response.ok) throw new Error('Failed to load endpoints');
-
                     const data = await response.json();
                     endpoints = data.endpoints || [];
                     renderEndpoints();
-
                     document.getElementById('loading').style.display = 'none';
                     document.getElementById('dashboard').style.display = 'block';
                 } catch (error) {
@@ -575,7 +583,11 @@
                 emptyState.style.display = 'none';
 
                 list.innerHTML = endpoints.map((endpoint) => {
-                    const maskedToken = endpoint.token.substring(0, 7) + '...' + endpoint.token.substring(endpoint.token.length - 4);
+                    const tokens = endpoint.tokens || [endpoint.token];
+                    const tokenCount = tokens.length;
+                    const tokenPreview = tokenCount === 1
+                        ? `<span style="font-family:monospace;color:var(--gray-400);">${escapeHtml(tokens[0])}</span>`
+                        : `<span style="color:var(--primary);font-weight:500;">${tokenCount} keys</span> <span style="color:var(--gray-400);font-size:11px;">(round-robin)</span>`;
 
                     return `
                         <div class="model-item">
@@ -586,8 +598,8 @@
                                 <div>
                                     <div class="model-name">V${endpoint.index}</div>
                                     <div class="model-mapping">${escapeHtml(endpoint.url)}</div>
-                                    <div class="model-mapping" style="color: var(--gray-400); font-family: monospace;">${escapeHtml(maskedToken)}</div>
-                                    ${Object.keys(endpoint.headers || {}).length > 0 ? `<div class="model-mapping" style="color: var(--gray-400); font-size: 11px;"><i class="fa-solid fa-code" style="margin-right: 4px;"></i>${Object.keys(endpoint.headers).length} custom header${Object.keys(endpoint.headers).length !== 1 ? 's' : ''}</div>` : ''}
+                                    <div class="model-mapping" style="margin-top:4px;">${tokenPreview}</div>
+                                    ${Object.keys(endpoint.headers || {}).length > 0 ? `<div class="model-mapping" style="color: var(--gray-400); font-size: 11px; margin-top:2px;"><i class="fa-solid fa-code" style="margin-right: 4px;"></i>${Object.keys(endpoint.headers).length} custom header${Object.keys(endpoint.headers).length !== 1 ? 's' : ''}</div>` : ''}
                                 </div>
                             </div>
                             <div class="model-actions">
@@ -604,13 +616,64 @@
                 }).join('');
             }
 
+            // --- Token pill management ---
+
+            function renderTokenPills() {
+                const list = document.getElementById('tokensList');
+                const badge = document.getElementById('tokenCountBadge');
+                badge.textContent = pendingTokens.length > 0 ? `(${pendingTokens.length})` : '';
+
+                if (pendingTokens.length === 0) {
+                    list.innerHTML = '<span style="color:var(--gray-400);font-size:13px;padding:4px;">No tokens added yet</span>';
+                    return;
+                }
+
+                list.innerHTML = pendingTokens.map((tok, idx) => {
+                    const isMasked = tok.includes('****');
+                    const display = isMasked ? tok : (tok.length > 20 ? tok.substring(0, 8) + '...' + tok.substring(tok.length - 6) : tok);
+                    return `
+                        <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:20px;font-size:13px;font-family:monospace;color:var(--gray-700);">
+                            ${isMasked ? '<i class="fa-solid fa-lock" style="color:var(--gray-400);font-size:10px;"></i>' : ''}
+                            ${escapeHtml(display)}
+                            <button type="button" onclick="removeToken(${idx})" style="background:none;border:none;cursor:pointer;padding:0;line-height:1;color:var(--gray-400);" title="Remove token">
+                                <i class="fa-solid fa-xmark" style="font-size:11px;"></i>
+                            </button>
+                        </span>
+                    `;
+                }).join('');
+            }
+
+            function addTokenFromInput() {
+                const input = document.getElementById('tokenInput');
+                const val = input.value.trim();
+                if (!val) return;
+                if (val.includes('****')) {
+                    showToast('Cannot add a masked token placeholder', 'error');
+                    return;
+                }
+                pendingTokens = [...pendingTokens, val];
+                input.value = '';
+                renderTokenPills();
+            }
+
+            function removeToken(idx) {
+                pendingTokens = pendingTokens.filter((_, i) => i !== idx);
+                renderTokenPills();
+            }
+
+            // --- Modal open/close ---
+
             function openAddModal() {
                 editingEndpoint = null;
+                pendingTokens = [];
                 document.getElementById('modalTitle').textContent = 'Add Endpoint';
                 document.getElementById('modalSubmit').textContent = 'Add Endpoint';
                 document.getElementById('urlInput').value = '';
                 document.getElementById('tokenInput').value = '';
+                document.getElementById('tokenInput').placeholder = 'Paste a token and press Add';
+                document.getElementById('tokenHint').textContent = 'Add one or more tokens. Requests will be round-robined across all tokens.';
                 document.getElementById('headersInput').value = '';
+                renderTokenPills();
                 document.getElementById('endpointModal').classList.add('active');
             }
 
@@ -619,21 +682,25 @@
                 if (!endpoint) return;
 
                 editingEndpoint = index;
+                // Seed with masked existing tokens so they show in the pills
+                pendingTokens = [...(endpoint.tokens || [endpoint.token])];
+
                 document.getElementById('modalTitle').textContent = 'Edit Endpoint';
                 document.getElementById('modalSubmit').textContent = 'Save Changes';
                 document.getElementById('urlInput').value = endpoint.url;
-                // Token is masked server-side — clear the field so the user
-                // can optionally enter a new token; leaving it blank keeps the existing one.
                 document.getElementById('tokenInput').value = '';
-                document.getElementById('tokenInput').placeholder = 'Leave blank to keep existing token';
+                document.getElementById('tokenInput').placeholder = 'Add a new token (optional)';
+                document.getElementById('tokenHint').textContent = 'Masked tokens (🔒) are existing keys kept on the server. Remove one and add a new value to replace it.';
                 const headersObj = endpoint.headers || {};
                 document.getElementById('headersInput').value = Object.keys(headersObj).length > 0 ? JSON.stringify(headersObj, null, 2) : '';
+                renderTokenPills();
                 document.getElementById('endpointModal').classList.add('active');
             }
 
             function closeModal() {
                 document.getElementById('endpointModal').classList.remove('active');
                 editingEndpoint = null;
+                pendingTokens = [];
             }
 
             function openDeleteModal(index) {
@@ -647,13 +714,36 @@
                 deletingEndpoint = null;
             }
 
+            // --- Submit ---
+
             async function submitEndpoint() {
                 const url = document.getElementById('urlInput').value.trim();
-                const token = document.getElementById('tokenInput').value.trim();
                 const headersRaw = document.getElementById('headersInput').value.trim();
 
-                if (!url || !token) {
-                    showToast('Please enter both URL and token', 'error');
+                // Flush any unsaved text in the token input field
+                const pendingInput = document.getElementById('tokenInput').value.trim();
+                let finalTokens = [...pendingTokens];
+                if (pendingInput && !pendingInput.includes('****')) {
+                    finalTokens = [...finalTokens, pendingInput];
+                }
+
+                if (!url) {
+                    showToast('Please enter a URL', 'error');
+                    return;
+                }
+
+                // On add: require at least one non-masked token
+                // On edit: allow keeping existing masked tokens (server retains them)
+                const hasRealToken = finalTokens.some(t => !t.includes('****'));
+                const hasMaskedToken = finalTokens.some(t => t.includes('****'));
+
+                if (finalTokens.length === 0) {
+                    showToast('Please add at least one API token', 'error');
+                    return;
+                }
+
+                if (!editingEndpoint && !hasRealToken) {
+                    showToast('Please add at least one API token', 'error');
                     return;
                 }
 
@@ -675,13 +765,16 @@
 
                 try {
                     if (editingEndpoint) {
-                        // Update existing endpoint — always send headers so server can clear if needed
+                        // Split into real (new) tokens and masked (existing) ones.
+                        // The server will replace only if new tokens are provided.
+                        // We send the full array; server uses non-masked ones as replacements,
+                        // masked ones signal "keep existing" only when ALL tokens are masked.
+                        const payload = { index: editingEndpoint, url, tokens: finalTokens, headers };
+
                         const response = await fetch('/api/endpoints', {
                             method: 'PUT',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({ index: editingEndpoint, url, token, headers })
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload),
                         });
 
                         if (!response.ok) {
@@ -691,13 +784,10 @@
 
                         showToast('Endpoint updated successfully', 'success');
                     } else {
-                        // Add new endpoint
                         const response = await fetch('/api/endpoints', {
                             method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({ url, token, headers })
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ url, tokens: finalTokens, headers }),
                         });
 
                         if (!response.ok) {
@@ -721,9 +811,7 @@
                 try {
                     const response = await fetch('/api/endpoints', {
                         method: 'DELETE',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ index: deletingEndpoint })
                     });
 

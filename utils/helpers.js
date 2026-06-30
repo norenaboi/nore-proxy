@@ -183,9 +183,11 @@ export function getEndpointForModel(modelName) {
         new RegExp(`-v${version}$`),
         "",
       );
+      // Use round-robin token selection when multiple keys are configured
+      const token = Config.getNextToken(endpointKey);
       return {
         url: endpoint.url,
-        token: endpoint.token,
+        token,
         actualModel,
         customHeaders: endpoint.headers || {},
       };
