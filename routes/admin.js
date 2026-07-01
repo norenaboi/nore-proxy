@@ -484,64 +484,45 @@ router.delete("/api/models", verifySession, async (req, res) => {
 });
 
 /*
-    GET PUT POST DELETE for endpoints.txt
+    GET PUT POST DELETE for endpoints.json
 */
 
 // Get all endpoints
 router.get("/api/endpoints", verifySession, async (req, res) => {
   try {
-    const endpointsPath = path.join(__dirname, "../endpoints.txt");
-    const content = fs.existsSync(endpointsPath)
-      ? fs.readFileSync(endpointsPath, "utf-8")
-      : "";
-    const lines = content.split("\n").filter((line) => line.trim());
-
-    // Build maps keyed by index so HEADERS (optional) doesn't break iteration
-    const urlMap = {};
-    // tokenMap stores arrays of tokens per index
-    const tokenMap = {};
-    const headersMap = {};
-
-    for (const line of lines) {
-      const urlMatch = line.match(/^V(\d+)_URL=(.+)$/);
-      if (urlMatch) { urlMap[urlMatch[1]] = urlMatch[2]; continue; }
-      // V{n}_TOKENS — comma-separated; takes precedence
-      const tokensMatch = line.match(/^V(\d+)_TOKENS=(.+)$/);
-      if (tokensMatch) {
-        tokenMap[tokensMatch[1]] = tokensMatch[2].split(",").map((t) => t.trim()).filter(Boolean);
-        continue;
-      }
-      // V{n}_TOKEN — legacy single token; only set if TOKENS hasn't been set
-      const tokenMatch = line.match(/^V(\d+)_TOKEN=(.+)$/);
-      if (tokenMatch) {
-        if (!tokenMap[tokenMatch[1]]) tokenMap[tokenMatch[1]] = [tokenMatch[2]];
-        continue;
-      }
-      const headersMatch = line.match(/^V(\d+)_HEADERS=(.+)$/);
-      if (headersMatch) { headersMap[headersMatch[1]] = headersMatch[2]; }
+    const endpointsPath = path.join(__dirname, "../endpoints.json");
+    
+    if (!fs.existsSync(endpointsPath)) {
+      return res.json({ endpoints: [] });
     }
 
+    const content = fs.readFileSync(endpointsPath, "utf-8");
+    const data = JSON.parse(content);
+
     const endpoints = [];
-    for (const idx of Object.keys(urlMap).sort((a, b) => parseInt(a) - parseInt(b))) {
-      if (!tokenMap[idx]) continue;
-      const rawTokens = tokenMap[idx];
+    for (const [key, endpoint] of Object.entries(data)) {
+      const match = key.match(/^v(\d+)$/);
+      if (!match) continue;
+
+      const rawTokens = endpoint.tokens || [];
       const maskedTokens = rawTokens.map((t) =>
         t.length > 8
           ? t.substring(0, 4) + "****" + t.substring(t.length - 4)
           : "****"
       );
-      let headers = {};
-      if (headersMap[idx]) {
-        try { headers = JSON.parse(headersMap[idx]); } catch (_) { headers = {}; }
-      }
+
       endpoints.push({
-        index: parseInt(idx),
-        url: urlMap[idx],
+        index: parseInt(match[1]),
+        name: endpoint.name || `Endpoint ${match[1]}`,
+        url: endpoint.url,
         token: maskedTokens[0],
         tokens: maskedTokens,
-        headers,
+        headers: endpoint.headers || {},
       });
     }
+
+    // Sort by index
+    endpoints.sort((a, b) => a.index - b.index);
 
     res.json({ endpoints });
   } catch (error) {
@@ -552,6 +533,7 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
 // Add endpoint
 router.post("/api/endpoints", verifySession, async (req, res) => {
   try {
+    const name = (req.body.name || "").trim();
     const url = (req.body.url || "").trim();
 
     // Accept either `tokens` (array) or legacy `token` (string)
@@ -567,7 +549,7 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "URL and at least one token are required" });
 
     // Validate optional headers if provided
-    let headersObj = null;
+    let headersObj = {};
     if (req.body.headers !== undefined) {
       if (
         typeof req.body.headers !== "object" ||
@@ -591,32 +573,32 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "Invalid URL" });
     }
 
-    const endpointsPath = path.join(__dirname, "../endpoints.txt");
-    const content = fs.existsSync(endpointsPath)
-      ? fs.readFileSync(endpointsPath, "utf-8")
-      : "";
-    const lines = content.split("\n").filter((line) => line.trim());
+    const endpointsPath = path.join(__dirname, "../endpoints.json");
+    let data = {};
+    
+    if (fs.existsSync(endpointsPath)) {
+      const content = fs.readFileSync(endpointsPath, "utf-8");
+      data = JSON.parse(content);
+    }
 
+    // Find the next available index
     let maxIndex = 0;
-    for (const line of lines) {
-      const match = line.match(/^V(\d+)_/);
+    for (const key of Object.keys(data)) {
+      const match = key.match(/^v(\d+)$/);
       if (match) maxIndex = Math.max(maxIndex, parseInt(match[1]));
     }
 
     const newIndex = maxIndex + 1;
-    // Use TOKENS (plural) for multi-key; fall back to TOKEN for a single key
-    const tokenLine = tokens.length === 1
-      ? `V${newIndex}_TOKEN=${tokens[0]}`
-      : `V${newIndex}_TOKENS=${tokens.join(",")}`;
-    let endpointBlock = `V${newIndex}_URL=${url}\n${tokenLine}`;
-    if (headersObj && Object.keys(headersObj).length > 0) {
-      endpointBlock += `\nV${newIndex}_HEADERS=${JSON.stringify(headersObj)}`;
-    }
-    const newContent =
-      content.trim() +
-      (content.trim() ? "\n\n" : "") +
-      endpointBlock;
-    fs.writeFileSync(endpointsPath, newContent);
+    const endpointKey = `v${newIndex}`;
+
+    data[endpointKey] = {
+      name: name || `Endpoint ${newIndex}`,
+      url,
+      tokens,
+      headers: headersObj,
+    };
+
+    fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
     Config.loadEndpoints();
     res.json({ message: "Endpoint added", index: newIndex });
   } catch (error) {
@@ -628,6 +610,7 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
 router.put("/api/endpoints", verifySession, async (req, res) => {
   try {
     const index = req.body.index;
+    const name = req.body.name !== undefined ? (req.body.name || "").trim() : undefined;
     const url = (req.body.url || "").trim();
     if (!index || !url)
       return res.status(400).json({ error: "Index and URL are required" });
@@ -636,10 +619,24 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     if (!/^\d+$/.test(String(index)))
       return res.status(400).json({ error: "Invalid endpoint index" });
 
+    const endpointKey = `v${index}`;
+    const endpointsPath = path.join(__dirname, "../endpoints.json");
+    
+    if (!fs.existsSync(endpointsPath)) {
+      return res.status(404).json({ error: "Endpoints file not found" });
+    }
+
+    const content = fs.readFileSync(endpointsPath, "utf-8");
+    const data = JSON.parse(content);
+
+    // Check the endpoint exists
+    if (!data[endpointKey]) {
+      return res.status(404).json({ error: "Endpoint not found" });
+    }
+
     // Accept either `tokens` (array) or legacy `token` (string).
     // undefined tokens field = keep existing untouched (no tokens key sent at all).
-    // Empty array = caller explicitly wants to keep existing (shouldn't happen from UI but handle it).
-    let incomingTokens = null; // null means "don't touch token lines"
+    let incomingTokens = null; // null means "don't touch tokens"
     if (Array.isArray(req.body.tokens)) {
       incomingTokens = req.body.tokens.map((t) => String(t).trim()).filter(Boolean);
     } else if (req.body.token !== undefined) {
@@ -651,11 +648,9 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     //  - If no tokens field was sent at all, keep existing (resolvedTokens = null)
     //  - Otherwise read the current stored tokens, build a map of maskedForm→realToken,
     //    then replace each masked pill with its real value and keep real (new) tokens as-is.
-    //    The result is exactly what the user sees in the pills, de-masked.
     let resolvedTokens = null;
     if (incomingTokens !== null) {
       if (incomingTokens.length === 0) {
-        // Shouldn't happen from the UI (we validate at least one token), but be safe
         return res.status(400).json({ error: "At least one token is required" });
       }
 
@@ -663,20 +658,7 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
 
       if (hasMasked) {
         // Read the real stored tokens so we can de-mask
-        const rawContent = fs.readFileSync(
-          path.join(__dirname, "../endpoints.txt"),
-          "utf-8"
-        );
-        const storedMatch = rawContent.match(
-          new RegExp(`^V${String(index)}_TOKENS?=(.+)$`, "m")
-        );
-        let storedTokens = [];
-        if (storedMatch) {
-          const val = storedMatch[1];
-          storedTokens = val.includes(",")
-            ? val.split(",").map((t) => t.trim()).filter(Boolean)
-            : [val.trim()];
-        }
+        const storedTokens = data[endpointKey].tokens || [];
 
         // Build masked→real lookup (same masking logic as GET handler)
         const maskedToReal = new Map();
@@ -722,70 +704,19 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "Invalid URL" });
     }
 
-    const endpointsPath = path.join(__dirname, "../endpoints.txt");
-    const content = fs.readFileSync(endpointsPath, "utf-8");
-
-    // Check the endpoint actually exists before doing anything
-    if (!new RegExp(`^V${index}_URL=`, "m").test(content))
-      return res.status(404).json({ error: "Endpoint not found" });
-
-    let updated = content.replace(
-      new RegExp(`^V${index}_URL=.+$`, "m"),
-      `V${index}_URL=${url}`,
-    );
-
-    // Update tokens if resolved tokens are available
+    // Update the endpoint object
+    if (name !== undefined) {
+      data[endpointKey].name = name || `Endpoint ${index}`;
+    }
+    data[endpointKey].url = url;
     if (resolvedTokens !== null) {
-      const tokenLine = resolvedTokens.length === 1
-        ? `V${index}_TOKEN=${resolvedTokens[0]}`
-        : `V${index}_TOKENS=${resolvedTokens.join(",")}`;
-
-      // Remove both old TOKEN and TOKENS lines first
-      updated = updated
-        .replace(new RegExp(`^V${index}_TOKEN=.+$\\n?`, "m"), "")
-        .replace(new RegExp(`^V${index}_TOKENS=.+$\\n?`, "m"), "");
-
-      // Insert the new token line after the URL line
-      updated = updated.replace(
-        new RegExp(`^(V${index}_URL=.+)$`, "m"),
-        `$1\n${tokenLine}`,
-      );
+      data[endpointKey].tokens = resolvedTokens;
     }
-
-    // Handle headers update
     if (headersProvided) {
-      const headersLineRegex = new RegExp(`^V${index}_HEADERS=.+$`, "m");
-      if (headersObj && Object.keys(headersObj).length > 0) {
-        // Add or replace the HEADERS line
-        if (headersLineRegex.test(updated)) {
-          updated = updated.replace(
-            headersLineRegex,
-            `V${index}_HEADERS=${JSON.stringify(headersObj)}`,
-          );
-        } else {
-          // Insert after the last token-related line for this index
-          const tokenLineRegex = new RegExp(`^(V${index}_TOKENS?=.+)$`, "m");
-          if (tokenLineRegex.test(updated)) {
-            updated = updated.replace(
-              tokenLineRegex,
-              `$1\nV${index}_HEADERS=${JSON.stringify(headersObj)}`,
-            );
-          } else {
-            updated = updated.replace(
-              new RegExp(`^(V${index}_URL=.+)$`, "m"),
-              `$1\nV${index}_HEADERS=${JSON.stringify(headersObj)}`,
-            );
-          }
-        }
-      } else {
-        // Empty headers object — remove the HEADERS line if it exists
-        updated = updated
-          .replace(new RegExp(`\nV${index}_HEADERS=.*`, "m"), "")
-          .replace(new RegExp(`^V${index}_HEADERS=.*\n?`, "m"), "");
-      }
+      data[endpointKey].headers = headersObj || {};
     }
 
-    fs.writeFileSync(endpointsPath, updated);
+    fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
     Config.loadEndpoints();
     res.json({ message: "Endpoint updated" });
   } catch (error) {
@@ -804,26 +735,23 @@ router.delete("/api/endpoints", verifySession, async (req, res) => {
     if (!/^\d+$/.test(String(index)))
       return res.status(400).json({ error: "Invalid endpoint index" });
 
-    const endpointsPath = path.join(__dirname, "../endpoints.txt");
+    const endpointKey = `v${index}`;
+    const endpointsPath = path.join(__dirname, "../endpoints.json");
+    
+    if (!fs.existsSync(endpointsPath)) {
+      return res.status(404).json({ error: "Endpoints file not found" });
+    }
+
     const content = fs.readFileSync(endpointsPath, "utf-8");
+    const data = JSON.parse(content);
 
-    const lines = content.split("\n").filter((line) => {
-      const trimmed = line.trim();
-      return (
-        !trimmed.startsWith(`V${index}_URL=`) &&
-        !trimmed.startsWith(`V${index}_TOKEN=`) &&
-        !trimmed.startsWith(`V${index}_TOKENS=`) &&
-        !trimmed.startsWith(`V${index}_HEADERS=`)
-      );
-    });
+    if (!data[endpointKey]) {
+      return res.status(404).json({ error: "Endpoint not found" });
+    }
 
-    fs.writeFileSync(
-      endpointsPath,
-      lines
-        .join("\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim(),
-    );
+    delete data[endpointKey];
+
+    fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
     Config.loadEndpoints();
     res.json({ message: "Endpoint deleted" });
   } catch (error) {

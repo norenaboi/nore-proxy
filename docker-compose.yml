@@ -1,0 +1,13 @@
+services:
+  nore-proxy:
+    build: .
+    container_name: nore-proxy
+    restart: always
+    network_mode: "host"
+    volumes:
+      - ./endpoints.json:/app/endpoints.json
+      - ./models.json:/app/models.json
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    ports:
+      - "8741:8741"

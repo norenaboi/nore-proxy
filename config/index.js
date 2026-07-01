@@ -46,73 +46,44 @@ class Config {
     this.ENDPOINTS = {};
     this._rrCounters = {};
 
-    const endpointsPath = path.join(__dirname, "..", "endpoints.txt");
+    const endpointsPath = path.join(__dirname, "..", "endpoints.json");
 
     if (!fs.existsSync(endpointsPath)) {
-      console.log("endpoints.txt not found, no endpoints loaded");
+      console.log("endpoints.json not found, no endpoints loaded");
       return this.ENDPOINTS;
     }
 
-    const content = fs.readFileSync(endpointsPath, "utf-8");
-    const lines = content
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("#"));
+    try {
+      const content = fs.readFileSync(endpointsPath, "utf-8");
+      const data = JSON.parse(content);
 
-    const urlMap = {};
-    // tokensMap stores an array of tokens per index
-    const tokensMap = {};
-    const headersMap = {};
-
-    for (const line of lines) {
-      const urlMatch = line.match(/^V(\d+)_URL=(.+)$/);
-      const tokenMatch = line.match(/^V(\d+)_TOKEN=(.+)$/);
-      // V{n}_TOKENS is comma-separated; takes precedence over V{n}_TOKEN
-      const tokensMatch = line.match(/^V(\d+)_TOKENS=(.+)$/);
-      const headersMatch = line.match(/^V(\d+)_HEADERS=(.+)$/);
-
-      if (urlMatch) {
-        urlMap[urlMatch[1]] = urlMatch[2];
-      } else if (tokensMatch) {
-        // TOKENS line: split on comma, trim each, filter empties
-        tokensMap[tokensMatch[1]] = tokensMatch[2]
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean);
-      } else if (tokenMatch) {
-        // Legacy single-token line — only set if TOKENS hasn't been set yet
-        if (!tokensMap[tokenMatch[1]]) {
-          tokensMap[tokenMatch[1]] = [tokenMatch[2]];
-        }
-      } else if (headersMatch) {
-        headersMap[headersMatch[1]] = headersMatch[2];
-      }
-    }
-
-    for (const index of Object.keys(urlMap)) {
-      const tokens = tokensMap[index];
-      if (tokens && tokens.length > 0) {
-        let headers = {};
-        if (headersMap[index]) {
-          try {
-            headers = JSON.parse(headersMap[index]);
-          } catch (e) {
-            console.warn(
-              `Warning: Invalid JSON in V${index}_HEADERS — falling back to {}. Error: ${e.message}`,
-            );
-            headers = {};
-          }
+      for (const [key, endpoint] of Object.entries(data)) {
+        // Validate that key matches v{n} pattern
+        const match = key.match(/^v(\d+)$/);
+        if (!match) {
+          console.warn(`Warning: Invalid endpoint key "${key}" — skipping`);
+          continue;
         }
 
-        this.ENDPOINTS[`v${index}`] = {
-          url: urlMap[index],
-          // Keep single `token` field for backward compat (first token)
-          token: tokens[0],
+        const index = match[1];
+        const tokens = Array.isArray(endpoint.tokens) ? endpoint.tokens : [];
+        
+        if (!endpoint.url || tokens.length === 0) {
+          console.warn(`Warning: Endpoint "${key}" missing url or tokens — skipping`);
+          continue;
+        }
+
+        this.ENDPOINTS[key] = {
+          name: endpoint.name || `Endpoint ${index}`,
+          url: endpoint.url,
+          token: tokens[0], // Keep for backward compat
           tokens,
-          headers,
+          headers: endpoint.headers || {},
         };
         this._rrCounters[index] = 0;
       }
+    } catch (e) {
+      console.error(`Error loading endpoints.json: ${e.message}`);
     }
 
     return this.ENDPOINTS;
