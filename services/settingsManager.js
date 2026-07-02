@@ -1,79 +1,81 @@
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const SETTINGS_PATH = path.join(__dirname, '..', 'config', 'settings.json');
-
 /**
- * Default settings – add new toggles/values here as the panel grows.
+ * SettingsManager — runtime overrides for proxy settings.
+ * 
+ * Defaults are always read from .env (via process.env).
+ * Admin panel PUT updates persist in memory only and reset on reload() or restart.
+ * No settings.json file is used.
  */
-const DEFAULTS = {
-  promptCachingEnabled: true,
-  promptCachingDepth: 1,
-};
+
+function parseEnvBool(val) {
+  if (val === undefined || val === null || val === "") return false;
+  const lower = String(val).toLowerCase().trim();
+  return lower === "true" || lower === "1";
+}
+
+function parseEnvInt(val, fallback) {
+  const parsed = parseInt(val, 10);
+  return isNaN(parsed) ? fallback : parsed;
+}
 
 class SettingsManager {
   constructor() {
-    this._settings = { ...DEFAULTS };
-    this._load();
+    this._loadDefaults();
+    // In-memory overrides (empty on startup)
+    this._overrides = {};
   }
 
-  _load() {
-    try {
-      if (fs.existsSync(SETTINGS_PATH)) {
-        const raw = fs.readFileSync(SETTINGS_PATH, 'utf-8');
-        const parsed = JSON.parse(raw);
-        // Merge with defaults so new keys are always present
-        this._settings = { ...DEFAULTS, ...parsed };
-      } else {
-        // Write defaults on first run
-        this._persist();
-      }
-    } catch (err) {
-      console.error('[SettingsManager] Failed to load settings, using defaults:', err.message);
-      this._settings = { ...DEFAULTS };
-    }
+  _loadDefaults() {
+    this._defaults = {
+      promptCachingEnabled: parseEnvBool(process.env.PROMPT_CACHING),
+      promptCachingDepth: parseEnvInt(process.env.PROMPT_CACHING_DEPTH, 2),
+    };
   }
 
-  _persist() {
-    try {
-      fs.writeFileSync(SETTINGS_PATH, JSON.stringify(this._settings, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('[SettingsManager] Failed to save settings:', err.message);
-    }
+  _currentSettings() {
+    return { ...this._defaults, ...this._overrides };
   }
 
   get(key) {
-    return this._settings[key];
+    if (!(key in this._defaults)) {
+      throw Object.assign(new Error(`Unknown setting: "${key}"`), {
+        statusCode: 400,
+      });
+    }
+    return key in this._overrides ? this._overrides[key] : this._defaults[key];
   }
 
   getAll() {
-    return { ...this._settings };
+    return this._currentSettings();
   }
 
   set(key, value) {
-    if (!(key in DEFAULTS)) {
-      throw Object.assign(new Error(`Unknown setting: "${key}"`), { statusCode: 400 });
+    if (!(key in this._defaults)) {
+      throw Object.assign(new Error(`Unknown setting: "${key}"`), {
+        statusCode: 400,
+      });
     }
-    this._settings[key] = value;
-    this._persist();
+    this._overrides[key] = value;
   }
 
   update(updates) {
     for (const [key, value] of Object.entries(updates)) {
-      if (!(key in DEFAULTS)) {
-        throw Object.assign(new Error(`Unknown setting: "${key}"`), { statusCode: 400 });
+      if (!(key in this._defaults)) {
+        throw Object.assign(new Error(`Unknown setting: "${key}"`), {
+          statusCode: 400,
+        });
       }
-      this._settings[key] = value;
+      this._overrides[key] = value;
     }
-    this._persist();
   }
 
   reload() {
-    this._load();
+    // process.env is already updated by Config.reload() → dotenv.config({ override: true })
+    this._loadDefaults();
+    this._overrides = {};
+    console.log(
+      "[SettingsManager] Reloaded from .env, cleared runtime overrides:",
+      this._currentSettings(),
+    );
   }
 }
 
