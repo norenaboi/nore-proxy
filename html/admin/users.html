@@ -39,7 +39,7 @@
                 background: linear-gradient(
                     135deg,
                     var(--primary) 0%,
-                    #8b5cf6 100%
+                    var(--primary-alt) 100%
                 );
                 color: white;
                 border-color: transparent;
@@ -77,7 +77,7 @@
                 width: 48px;
                 height: 48px;
                 border-radius: 50%;
-                background: linear-gradient(135deg, var(--primary), #8b5cf6);
+                background: var(--gradient-primary);
                 display: flex;
                 align-items: center;
                 justify-content: center;
@@ -133,12 +133,12 @@
             }
 
             .status-badge.active {
-                background: rgba(16, 185, 129, 0.1);
+                background: var(--success-alpha-01);
                 color: var(--success);
             }
 
             .status-badge.inactive {
-                background: rgba(239, 68, 68, 0.1);
+                background: var(--danger-alpha-01);
                 color: var(--danger);
             }
 
@@ -267,8 +267,8 @@
             .model-badge {
                 display: inline-block;
                 padding: 4px 12px;
-                background: linear-gradient(135deg, #ddd6fe, #ede9fe);
-                color: #7c3aed;
+                background: linear-gradient(135deg, var(--violet-light), var(--violet-lighter));
+                color: var(--violet);
                 border-radius: 6px;
                 font-size: 12px;
                 font-weight: 500;

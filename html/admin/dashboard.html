@@ -201,7 +201,7 @@
                 width: 36px;
                 height: 36px;
                 border-radius: 8px;
-                background: linear-gradient(135deg, var(--primary), #8b5cf6);
+                background: var(--gradient-primary);
                 display: flex;
                 align-items: center;
                 justify-content: center;
@@ -216,8 +216,8 @@
             }
 
             .model-badge {
-                background: linear-gradient(135deg, #ddd6fe, #ede9fe);
-                color: #7c3aed;
+                background: linear-gradient(135deg, var(--violet-light), var(--violet-lighter));
+                color: var(--violet);
                 padding: 4px 10px;
                 border-radius: 6px;
                 font-size: 12px;
@@ -277,9 +277,9 @@
             }
 
             .error {
-                background: rgba(239, 68, 68, 0.1);
+                background: var(--danger-alpha-01);
                 backdrop-filter: blur(10px);
-                border: 1px solid rgba(239, 68, 68, 0.3);
+                border: 1px solid var(--danger-alpha-03);
                 color: white;
                 padding: 20px 24px;
                 border-radius: 12px;

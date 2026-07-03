@@ -5,13 +5,37 @@
 }
 
 :root {
-    --primary: #6366f1;
-    --primary-dark: #4f46e5;
-    --primary-light: #a5b4fc;
+    --primary: #f4845f;
+    --primary-dark: #e8663a;
+    --primary-light: #fbb89a;
+    --primary-alt: #f06292;
+    --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--primary-alt) 100%);
+
+    --primary-alpha-01: rgba(244, 132, 95, 0.1);
+    --primary-alpha-012: rgba(244, 132, 95, 0.12);
+    --primary-alpha-015: rgba(244, 132, 95, 0.15);
+    --primary-alpha-035: rgba(244, 132, 95, 0.35);
+    --primary-alpha-04: rgba(244, 132, 95, 0.4);
+
     --success: #10b981;
+    --success-alpha-01: rgba(16, 185, 129, 0.1);
+    --success-alpha-04: rgba(16, 185, 129, 0.4);
+    --success-alpha-06: rgba(16, 185, 129, 0.6);
+    --success-dark: #059669;
+
     --warning: #f59e0b;
+
     --danger: #ef4444;
-    --dark: #1e1b4b;
+    --danger-dark: #dc2626;
+    --danger-alpha-01: rgba(239, 68, 68, 0.1);
+    --danger-alpha-02: rgba(239, 68, 68, 0.2);
+    --danger-alpha-03: rgba(239, 68, 68, 0.3);
+
+    --violet: #7c3aed;
+    --violet-light: #ddd6fe;
+    --violet-lighter: #ede9fe;
+
+    --dark: #2d1a0e;
 
     /* Light theme colors */
     --gray-50: #f8fafc;
@@ -43,11 +67,11 @@
     --input-border: #e2e8f0;
 }
 
-/* Dark theme - Discord-inspired */
+/* Dark theme - warm dark */
 [data-theme="dark"] {
-    --primary: #5865f2;
-    --primary-dark: #4752c4;
-    --primary-light: #7983f5;
+    --primary: #f4845f;
+    --primary-dark: #e8663a;
+    --primary-light: #fbb89a;
 
     /* Discord-like dark colors */
     --bg-primary: #36393f;
@@ -117,7 +141,7 @@ body {
 .logo-icon {
     width: 40px;
     height: 40px;
-    background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
+    background: var(--gradient-primary);
     border-radius: 12px;
     display: flex;
     align-items: center;
@@ -170,14 +194,14 @@ body {
     transition: all 0.2s ease;
     cursor: pointer;
     border: none;
-    background: rgba(239, 68, 68, 0.1);
+    background: var(--danger-alpha-01);
     font-size: 14px;
     font-family: inherit;
     width: 100%;
 }
 
 .logout:hover {
-    background: rgba(239, 68, 68, 0.2);
+    background: var(--danger-alpha-02);
 }
 
 .main-content {
@@ -257,7 +281,7 @@ h1 {
 }
 
 [data-theme="dark"] .theme-toggle-slider i {
-    color: #a5b4fc;
+    color: #fbb89a;
 }
 
 @media (max-width: 1024px) {
@@ -332,7 +356,7 @@ textarea::placeholder {
 }
 
 .error {
-    background: rgba(239, 68, 68, 0.1);
+    background: var(--danger-alpha-01);
     color: var(--danger);
     border-color: var(--danger);
 }
