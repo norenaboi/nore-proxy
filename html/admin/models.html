@@ -531,6 +531,32 @@
         .endpoint-group + .endpoint-group {
             margin-top: 18px;
         }
+
+        .model-item.disabled-model {
+            opacity: 0.5;
+        }
+
+        .model-item.disabled-model .model-icon {
+            background: var(--gray-300);
+        }
+
+        .btn-warning {
+            background: var(--warning);
+            color: white;
+        }
+
+        .btn-warning:hover {
+            filter: brightness(0.9);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            filter: brightness(0.9);
+        }
     </style>
 </head>
 <body>
@@ -830,18 +856,22 @@
                         </div>`;
 
                     return `
-                        <div class="model-item">
+                        <div class="model-item${model.disabled ? ' disabled-model' : ''}">
                             <div class="model-info">
                                 <div class="model-icon"><i class="fa-solid fa-microchip"></i></div>
                                 <div class="model-meta">
                                     <div class="model-meta-row">
                                         <span class="model-name">${escapeHtml(model.name)}</span>
+                                        ${model.disabled ? '<span class="model-badge" style="background:var(--warning);color:white;opacity:0.8;">disabled</span>' : ''}
                                         ${model.backend && model.backend !== model.name ? `<span class="model-badge model-badge-backend">${escapeHtml(model.backend)}</span>` : ''}
                                     </div>
                                     ${pricingHtml}
                                 </div>
                             </div>
                             <div class="model-actions">
+                                <button class="btn btn-sm ${model.disabled ? 'btn-warning' : 'btn-success'}" onclick="toggleModel(${safeModelName})" title="${model.disabled ? 'Enable model' : 'Disable model'}">
+                                    <i class="fa-solid fa-${model.disabled ? 'pause' : 'play'}"></i>
+                                </button>
                                 <button class="btn btn-secondary btn-sm" onclick="openEditModal(${safeModelName})">
                                     <i class="fa-solid fa-pen"></i> Edit
                                 </button>
@@ -990,6 +1020,27 @@
                 }
 
                 closeModal();
+                loadModels();
+            } catch (error) {
+                showToast(error.message, 'error');
+            }
+        }
+
+        async function toggleModel(modelName) {
+            try {
+                const response = await fetch('/api/models/toggle', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: modelName })
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to toggle model');
+                }
+
+                const data = await response.json();
+                showToast(data.message, 'success');
                 loadModels();
             } catch (error) {
                 showToast(error.message, 'error');

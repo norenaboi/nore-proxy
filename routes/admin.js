@@ -361,6 +361,7 @@ router.get("/api/models", verifySession, async (req, res) => {
       name,
       backend: config.backend || name,
       version: config.version || "",
+      disabled: config.disabled === true,
       pricing: config.pricing || {
         input: 0,
         output: 0,
@@ -478,6 +479,35 @@ router.delete("/api/models", verifySession, async (req, res) => {
     fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
     loadModelsFromFile();
     res.json({ message: "Model deleted" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Toggle model disabled state
+router.patch("/api/models/toggle", verifySession, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: "Model name required" });
+
+    const jsonPath = path.join(__dirname, "../models.json");
+    if (!fs.existsSync(jsonPath)) {
+      return res.status(404).json({ error: "Models file not found" });
+    }
+
+    const content = fs.readFileSync(jsonPath, "utf-8");
+    const data = JSON.parse(content);
+
+    if (!data.models[name]) {
+      return res.status(404).json({ error: "Model not found" });
+    }
+
+    const current = data.models[name].disabled === true;
+    data.models[name].disabled = !current;
+
+    fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
+    loadModelsFromFile();
+    res.json({ message: `Model ${!current ? "disabled" : "enabled"}`, disabled: !current });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

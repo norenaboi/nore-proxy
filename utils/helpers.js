@@ -34,6 +34,9 @@ export function loadModelsFromFile() {
     for (const [displayName, modelConfig] of Object.entries(
       data.models || {},
     )) {
+      // Skip disabled models — they won't appear in the registry or be routable
+      if (modelConfig.disabled === true) continue;
+
       const backendName = modelConfig.backend || displayName;
       const version = modelConfig.version || "";
       const actualBackend = version ? `${backendName}-${version}` : backendName;

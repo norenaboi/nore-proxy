@@ -22,6 +22,9 @@ router.get("/v1/models", async (req, res) => {
       for (const [displayName, modelConfig] of Object.entries(
         data.models || {},
       )) {
+        // Disabled models are hidden from the public model list
+        if (modelConfig.disabled === true) continue;
+
         modelsData.push({
           id: displayName,
           object: "model",
