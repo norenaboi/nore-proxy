@@ -37,6 +37,7 @@ build/
 .project
 .classpath
 .settings/
+.hermes/
 
 # OS files
 .DS_Store

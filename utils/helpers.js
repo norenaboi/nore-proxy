@@ -196,3 +196,18 @@ export function getEndpointForModel(modelName) {
 
   return null;
 }
+
+/**
+ * Get the real client IP regardless of how many proxy layers sit in front
+ * of Express (Cloudflare → nginx → Express, direct, etc.).
+ *
+ * Cloudflare sets `CF-Connecting-IP` to the real client IP at the edge
+ * based on the TCP connection — it can't be spoofed because CF overwrites
+ * any incoming copy. This works no matter how many proxies follow CF.
+ *
+ * Falls back to the raw socket address when there's no Cloudflare (local
+ * dev, direct exposure, etc.).
+ */
+export function getClientIp(req) {
+  return req.headers["cf-connecting-ip"] || req.socket?.remoteAddress || "unknown";
+}

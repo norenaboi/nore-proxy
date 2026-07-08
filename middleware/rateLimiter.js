@@ -1,4 +1,5 @@
 import Config from "../config/index.js";
+import { getClientIp } from "../utils/helpers.js";
 
 // IP-level brute-force limiter for admin/auth routes
 // Tracks attempt timestamps per IP and rejects if too many occur within the window
@@ -31,7 +32,7 @@ setInterval(() => {
 }, 60000);
 
 export function usageRateLimit(req, res, next) {
-  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  const ip = getClientIp(req);
   const now = Date.now() / 1000;
   const recent = (usageAttempts.get(ip) || []).filter(
     (t) => now - t < USAGE_WINDOW_SECONDS,
@@ -47,7 +48,7 @@ export function usageRateLimit(req, res, next) {
 }
 
 export function adminRateLimit(req, res, next) {
-  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  const ip = getClientIp(req);
   const now = Date.now() / 1000;
   const recent = (adminAttempts.get(ip) || []).filter(
     (t) => now - t < ADMIN_WINDOW_SECONDS,
