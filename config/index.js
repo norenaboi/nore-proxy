@@ -79,6 +79,9 @@ class Config {
           token: tokens[0], // Keep for backward compat
           tokens,
           headers: endpoint.headers || {},
+          // apiFormat controls which API path is appended when forwarding requests.
+          // Valid values: 'openai' (default), 'anthropic', 'openai-responses', 'gemini'
+          apiFormat: endpoint.apiFormat || 'openai',
         };
         this._rrCounters[index] = 0;
       }

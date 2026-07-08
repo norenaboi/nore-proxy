@@ -172,6 +172,42 @@ export function estimateTokens(text) {
   return Math.floor(String(text).length / 4);
 }
 
+/**
+ * Normalizes an endpoint base URL:
+ * - Strips /v1 and anything after it, but keeps any path prefix before /v1.
+ * - Example: https://api.example.com/generate/v1/chat/completions -> https://api.example.com/generate
+ * - Example: https://api.example.com/v1 -> https://api.example.com
+ * - Example: https://api.example.com -> https://api.example.com (unchanged)
+ */
+export function normalizeEndpointUrl(rawUrl) {
+  // Remove trailing slash first
+  let url = rawUrl.replace(/\/$/, '');
+  // Strip /v1 and everything after it (handles /v1, /v1/, /v1/anything)
+  // But keep any prefix path segment before /v1 (e.g. /generate)
+  url = url.replace(/\/v1(\/.*)?$/, '');
+  return url;
+}
+
+/**
+ * Builds the full backend URL by appending the correct path for the given apiFormat.
+ * @param {string} baseUrl - normalized base URL (no trailing /v1)
+ * @param {string} apiFormat - one of: 'openai', 'anthropic', 'openai-responses', 'gemini'
+ * @returns {string} full URL with path appended
+ */
+export function getFullUrl(baseUrl, apiFormat) {
+  switch (apiFormat) {
+    case 'anthropic':
+      return `${baseUrl}/v1/messages`;
+    case 'openai-responses':
+      return `${baseUrl}/v1/responses`;
+    case 'gemini':
+      return `${baseUrl}/v1beta/generateContent`;
+    case 'openai':
+    default:
+      return `${baseUrl}/v1/chat/completions`;
+  }
+}
+
 export function getEndpointForModel(modelName) {
   const actualModelName = resolveModelName(modelName);
   const match = actualModelName.match(/-v(\d+)$/);
@@ -188,11 +224,14 @@ export function getEndpointForModel(modelName) {
       );
       // Use round-robin token selection when multiple keys are configured
       const token = Config.getNextToken(endpointKey);
+      // Normalize: keep prefix before /v1 but strip /v1 and everything after
+      const normalizedUrl = normalizeEndpointUrl(endpoint.url);
       return {
-        url: endpoint.url,
+        url: normalizedUrl,
         token,
         actualModel,
         customHeaders: endpoint.headers || {},
+        apiFormat: endpoint.apiFormat || 'openai',
       };
     }
   }

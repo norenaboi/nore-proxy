@@ -7,7 +7,7 @@ import { adminRateLimit } from "../middleware/rateLimiter.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
 import Config from "../config/index.js";
-import { loadModelsFromFile } from "../utils/helpers.js";
+import { loadModelsFromFile, normalizeEndpointUrl } from "../utils/helpers.js";
 import { calculateCost } from "../utils/logging.js";
 import settingsManager from "../services/settingsManager.js";
 import crypto from "crypto";
@@ -548,6 +548,7 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
         token: maskedTokens[0],
         tokens: maskedTokens,
         headers: endpoint.headers || {},
+        apiFormat: endpoint.apiFormat || 'openai',
       });
     }
 
@@ -577,6 +578,13 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
 
     if (!url || tokens.length === 0)
       return res.status(400).json({ error: "URL and at least one token are required" });
+
+    // Validate and capture apiFormat
+    const VALID_FORMATS = ['openai', 'anthropic', 'openai-responses', 'gemini'];
+    const apiFormat = req.body.apiFormat || 'openai';
+    if (!VALID_FORMATS.includes(apiFormat)) {
+      return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${VALID_FORMATS.join(', ')}` });
+    }
 
     // Validate optional headers if provided
     let headersObj = {};
@@ -620,12 +628,14 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
 
     const newIndex = maxIndex + 1;
     const endpointKey = `v${newIndex}`;
+    const normalizedUrl = normalizeEndpointUrl(url);
 
     data[endpointKey] = {
       name: name || `Endpoint ${newIndex}`,
-      url,
+      url: normalizedUrl,
       tokens,
       headers: headersObj,
+      apiFormat,
     };
 
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
@@ -644,6 +654,16 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     const url = (req.body.url || "").trim();
     if (!index || !url)
       return res.status(400).json({ error: "Index and URL are required" });
+
+    // Validate and capture apiFormat (undefined means keep existing)
+    const VALID_FORMATS = ['openai', 'anthropic', 'openai-responses', 'gemini'];
+    let apiFormat = undefined;
+    if (req.body.apiFormat !== undefined) {
+      apiFormat = req.body.apiFormat;
+      if (!VALID_FORMATS.includes(apiFormat)) {
+        return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${VALID_FORMATS.join(', ')}` });
+      }
+    }
 
     // Validate index is a plain positive integer to prevent RegExp injection
     if (!/^\d+$/.test(String(index)))
@@ -738,12 +758,15 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     if (name !== undefined) {
       data[endpointKey].name = name || `Endpoint ${index}`;
     }
-    data[endpointKey].url = url;
+    data[endpointKey].url = normalizeEndpointUrl(url);
     if (resolvedTokens !== null) {
       data[endpointKey].tokens = resolvedTokens;
     }
     if (headersProvided) {
       data[endpointKey].headers = headersObj || {};
+    }
+    if (apiFormat !== undefined) {
+      data[endpointKey].apiFormat = apiFormat;
     }
 
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));

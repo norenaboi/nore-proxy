@@ -8,6 +8,7 @@ import { logRequestStart, logRequestEnd, logError } from "../utils/logging.js";
 import {
   MODEL_REGISTRY,
   getEndpointForModel,
+  getFullUrl,
   estimateTokens,
   isClaudeModel,
   applyClaudePromptCaching,
@@ -141,8 +142,8 @@ async function streamFromBackend(
     return;
   }
 
-  const { url: backendUrl, token: backendToken, actualModel, customHeaders } = endpointInfo;
-  const fullUrl = `${backendUrl}/chat/completions`;
+  const { url: backendUrl, token: backendToken, actualModel, customHeaders, apiFormat } = endpointInfo;
+  const fullUrl = getFullUrl(backendUrl, apiFormat);
 
   // Set streaming headers
   res.setHeader("Content-Type", "text/event-stream");
@@ -381,8 +382,8 @@ async function makeBackendRequest(
     throw error;
   }
 
-  const { url: backendUrl, token: backendToken, actualModel, customHeaders } = endpointInfo;
-  const fullUrl = `${backendUrl}/chat/completions`;
+  const { url: backendUrl, token: backendToken, actualModel, customHeaders, apiFormat } = endpointInfo;
+  const fullUrl = getFullUrl(backendUrl, apiFormat);
 
   try {
     let messages = openaiReq.messages || [];

@@ -309,6 +309,47 @@
                 background: var(--card-bg);
             }
 
+            .form-select {
+                width: 100%;
+                padding: 12px 16px;
+                border: 1px solid var(--gray-200);
+                border-radius: 10px;
+                font-size: 14px;
+                font-family: inherit;
+                transition: all 0.2s ease;
+                background: var(--gray-50);
+                color: var(--gray-800);
+                appearance: none;
+                -webkit-appearance: none;
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+                background-repeat: no-repeat;
+                background-position: right 14px center;
+                padding-right: 36px;
+                cursor: pointer;
+            }
+
+            .form-select:focus {
+                outline: none;
+                border-color: var(--primary);
+                box-shadow: 0 0 0 3px var(--primary-alpha-01);
+                background-color: var(--card-bg);
+            }
+
+            .api-format-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                padding: 2px 8px;
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: 500;
+                font-family: monospace;
+            }
+            .api-format-badge.openai { background: var(--primary-alpha-01); color: var(--primary); }
+            .api-format-badge.anthropic { background: rgba(217, 119, 6, 0.1); color: #d97706; }
+            .api-format-badge.openai-responses { background: rgba(16, 185, 129, 0.1); color: #059669; }
+            .api-format-badge.gemini { background: rgba(99, 102, 241, 0.1); color: #6366f1; }
+
             .form-hint {
                 font-size: 12px;
                 color: var(--gray-500);
@@ -502,6 +543,16 @@
                                 style="font-family: monospace; font-size: 13px; resize: vertical;"></textarea>
                             <p class="form-hint">Add custom request headers as JSON. Example: {"X-Custom-Header": "value"}</p>
                         </div>
+                        <div class="form-group">
+                            <label class="form-label">API Format</label>
+                            <select id="apiFormatInput" class="form-select">
+                                <option value="openai">OpenAI — /v1/chat/completions (default)</option>
+                                <option value="anthropic">Anthropic — /v1/messages</option>
+                                <option value="openai-responses">OpenAI Responses — /v1/responses</option>
+                                <option value="gemini">Gemini — /v1beta/generateContent</option>
+                            </select>
+                            <p class="form-hint">Controls which API path is appended when forwarding requests to this endpoint.</p>
+                        </div>
                     </div>
                     <div class="modal-footer">
                         <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -602,6 +653,15 @@
                         ? `<span style="font-family:monospace;color:var(--gray-400);">${escapeHtml(tokens[0])}</span>`
                         : `<span style="color:var(--primary);font-weight:500;">${tokenCount} keys</span> <span style="color:var(--gray-400);font-size:11px;">(round-robin)</span>`;
                     const displayName = escapeHtml(endpoint.name || `Endpoint ${endpoint.index}`);
+                    const fmt = endpoint.apiFormat || 'openai';
+                    const fmtLabels = {
+                        'openai': 'OpenAI',
+                        'anthropic': 'Anthropic',
+                        'openai-responses': 'Responses',
+                        'gemini': 'Gemini',
+                    };
+                    const fmtLabel = fmtLabels[fmt] || fmt;
+                    const fmtBadge = `<span class="api-format-badge ${escapeHtml(fmt)}"><i class="fa-solid fa-plug"></i>${escapeHtml(fmtLabel)}</span>`;
 
                     return `
                         <div class="model-item">
@@ -610,7 +670,7 @@
                                     <i class="fa-solid fa-server"></i>
                                 </div>
                                 <div>
-                                    <div class="model-name">${displayName} <span style="font-size:11px;color:var(--gray-400);font-weight:400;margin-left:6px;">v${endpoint.index}</span></div>
+                                    <div class="model-name">${displayName} <span style="font-size:11px;color:var(--gray-400);font-weight:400;margin-left:6px;">v${endpoint.index}</span> ${fmtBadge}</div>
                                     <div class="model-mapping">${escapeHtml(endpoint.url)}</div>
                                     <div class="model-mapping" style="margin-top:4px;">${tokenPreview}</div>
                                     ${Object.keys(endpoint.headers || {}).length > 0 ? `<div class="model-mapping" style="color: var(--gray-400); font-size: 11px; margin-top:2px;"><i class="fa-solid fa-code" style="margin-right: 4px;"></i>${Object.keys(endpoint.headers).length} custom header${Object.keys(endpoint.headers).length !== 1 ? 's' : ''}</div>` : ''}
@@ -704,6 +764,7 @@
                 document.getElementById('tokenInput').placeholder = 'Paste a token and press Add';
                 document.getElementById('tokenHint').textContent = 'Add one or more tokens. Requests will be round-robined across all tokens.';
                 document.getElementById('headersInput').value = '';
+                document.getElementById('apiFormatInput').value = 'openai';
                 renderTokenPills();
                 document.getElementById('endpointModal').classList.add('active');
             }
@@ -725,6 +786,7 @@
                 document.getElementById('tokenInput').placeholder = 'Add a new token (optional)';
                 const headersObj = endpoint.headers || {};
                 document.getElementById('headersInput').value = Object.keys(headersObj).length > 0 ? JSON.stringify(headersObj, null, 2) : '';
+                document.getElementById('apiFormatInput').value = endpoint.apiFormat || 'openai';
                 renderTokenPills();
                 document.getElementById('endpointModal').classList.add('active');
             }
@@ -755,6 +817,7 @@
                 const name = document.getElementById('nameInput').value.trim();
                 const url = document.getElementById('urlInput').value.trim();
                 const headersRaw = document.getElementById('headersInput').value.trim();
+                const apiFormat = document.getElementById('apiFormatInput').value;
 
                 // Flush any unsaved text in the token input field
                 const pendingInput = document.getElementById('tokenInput').value.trim();
@@ -805,7 +868,7 @@
                         // The server will replace only if new tokens are provided.
                         // We send the full array; server uses non-masked ones as replacements,
                         // masked ones signal "keep existing" only when ALL tokens are masked.
-                        const payload = { index: editingEndpoint, name, url, tokens: finalTokens, headers };
+                        const payload = { index: editingEndpoint, name, url, tokens: finalTokens, headers, apiFormat };
 
                         const response = await fetch('/api/endpoints', {
                             method: 'PUT',
@@ -823,7 +886,7 @@
                         const response = await fetch('/api/endpoints', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ name, url, tokens: finalTokens, headers }),
+                            body: JSON.stringify({ name, url, tokens: finalTokens, headers, apiFormat }),
                         });
 
                         if (!response.ok) {
