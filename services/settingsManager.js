@@ -17,6 +17,11 @@ function parseEnvInt(val, fallback) {
   return isNaN(parsed) ? fallback : parsed;
 }
 
+function parseEnvFloat(val, fallback) {
+  const parsed = parseFloat(val);
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
+
 class SettingsManager {
   constructor() {
     this._loadDefaults();
@@ -28,6 +33,14 @@ class SettingsManager {
     this._defaults = {
       promptCachingEnabled: parseEnvBool(process.env.PROMPT_CACHING),
       promptCachingDepth: parseEnvInt(process.env.PROMPT_CACHING_DEPTH, 2),
+      // Default endpoint creation settings (only affect new endpoints)
+      defaultEndpointApiFormat: process.env.DEFAULT_ENDPOINT_API_FORMAT || "openai",
+      defaultEndpointTemperatureEnabled: parseEnvBool(process.env.DEFAULT_ENDPOINT_TEMPERATURE_ENABLED),
+      defaultEndpointTemperature: parseEnvFloat(process.env.DEFAULT_ENDPOINT_TEMPERATURE, 1),
+      defaultEndpointTopPEnabled: parseEnvBool(process.env.DEFAULT_ENDPOINT_TOP_P_ENABLED),
+      defaultEndpointTopP: parseEnvFloat(process.env.DEFAULT_ENDPOINT_TOP_P, 1),
+      defaultEndpointMaxTokensEnabled: parseEnvBool(process.env.DEFAULT_ENDPOINT_MAX_TOKENS_ENABLED),
+      defaultEndpointMaxTokens: parseEnvInt(process.env.DEFAULT_ENDPOINT_MAX_TOKENS, 4096),
     };
   }
 

@@ -61,6 +61,20 @@ router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
     delete openaiReq[param];
   }
 
+  // Apply per-endpoint generation defaults before adapter transformation.
+  // Client-provided values always win; defaults only fill missing fields.
+  const endpointInfo = getEndpointForModel(modelName);
+  if (endpointInfo?.generationDefaults) {
+    const defaults = endpointInfo.generationDefaults;
+    for (const [param, config] of Object.entries(defaults)) {
+      if (config.enabled && config.value !== undefined && config.value !== null) {
+        if (openaiReq[param] === undefined || openaiReq[param] === null) {
+          openaiReq[param] = config.value;
+        }
+      }
+    }
+  }
+
   // Log request start
   const requestParams = {
     temperature: openaiReq.temperature,

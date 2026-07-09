@@ -254,6 +254,11 @@ export function getEndpointForModel(modelName) {
         actualModel,
         customHeaders: endpoint.headers || {},
         apiFormat: endpoint.apiFormat || 'openai',
+        generationDefaults: endpoint.generationDefaults || {
+          temperature: { enabled: false, value: null },
+          top_p: { enabled: false, value: null },
+          max_tokens: { enabled: false, value: null },
+        },
       };
     }
   }

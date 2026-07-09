@@ -159,8 +159,42 @@
                 gap: 8px;
             }
 
+            .form-select {
+                width: 100%;
+                padding: 12px 16px;
+                border: 2px solid var(--gray-200);
+                border-radius: 10px;
+                font-size: 14px;
+                font-family: inherit;
+                transition: all 0.2s ease;
+                background: var(--gray-50);
+                color: var(--gray-800);
+                appearance: none;
+                -webkit-appearance: none;
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+                background-repeat: no-repeat;
+                background-position: right 14px center;
+                padding-right: 36px;
+                cursor: pointer;
+            }
+
+            .form-select:focus {
+                outline: none;
+                border-color: var(--primary);
+                background: var(--card-bg);
+                box-shadow: 0 0 0 3px var(--primary-alpha-01);
+            }
+
+            .form-select:disabled {
+                opacity: 0.45;
+                cursor: not-allowed;
+            }
+
+            .setting-row .number-input {
+                width: 100px;
+            }
+
             .number-input {
-                width: 80px;
                 padding: 9px 12px;
                 border: 2px solid var(--gray-200);
                 border-radius: 10px;
@@ -370,6 +404,18 @@
                     <div class="loading-row" style="width: 60%"></div>
                 </div>
             </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <i class="fa-solid fa-hexagon-nodes"></i>
+                    <h2>Endpoint Defaults</h2>
+                    <span class="card-subtitle">New endpoints only</span>
+                </div>
+                <div class="card-body" id="endpointDefaultsBody">
+                    <div class="loading-row"></div>
+                    <div class="loading-row" style="width: 60%"></div>
+                </div>
+            </div>
         </main>
 
         <script>
@@ -460,6 +506,110 @@
                     </div>
                 </div>
             `;
+
+                renderEndpointDefaults(s);
+            }
+
+            function renderEndpointDefaults(s) {
+                const body = document.getElementById("endpointDefaultsBody");
+                body.innerHTML = `
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Default API Format</div>
+                        <div class="setting-description">
+                            Pre-selected API format for newly created endpoints.
+                        </div>
+                    </div>
+                    <div class="setting-control" style="min-width:180px;">
+                        <select id="defaultEndpointApiFormat" class="form-select">
+                            <option value="openai" ${s.defaultEndpointApiFormat === 'openai' ? 'selected' : ''}>OpenAI — /v1/chat/completions</option>
+                            <option value="anthropic" ${s.defaultEndpointApiFormat === 'anthropic' ? 'selected' : ''}>Anthropic — /v1/messages</option>
+                            <option value="gemini" ${s.defaultEndpointApiFormat === 'gemini' ? 'selected' : ''}>Gemini — /v1beta/generateContent</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Default Temperature</div>
+                        <div class="setting-description">
+                            When enabled, new endpoints start with this temperature value.
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="number-input-wrapper" style="gap:12px;">
+                            <label class="toggle" title="Enable default temperature">
+                                <input type="checkbox" id="defaultEndpointTemperatureEnabled"
+                                       ${s.defaultEndpointTemperatureEnabled ? "checked" : ""}
+                                       onchange="onEndpointDefaultToggle('Temperature')">
+                                <div class="toggle-track"></div>
+                                <div class="toggle-thumb"></div>
+                            </label>
+                            <input type="number" class="number-input" id="defaultEndpointTemperature"
+                                   step="0.1" min="0" max="2" placeholder="1"
+                                   value="${s.defaultEndpointTemperature}"
+                                   ${s.defaultEndpointTemperatureEnabled ? "" : "disabled"}>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Default Top P</div>
+                        <div class="setting-description">
+                            When enabled, new endpoints start with this top_p value.
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="number-input-wrapper" style="gap:12px;">
+                            <label class="toggle" title="Enable default top P">
+                                <input type="checkbox" id="defaultEndpointTopPEnabled"
+                                       ${s.defaultEndpointTopPEnabled ? "checked" : ""}
+                                       onchange="onEndpointDefaultToggle('TopP')">
+                                <div class="toggle-track"></div>
+                                <div class="toggle-thumb"></div>
+                            </label>
+                            <input type="number" class="number-input" id="defaultEndpointTopP"
+                                   step="0.05" min="0" max="1" placeholder="1"
+                                   value="${s.defaultEndpointTopP}"
+                                   ${s.defaultEndpointTopPEnabled ? "" : "disabled"}>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Default Max Tokens</div>
+                        <div class="setting-description">
+                            When enabled, new endpoints start with this max_tokens value.
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="number-input-wrapper" style="gap:12px;">
+                            <label class="toggle" title="Enable default max tokens">
+                                <input type="checkbox" id="defaultEndpointMaxTokensEnabled"
+                                       ${s.defaultEndpointMaxTokensEnabled ? "checked" : ""}
+                                       onchange="onEndpointDefaultToggle('MaxTokens')">
+                                <div class="toggle-track"></div>
+                                <div class="toggle-thumb"></div>
+                            </label>
+                            <input type="number" class="number-input" id="defaultEndpointMaxTokens"
+                                   step="1" min="1" placeholder="4096"
+                                   value="${s.defaultEndpointMaxTokens}"
+                                   ${s.defaultEndpointMaxTokensEnabled ? "" : "disabled"}>
+                        </div>
+                    </div>
+                </div>
+            `;
+            }
+
+            function onEndpointDefaultToggle(param) {
+                const enabled = document.getElementById(`defaultEndpoint${param}Enabled`).checked;
+                const input = document.getElementById(`defaultEndpoint${param}`);
+                input.disabled = !enabled;
+                if (enabled) {
+                    input.focus();
+                }
             }
 
             // ── Toggle handler ───────────────────────────────────────────────
@@ -514,6 +664,27 @@
                     return;
                 }
 
+                const apiFormat = document.getElementById("defaultEndpointApiFormat").value;
+                const tempEnabled = document.getElementById("defaultEndpointTemperatureEnabled").checked;
+                const temp = parseFloat(document.getElementById("defaultEndpointTemperature").value);
+                const topPEnabled = document.getElementById("defaultEndpointTopPEnabled").checked;
+                const topP = parseFloat(document.getElementById("defaultEndpointTopP").value);
+                const maxTokensEnabled = document.getElementById("defaultEndpointMaxTokensEnabled").checked;
+                const maxTokens = parseInt(document.getElementById("defaultEndpointMaxTokens").value, 10);
+
+                if (tempEnabled && (isNaN(temp) || temp < 0 || temp > 2)) {
+                    showToast("Temperature must be between 0 and 2", "error");
+                    return;
+                }
+                if (topPEnabled && (isNaN(topP) || topP < 0 || topP > 1)) {
+                    showToast("Top P must be between 0 and 1", "error");
+                    return;
+                }
+                if (maxTokensEnabled && (isNaN(maxTokens) || maxTokens < 1)) {
+                    showToast("Max tokens must be at least 1", "error");
+                    return;
+                }
+
                 saveBtn.disabled = true;
                 saveBtn.innerHTML =
                     '<i class="fa-solid fa-spinner fa-spin"></i> Saving…';
@@ -527,6 +698,13 @@
                         body: JSON.stringify({
                             promptCachingEnabled: enabledEl.checked,
                             promptCachingDepth: depth,
+                            defaultEndpointApiFormat: apiFormat,
+                            defaultEndpointTemperatureEnabled: tempEnabled,
+                            defaultEndpointTemperature: temp,
+                            defaultEndpointTopPEnabled: topPEnabled,
+                            defaultEndpointTopP: topP,
+                            defaultEndpointMaxTokensEnabled: maxTokensEnabled,
+                            defaultEndpointMaxTokens: maxTokens,
                         }),
                     });
 

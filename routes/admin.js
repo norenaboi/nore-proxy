@@ -605,6 +605,11 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
         tokens: maskedTokens,
         headers: endpoint.headers || {},
         apiFormat: endpoint.apiFormat || 'openai',
+        generationDefaults: endpoint.generationDefaults || {
+          temperature: { enabled: false, value: null },
+          top_p: { enabled: false, value: null },
+          max_tokens: { enabled: false, value: null },
+        },
       });
     }
 
@@ -686,12 +691,16 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
     const endpointKey = `v${newIndex}`;
     const normalizedUrl = normalizeEndpointUrl(url);
 
+    // Validate optional generation defaults
+    const generationDefaults = validateGenerationDefaults(req.body.generationDefaults);
+
     data[endpointKey] = {
       name: name || `Endpoint ${newIndex}`,
       url: normalizedUrl,
       tokens,
       headers: headersObj,
       apiFormat,
+      generationDefaults,
     };
 
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
@@ -719,6 +728,12 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
       if (!VALID_FORMATS.includes(apiFormat)) {
         return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${VALID_FORMATS.join(', ')}` });
       }
+    }
+
+    // Validate optional generation defaults if provided
+    let generationDefaults = undefined;
+    if (req.body.generationDefaults !== undefined) {
+      generationDefaults = validateGenerationDefaults(req.body.generationDefaults);
     }
 
     // Validate index is a plain positive integer to prevent RegExp injection
@@ -823,6 +838,9 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     }
     if (apiFormat !== undefined) {
       data[endpointKey].apiFormat = apiFormat;
+    }
+    if (generationDefaults !== undefined) {
+      data[endpointKey].generationDefaults = generationDefaults;
     }
 
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
@@ -1110,5 +1128,38 @@ router.get("/api/model-usage", verifySession, async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
+/**
+ * Validate generation defaults payload.
+ * Expected shape: { temperature: { enabled, value }, top_p: { enabled, value }, max_tokens: { enabled, value } }
+ * Returns a sanitized object with only valid fields.
+ */
+function validateGenerationDefaults(input) {
+  const defaults = {
+    temperature: { enabled: false, value: null },
+    top_p: { enabled: false, value: null },
+    max_tokens: { enabled: false, value: null },
+  };
+
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return defaults;
+  }
+
+  for (const key of Object.keys(defaults)) {
+    const entry = input[key];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+
+    defaults[key].enabled = entry.enabled === true;
+
+    if (defaults[key].enabled && entry.value !== undefined && entry.value !== null && entry.value !== "") {
+      const num = Number(entry.value);
+      if (!Number.isNaN(num)) {
+        defaults[key].value = key === "max_tokens" ? Math.max(1, Math.floor(num)) : num;
+      }
+    }
+  }
+
+  return defaults;
+}
 
 export default router;

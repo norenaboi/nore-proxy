@@ -82,6 +82,12 @@ class Config {
           // apiFormat controls which API path is appended when forwarding requests.
           // Valid values: 'openai' (default), 'anthropic', 'gemini'
           apiFormat: endpoint.apiFormat || 'openai',
+          // Per-endpoint generation defaults applied when the client omits them.
+          generationDefaults: endpoint.generationDefaults || {
+            temperature: { enabled: false, value: null },
+            top_p: { enabled: false, value: null },
+            max_tokens: { enabled: false, value: null },
+          },
         };
         this._rrCounters[index] = 0;
       }

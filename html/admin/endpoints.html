@@ -223,10 +223,26 @@
                 background: var(--card-bg);
                 border-radius: 16px;
                 width: 100%;
-                max-width: 540px;
+                max-width: 920px;
                 box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
                 transform: scale(0.9);
                 transition: transform 0.3s ease;
+            }
+
+            .modal-body-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 24px;
+                align-items: start;
+            }
+
+            @media (max-width: 768px) {
+                .modal {
+                    max-width: 95vw;
+                }
+                .modal-body-grid {
+                    grid-template-columns: 1fr;
+                }
             }
 
             .modal-overlay.active .modal {
@@ -268,6 +284,47 @@
 
             .modal-body {
                 padding: 24px;
+            }
+
+            .modal-body-col {
+                min-width: 0;
+            }
+
+            .modal-body-col .form-group:last-child {
+                margin-bottom: 0;
+            }
+
+            .tokens-scroll-list {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                max-height: 160px;
+                min-height: 36px;
+                padding: 8px;
+                border: 1px solid var(--gray-200);
+                border-radius: 10px;
+                background: var(--gray-50);
+                margin-bottom: 8px;
+                overflow-y: auto;
+                scrollbar-width: thin;
+                scrollbar-color: var(--gray-300) transparent;
+            }
+
+            .tokens-scroll-list::-webkit-scrollbar {
+                width: 6px;
+            }
+
+            .tokens-scroll-list::-webkit-scrollbar-track {
+                background: transparent;
+            }
+
+            .tokens-scroll-list::-webkit-scrollbar-thumb {
+                background: var(--gray-300);
+                border-radius: 10px;
+            }
+
+            .tokens-scroll-list::-webkit-scrollbar-thumb:hover {
+                background: var(--gray-400);
             }
 
             .modal-footer {
@@ -348,6 +405,73 @@
             .api-format-badge.openai { background: var(--primary-alpha-01); color: var(--primary); }
             .api-format-badge.anthropic { background: rgba(217, 119, 6, 0.1); color: #d97706; }
             .api-format-badge.gemini { background: rgba(99, 102, 241, 0.1); color: #6366f1; }
+
+            .gen-setting-row {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 12px;
+            }
+            .gen-setting-row:last-child { margin-bottom: 0; }
+
+            .gen-toggle {
+                display: inline-flex;
+                align-items: center;
+                gap: 10px;
+                cursor: pointer;
+                font-size: 14px;
+                color: var(--gray-700);
+                font-weight: 500;
+                flex: 1;
+                user-select: none;
+            }
+            .gen-toggle input { display: none; }
+            .gen-toggle-slider {
+                width: 40px;
+                height: 22px;
+                background: var(--gray-300);
+                border-radius: 22px;
+                position: relative;
+                transition: background 0.2s ease;
+                flex-shrink: 0;
+            }
+            .gen-toggle-slider::after {
+                content: "";
+                position: absolute;
+                top: 2px;
+                left: 2px;
+                width: 18px;
+                height: 18px;
+                background: white;
+                border-radius: 50%;
+                transition: transform 0.2s ease;
+            }
+            .gen-toggle input:checked + .gen-toggle-slider { background: var(--primary); }
+            .gen-toggle input:checked + .gen-toggle-slider::after { transform: translateX(18px); }
+
+            .gen-input {
+                width: 120px;
+                flex-shrink: 0;
+                opacity: 0.5;
+                pointer-events: none;
+                transition: opacity 0.2s ease;
+            }
+            .gen-input.active {
+                opacity: 1;
+                pointer-events: auto;
+            }
+
+            .gen-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                padding: 2px 8px;
+                background: var(--gray-100);
+                border-radius: 6px;
+                font-size: 11px;
+                color: var(--gray-600);
+                margin-left: 6px;
+            }
 
             .form-hint {
                 font-size: 12px;
@@ -515,41 +639,78 @@
                             <i class="fa-solid fa-xmark"></i>
                         </button>
                     </div>
-                    <div class="modal-body">
-                        <div class="form-group">
-                            <label class="form-label">Endpoint Name</label>
-                            <input type="text" id="nameInput" class="form-input" placeholder="e.g., My API Server">
-                            <p class="form-hint">A friendly name to identify this endpoint</p>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Endpoint URL</label>
-                            <input type="text" id="urlInput" class="form-input" placeholder="e.g., http://localhost:8081/v1">
-                            <p class="form-hint">The base URL for the API endpoint</p>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">API Tokens <span id="tokenCountBadge" style="font-size:11px;color:var(--gray-500);font-weight:400;"></span></label>
-                            <div id="tokensList" style="display:flex;flex-direction:column;gap:6px;min-height:36px;padding:8px;border:1px solid var(--gray-200);border-radius:10px;background:var(--gray-50);margin-bottom:8px;"></div>
-                            <div style="display:flex;gap:8px;">
-                                <input type="text" id="tokenInput" class="form-input" placeholder="Paste a token and press Add" style="flex:1;">
-                                <button type="button" class="btn btn-secondary" onclick="addTokenFromInput()" style="white-space:nowrap;">Add</button>
+                    <div class="modal-body modal-body-grid">
+                        <div class="modal-body-col">
+                            <div class="form-group">
+                                <label class="form-label">Endpoint Name</label>
+                                <input type="text" id="nameInput" class="form-input" placeholder="e.g., My API Server">
+                                <p class="form-hint">A friendly name to identify this endpoint</p>
                             </div>
-                            <p class="form-hint" id="tokenHint">Add one or more tokens. Requests will be round-robined across all tokens.</p>
+                            <div class="form-group">
+                                <label class="form-label">Endpoint URL</label>
+                                <input type="text" id="urlInput" class="form-input" placeholder="e.g., http://localhost:8081/v1">
+                                <p class="form-hint">The base URL for the API endpoint</p>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">API Tokens <span id="tokenCountBadge" style="font-size:11px;color:var(--gray-500);font-weight:400;"></span></label>
+                                <div id="tokensList" class="tokens-scroll-list"></div>
+                                <div style="display:flex;gap:8px;">
+                                    <input type="text" id="tokenInput" class="form-input" placeholder="Paste a token and press Add" style="flex:1;">
+                                    <button type="button" class="btn btn-secondary" onclick="addTokenFromInput()" style="white-space:nowrap;">Add</button>
+                                </div>
+                                <p class="form-hint" id="tokenHint">Add one or more tokens. Requests will be round-robined across all tokens.</p>
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label class="form-label">Custom Headers (JSON)</label>
-                            <textarea id="headersInput" class="form-input" rows="4"
-                                placeholder='{ "X-Custom-Header": "value" }'
-                                style="font-family: monospace; font-size: 13px; resize: vertical;"></textarea>
-                            <p class="form-hint">Add custom request headers as JSON. Example: {"X-Custom-Header": "value"}</p>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">API Format</label>
-                            <select id="apiFormatInput" class="form-select">
-                                <option value="openai">OpenAI — /v1/chat/completions (default)</option>
-                                <option value="anthropic">Anthropic — /v1/messages</option>
-                                <option value="gemini">Gemini — /v1beta/generateContent</option>
-                            </select>
-                            <p class="form-hint">Controls which API path is appended when forwarding requests to this endpoint.</p>
+
+                        <div class="modal-body-col">
+                            <div class="form-group">
+                                <label class="form-label">Custom Headers (JSON)</label>
+                                <textarea id="headersInput" class="form-input" rows="4"
+                                    placeholder='{ "X-Custom-Header": "value" }'
+                                    style="font-family: monospace; font-size: 13px; resize: vertical;"></textarea>
+                                <p class="form-hint">Add custom request headers as JSON. Example: {"X-Custom-Header": "value"}</p>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">API Format</label>
+                                <select id="apiFormatInput" class="form-select">
+                                    <option value="openai">OpenAI — /v1/chat/completions (default)</option>
+                                    <option value="anthropic">Anthropic — /v1/messages</option>
+                                    <option value="gemini">Gemini — /v1beta/generateContent</option>
+                                </select>
+                                <p class="form-hint">Controls which API path is appended when forwarding requests to this endpoint.</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Default Generation Settings</label>
+                                <p class="form-hint" style="margin-bottom:12px;">When enabled, these values are used only if the client does not send them.</p>
+
+                                <div class="gen-setting-row">
+                                    <label class="gen-toggle">
+                                        <input type="checkbox" id="temperatureEnabled">
+                                        <span class="gen-toggle-slider"></span>
+                                        <span>Temperature</span>
+                                    </label>
+                                    <input type="number" id="temperatureValue" class="form-input gen-input" step="0.1" min="0" max="2" placeholder="1">
+                                </div>
+
+                                <div class="gen-setting-row">
+                                    <label class="gen-toggle">
+                                        <input type="checkbox" id="topPEnabled">
+                                        <span class="gen-toggle-slider"></span>
+                                        <span>Top P</span>
+                                    </label>
+                                    <input type="number" id="topPValue" class="form-input gen-input" step="0.05" min="0" max="1" placeholder="1">
+                                </div>
+
+                                <div class="gen-setting-row">
+                                    <label class="gen-toggle">
+                                        <input type="checkbox" id="maxTokensEnabled">
+                                        <span class="gen-toggle-slider"></span>
+                                        <span>Max Tokens</span>
+                                    </label>
+                                    <input type="number" id="maxTokensValue" class="form-input gen-input" step="1" min="1" placeholder="4096">
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -660,6 +821,19 @@
                     const fmtLabel = fmtLabels[fmt] || fmt;
                     const fmtBadge = `<span class="api-format-badge ${escapeHtml(fmt)}"><i class="fa-solid fa-plug"></i>${escapeHtml(fmtLabel)}</span>`;
 
+                    const genDefaults = endpoint.generationDefaults || {};
+                    const genBadges = [];
+                    if (genDefaults.temperature?.enabled && genDefaults.temperature.value !== null) {
+                        genBadges.push(`<span class="gen-badge"><i class="fa-solid fa-temperature-half"></i>T=${genDefaults.temperature.value}</span>`);
+                    }
+                    if (genDefaults.top_p?.enabled && genDefaults.top_p.value !== null) {
+                        genBadges.push(`<span class="gen-badge"><i class="fa-solid fa-chart-pie"></i>P=${genDefaults.top_p.value}</span>`);
+                    }
+                    if (genDefaults.max_tokens?.enabled && genDefaults.max_tokens.value !== null) {
+                        genBadges.push(`<span class="gen-badge"><i class="fa-solid fa-stopwatch"></i>Max=${genDefaults.max_tokens.value}</span>`);
+                    }
+                    const genBadgesHtml = genBadges.length > 0 ? `<div style="margin-top:4px;">${genBadges.join('')}</div>` : '';
+
                     return `
                         <div class="model-item">
                             <div class="model-info">
@@ -670,6 +844,7 @@
                                     <div class="model-name">${displayName} <span style="font-size:11px;color:var(--gray-400);font-weight:400;margin-left:6px;">v${endpoint.index}</span> ${fmtBadge}</div>
                                     <div class="model-mapping">${escapeHtml(endpoint.url)}</div>
                                     <div class="model-mapping" style="margin-top:4px;">${tokenPreview}</div>
+                                    ${genBadgesHtml}
                                     ${Object.keys(endpoint.headers || {}).length > 0 ? `<div class="model-mapping" style="color: var(--gray-400); font-size: 11px; margin-top:2px;"><i class="fa-solid fa-code" style="margin-right: 4px;"></i>${Object.keys(endpoint.headers).length} custom header${Object.keys(endpoint.headers).length !== 1 ? 's' : ''}</div>` : ''}
                                 </div>
                             </div>
@@ -749,7 +924,7 @@
 
             // --- Modal open/close ---
 
-            function openAddModal() {
+            async function openAddModal() {
                 editingEndpoint = null;
                 pendingTokens = [];
                 pendingDeleteConfirm = new Set();
@@ -761,7 +936,30 @@
                 document.getElementById('tokenInput').placeholder = 'Paste a token and press Add';
                 document.getElementById('tokenHint').textContent = 'Add one or more tokens. Requests will be round-robined across all tokens.';
                 document.getElementById('headersInput').value = '';
-                document.getElementById('apiFormatInput').value = 'openai';
+
+                // Apply configured defaults for new endpoints only
+                let defaults;
+                try {
+                    const res = await fetch('/api/settings');
+                    if (res.ok) {
+                        const data = await res.json();
+                        defaults = data.settings;
+                    }
+                } catch (err) {
+                    console.error('Failed to load endpoint defaults:', err);
+                }
+
+                document.getElementById('apiFormatInput').value = defaults?.defaultEndpointApiFormat || 'openai';
+                if (defaults) {
+                    setGenerationDefaults({
+                        temperature: { enabled: defaults.defaultEndpointTemperatureEnabled, value: defaults.defaultEndpointTemperature },
+                        top_p: { enabled: defaults.defaultEndpointTopPEnabled, value: defaults.defaultEndpointTopP },
+                        max_tokens: { enabled: defaults.defaultEndpointMaxTokensEnabled, value: defaults.defaultEndpointMaxTokens },
+                    });
+                } else {
+                    resetGenerationDefaults();
+                }
+
                 renderTokenPills();
                 document.getElementById('endpointModal').classList.add('active');
             }
@@ -784,6 +982,7 @@
                 const headersObj = endpoint.headers || {};
                 document.getElementById('headersInput').value = Object.keys(headersObj).length > 0 ? JSON.stringify(headersObj, null, 2) : '';
                 document.getElementById('apiFormatInput').value = endpoint.apiFormat || 'openai';
+                setGenerationDefaults(endpoint.generationDefaults || {});
                 renderTokenPills();
                 document.getElementById('endpointModal').classList.add('active');
             }
@@ -815,6 +1014,7 @@
                 const url = document.getElementById('urlInput').value.trim();
                 const headersRaw = document.getElementById('headersInput').value.trim();
                 const apiFormat = document.getElementById('apiFormatInput').value;
+                const generationDefaults = collectGenerationDefaults();
 
                 // Flush any unsaved text in the token input field
                 const pendingInput = document.getElementById('tokenInput').value.trim();
@@ -865,7 +1065,7 @@
                         // The server will replace only if new tokens are provided.
                         // We send the full array; server uses non-masked ones as replacements,
                         // masked ones signal "keep existing" only when ALL tokens are masked.
-                        const payload = { index: editingEndpoint, name, url, tokens: finalTokens, headers, apiFormat };
+                        const payload = { index: editingEndpoint, name, url, tokens: finalTokens, headers, apiFormat, generationDefaults };
 
                         const response = await fetch('/api/endpoints', {
                             method: 'PUT',
@@ -883,7 +1083,7 @@
                         const response = await fetch('/api/endpoints', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ name, url, tokens: finalTokens, headers, apiFormat }),
+                            body: JSON.stringify({ name, url, tokens: finalTokens, headers, apiFormat, generationDefaults }),
                         });
 
                         if (!response.ok) {
@@ -948,6 +1148,62 @@
                 const div = document.createElement('div');
                 div.textContent = text;
                 return div.innerHTML;
+            }
+
+            // --- Generation defaults helpers ---
+
+            function updateGenInputState(param) {
+                const enabled = document.getElementById(`${param}Enabled`).checked;
+                const input = document.getElementById(`${param}Value`);
+                if (enabled) {
+                    input.classList.add('active');
+                } else {
+                    input.classList.remove('active');
+                }
+            }
+
+            function resetGenerationDefaults() {
+                for (const param of ['temperature', 'topP', 'maxTokens']) {
+                    const key = param === 'topP' ? 'top_p' : (param === 'maxTokens' ? 'max_tokens' : 'temperature');
+                    document.getElementById(`${param}Enabled`).checked = false;
+                    document.getElementById(`${param}Value`).value = '';
+                    updateGenInputState(param);
+                }
+            }
+
+            function setGenerationDefaults(defaults) {
+                const map = {
+                    temperature: 'temperature',
+                    top_p: 'topP',
+                    max_tokens: 'maxTokens',
+                };
+                for (const [key, id] of Object.entries(map)) {
+                    const entry = defaults[key] || { enabled: false, value: null };
+                    document.getElementById(`${id}Enabled`).checked = entry.enabled === true;
+                    document.getElementById(`${id}Value`).value = entry.value !== null && entry.value !== undefined ? entry.value : '';
+                    updateGenInputState(id);
+                }
+            }
+
+            function collectGenerationDefaults() {
+                const map = {
+                    temperature: 'temperature',
+                    top_p: 'topP',
+                    max_tokens: 'maxTokens',
+                };
+                const defaults = {};
+                for (const [key, id] of Object.entries(map)) {
+                    const enabled = document.getElementById(`${id}Enabled`).checked;
+                    const rawValue = document.getElementById(`${id}Value`).value.trim();
+                    const value = enabled && rawValue !== '' ? Number(rawValue) : null;
+                    defaults[key] = { enabled, value };
+                }
+                return defaults;
+            }
+
+            // Wire toggle -> input enable/disable
+            for (const id of ['temperature', 'topP', 'maxTokens']) {
+                document.getElementById(`${id}Enabled`).addEventListener('change', () => updateGenInputState(id));
             }
         </script>
     </body>
