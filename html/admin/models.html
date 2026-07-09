@@ -403,6 +403,38 @@
             grid-template-columns: 1fr 1fr;
         }
 
+        .form-col {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .form-select {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid var(--gray-200);
+            border-radius: 10px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: all 0.2s ease;
+            background: var(--gray-50);
+            color: var(--gray-800);
+            appearance: none;
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 14px center;
+            padding-right: 36px;
+            cursor: pointer;
+        }
+
+        .form-select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-alpha-01);
+            background: var(--card-bg);
+        }
+
         .form-section-label {
             font-size: 11px;
             font-weight: 600;
@@ -703,18 +735,23 @@
                 <div class="modal-body">
 
                     <div class="form-group">
-                        <div class="form-row form-row-3">
+                        <div class="form-col">
                             <div>
                                 <label class="form-label">Display Name</label>
                                 <input type="text" id="nameInput" class="form-input" placeholder="bedrock/claude-opus">
                             </div>
                             <div>
-                                <label class="form-label">Actual Name</label>
-                                <input type="text" id="backendInput" class="form-input" placeholder="anthropic/claude-opus">
+                                <label class="form-label">Backend Model</label>
+                                <select id="backendSelect" class="form-select">
+                                    <option value="">— select a model from /v1/models —</option>
+                                </select>
+                                <input type="text" id="backendInput" class="form-input" placeholder="or type the actual model name" style="margin-top:8px;">
                             </div>
                             <div>
-                                <label class="form-label">Version</label>
-                                <input type="text" id="versionInput" class="form-input" placeholder="v1">
+                                <label class="form-label">Endpoint Version</label>
+                                <select id="versionSelect" class="form-select">
+                                    <option value="">— select an endpoint —</option>
+                                </select>
                             </div>
                         </div>
                     </div>
@@ -781,6 +818,7 @@
         let editingModel = null;
         let deletingModel = null;
         const modelTestResults = new Map(); // model name -> { ok, latency_ms, error }
+        let availableModels = []; // models from the selected endpoint's /v1/models
 
         // Logout
         async function logout() {
@@ -789,7 +827,26 @@
         }
 
         // Load models on page load
-        document.addEventListener('DOMContentLoaded', loadModels);
+        document.addEventListener('DOMContentLoaded', () => {
+            loadModels();
+            // When a public model is selected from the dropdown, pre-fill the backend input
+            document.getElementById('backendSelect').addEventListener('change', (e) => {
+                if (e.target.value) {
+                    document.getElementById('backendInput').value = e.target.value;
+                }
+            });
+            // When endpoint version changes, fetch that endpoint's /v1/models
+            document.getElementById('versionSelect').addEventListener('change', async (e) => {
+                const version = e.target.value;
+                if (version) {
+                    await fetchUpstreamModels(version);
+                    populateBackendSelect();
+                } else {
+                    availableModels = [];
+                    populateBackendSelect();
+                }
+            });
+        });
 
         async function loadModels() {
             try {
@@ -932,13 +989,59 @@
             }).join('');
         }
 
+        function populateVersionSelect(selectedVersion = '') {
+            const select = document.getElementById('versionSelect');
+            const versions = Object.keys(endpoints).sort((a, b) => {
+                const numA = parseInt(a.replace(/\D/g, ''), 10) || 0;
+                const numB = parseInt(b.replace(/\D/g, ''), 10) || 0;
+                return numA - numB;
+            });
+
+            select.innerHTML = '<option value="">— select an endpoint —</option>' +
+                versions.map(ver => {
+                    const ep = endpoints[ver];
+                    const label = ep ? `${ep.name || ver} (${ver})` : ver;
+                    return `<option value="${escapeHtml(ver)}" ${ver === selectedVersion ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+                }).join('');
+        }
+
+        function populateBackendSelect(selectedBackend = '') {
+            const select = document.getElementById('backendSelect');
+            if (availableModels.length === 0) {
+                select.innerHTML = '<option value="">— select an endpoint first —</option>';
+                return;
+            }
+            select.innerHTML = '<option value="">— select a model from /v1/models —</option>' +
+                availableModels.map(name => `<option value="${escapeHtml(name)}" ${name === selectedBackend ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
+        }
+
+        async function fetchUpstreamModels(version) {
+            try {
+                const res = await fetch(`/api/endpoints/${version}/models`);
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.error || `Failed to fetch models for ${version}`);
+                }
+                const data = await res.json();
+                availableModels = (data.models || [])
+                    .filter(m => typeof m === 'string' && m.length > 0)
+                    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+            } catch (error) {
+                console.error('fetchUpstreamModels error:', error);
+                availableModels = [];
+                showToast(error.message, 'error');
+            }
+        }
+
         function openAddModal() {
             editingModel = null;
             document.getElementById('modalTitle').textContent = 'Add Model';
             document.getElementById('modalSubmit').textContent = 'Add Model';
             document.getElementById('nameInput').value = '';
             document.getElementById('backendInput').value = '';
-            document.getElementById('versionInput').value = '';
+            availableModels = [];
+            populateBackendSelect();
+            populateVersionSelect();
             document.getElementById('pricingInputInput').value = '';
             document.getElementById('pricingOutputInput').value = '';
             document.getElementById('pricingCacheWriteInput').value = '';
@@ -946,7 +1049,7 @@
             document.getElementById('modelModal').classList.add('active');
         }
 
-        function openEditModal(modelName) {
+        async function openEditModal(modelName) {
             // Find the model object by name
             const model = models.find(m => m.name === modelName);
             if (!model) {
@@ -960,7 +1063,17 @@
             document.getElementById('modalSubmit').textContent = 'Save Changes';
             document.getElementById('nameInput').value = model.name || '';
             document.getElementById('backendInput').value = model.backend || '';
-            document.getElementById('versionInput').value = model.version || '';
+            populateVersionSelect(model.version || '');
+
+            // If the model has a version, fetch that endpoint's models and then select the backend
+            if (model.version) {
+                await fetchUpstreamModels(model.version);
+                populateBackendSelect(model.backend || '');
+            } else {
+                availableModels = [];
+                populateBackendSelect();
+            }
+
             document.getElementById('pricingInputInput').value = model.pricing?.input || '';
             document.getElementById('pricingOutputInput').value = model.pricing?.output || '';
             document.getElementById('pricingCacheWriteInput').value = model.pricing?.cache_write || '';
@@ -986,8 +1099,10 @@
 
         async function submitModel() {
             const name = document.getElementById('nameInput').value.trim();
-            const backend = document.getElementById('backendInput').value.trim();
-            const version = document.getElementById('versionInput').value.trim();
+            const backendSelect = document.getElementById('backendSelect').value.trim();
+            const backendInput = document.getElementById('backendInput').value.trim();
+            const backend = backendInput || backendSelect;
+            const version = document.getElementById('versionSelect').value.trim();
             const pricingInput = document.getElementById('pricingInputInput').value.trim();
             const pricingOutput = document.getElementById('pricingOutputInput').value.trim();
             const pricingCacheWrite = document.getElementById('pricingCacheWriteInput').value.trim();
@@ -1002,6 +1117,11 @@
 
             if (!backend) {
                 showToast('Please enter a backend name', 'error');
+                return;
+            }
+
+            if (!version) {
+                showToast('Please select an endpoint version', 'error');
                 return;
             }
 

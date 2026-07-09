@@ -886,6 +886,94 @@ router.delete("/api/endpoints", verifySession, async (req, res) => {
   }
 });
 
+// GET /api/endpoints/:version/models — proxy upstream model list for an endpoint.
+// Uses the stored real token server-side so masked tokens are never exposed.
+// Supports OpenAI-compatible, Anthropic, and Gemini formats.
+router.get("/api/endpoints/:version/models", verifySession, async (req, res) => {
+  try {
+    const version = req.params.version;
+    if (!/^v\d+$/.test(version)) {
+      return res.status(400).json({ error: "Invalid endpoint version" });
+    }
+
+    const endpointInfo = getEndpointForModel(`proxy-${version}`);
+    if (!endpointInfo) {
+      return res.status(404).json({ error: `Endpoint ${version} not found` });
+    }
+
+    const { url: backendUrl, token: backendToken, customHeaders, apiFormat } = endpointInfo;
+
+    let requestUrl;
+    let requestHeaders = { ...customHeaders };
+    let extractModels = (data) => [];
+
+    if (apiFormat === 'gemini') {
+      // Gemini: key goes in query string, no Authorization header
+      requestUrl = `${backendUrl}/v1beta/models?key=${encodeURIComponent(backendToken)}`;
+      extractModels = (data) => {
+        const list = Array.isArray(data.models) ? data.models : [];
+        return list
+          .map((m) => {
+            const raw = typeof m === 'string' ? m : (m.name || '');
+            // Gemini returns "models/gemini-1.5-flash"; strip the prefix
+            return raw.replace(/^models\//, '');
+          })
+          .filter(Boolean);
+      };
+    } else if (apiFormat === 'anthropic') {
+      // Anthropic: x-api-key header, optional anthropic-version
+      requestUrl = `${backendUrl}/v1/models`;
+      requestHeaders = {
+        ...requestHeaders,
+        'Content-Type': 'application/json',
+        'x-api-key': backendToken,
+        'anthropic-version': '2023-06-01',
+      };
+      extractModels = (data) => {
+        const list = Array.isArray(data.data) ? data.data : [];
+        return list
+          .map((m) => (typeof m === 'string' ? m : (m.id || '')))
+          .filter(Boolean);
+      };
+    } else {
+      // OpenAI-compatible (default)
+      requestUrl = `${backendUrl}/v1/models`;
+      requestHeaders = {
+        ...requestHeaders,
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${backendToken}`,
+      };
+      extractModels = (data) => {
+        const list = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
+        return list
+          .map((m) => (typeof m === 'string' ? m : (m.id || '')))
+          .filter(Boolean);
+      };
+    }
+
+    const response = await axios({
+      method: 'get',
+      url: requestUrl,
+      headers: requestHeaders,
+      timeout: 15000,
+    });
+
+    if (response.status !== 200) {
+      return res.status(502).json({ error: `Upstream returned HTTP ${response.status}` });
+    }
+
+    const models = extractModels(response.data);
+    res.json({ models });
+  } catch (error) {
+    const status = error.response?.status;
+    const msg = error.response?.data?.error?.message
+      || error.response?.data?.message
+      || error.message
+      || "Request failed";
+    res.status(502).json({ error: status ? `HTTP ${status}: ${msg}` : msg });
+  }
+});
+
 /*
     POST for reloading and refreshing everything
 */
