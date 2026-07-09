@@ -29,6 +29,7 @@ class APIKeyManager {
       VALUES (@api_key, @name, @active, @usage_today, @rpd, @rpm, @max_context_size, @last_reset_date)
     `);
     this.stmtDeleteAll = this.db.prepare("DELETE FROM api_keys");
+    this.stmtIncrementUsage = this.db.prepare("UPDATE api_keys SET usage_today = usage_today + 1 WHERE api_key = ?");
 
     this.keys = {};
     this.loadKeys();
@@ -187,7 +188,7 @@ class APIKeyManager {
     }
 
     this.keys[apiKey].usage_today = (this.keys[apiKey].usage_today || 0) + 1;
-    this.saveKeys();
+    this.stmtIncrementUsage.run(apiKey);
     return true;
   }
 

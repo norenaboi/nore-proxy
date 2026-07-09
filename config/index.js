@@ -80,7 +80,7 @@ class Config {
           tokens,
           headers: endpoint.headers || {},
           // apiFormat controls which API path is appended when forwarding requests.
-          // Valid values: 'openai' (default), 'anthropic', 'openai-responses', 'gemini'
+          // Valid values: 'openai' (default), 'anthropic', 'gemini'
           apiFormat: endpoint.apiFormat || 'openai',
         };
         this._rrCounters[index] = 0;

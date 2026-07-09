@@ -1,6 +1,4 @@
-import crypto from "crypto";
 import apiKeyManager from "../services/apiKeyManager.js";
-import Config from "../config/index.js";
 import { validateSession } from "../services/sessionManager.js";
 
 export function verifyApiKey(req, res, next) {
@@ -26,23 +24,6 @@ export function verifyApiKey(req, res, next) {
       error: { message: error.message || "Invalid or missing API key" },
     });
   }
-}
-
-export function verifyMasterKey(req, res, next) {
-  const provided = req.headers.authorization || "";
-  const expected = Config.MASTER_KEY;
-  let valid = false;
-  try {
-    valid =
-      provided.length === expected.length &&
-      crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
-  } catch (_) {}
-
-  if (!valid) {
-    return res.status(403).json({ error: "Invalid master key" });
-  }
-
-  next();
 }
 
 export function verifySession(req, res, next) {

@@ -557,6 +557,35 @@
         .btn-success:hover {
             filter: brightness(0.9);
         }
+
+        .btn-test {
+            background: var(--primary-alpha-012);
+            color: var(--primary);
+            border: 1px solid var(--primary-alpha-035);
+        }
+        .btn-test:hover {
+            background: var(--primary-alpha-015);
+        }
+        .test-result-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 10px;
+            white-space: nowrap;
+        }
+        .test-result-badge.ok {
+            background: var(--success-alpha-01);
+            color: var(--success-dark);
+            border: 1px solid var(--success-alpha-04);
+        }
+        .test-result-badge.fail {
+            background: var(--danger-alpha-01);
+            color: var(--danger-dark);
+            border: 1px solid var(--danger-alpha-02);
+        }
     </style>
 </head>
 <body>
@@ -751,6 +780,7 @@
         let endpoints = {};  // version -> { name, ... }
         let editingModel = null;
         let deletingModel = null;
+        const modelTestResults = new Map(); // model name -> { ok, latency_ms, error }
 
         // Logout
         async function logout() {
@@ -869,6 +899,10 @@
                                 </div>
                             </div>
                             <div class="model-actions">
+                                ${(() => { const r = modelTestResults.get(model.name); return r ? `<span class="test-result-badge ${r.ok ? 'ok' : 'fail'}">${r.ok ? `<i class="fa-solid fa-check"></i> ${r.latency_ms}ms` : '<i class="fa-solid fa-xmark"></i> fail'}</span>` : ''; })()}
+                                <button class="btn btn-test btn-sm" onclick="testModel(${safeModelName}, this)" title="Test model (silent — not logged)">
+                                    <i class="fa-solid fa-flask"></i>
+                                </button>
                                 <button class="btn btn-sm ${model.disabled ? 'btn-warning' : 'btn-success'}" onclick="toggleModel(${safeModelName})" title="${model.disabled ? 'Enable model' : 'Disable model'}">
                                     <i class="fa-solid fa-${model.disabled ? 'pause' : 'play'}"></i>
                                 </button>
@@ -1045,6 +1079,35 @@
             } catch (error) {
                 showToast(error.message, 'error');
             }
+        }
+
+        async function testModel(modelName, btn) {
+            // Show spinner on the button
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            }
+
+            try {
+                const response = await fetch('/api/models/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: modelName })
+                });
+                const data = await response.json();
+                modelTestResults.set(modelName, data);
+                if (data.ok) {
+                    showToast(`${modelName}: OK (${data.latency_ms}ms)`, 'success');
+                } else {
+                    showToast(`${modelName}: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                modelTestResults.set(modelName, { ok: false, error: error.message });
+                showToast(error.message, 'error');
+            }
+
+            // Re-render to show the result badge (test results are preserved in the Map)
+            renderModels();
         }
 
         async function confirmDelete() {

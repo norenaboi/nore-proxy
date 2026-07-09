@@ -29,15 +29,15 @@ db.pragma("busy_timeout = 5000");
 db.prepare("BEGIN TRANSACTION").run();
 
 try {
+  const updateData = db.prepare(
+    "UPDATE request_logs SET data = json_set(data, '$.model', ?) WHERE model = ?"
+  );
+  updateData.run(newModel, oldModel);
+
   const updateModel = db.prepare(
     "UPDATE request_logs SET model = ? WHERE model = ?"
   );
   const result = updateModel.run(newModel, oldModel);
-
-  const updateData = db.prepare(
-    "UPDATE request_logs SET data = json_set(data, '$.model', ?) WHERE model = ?"
-  );
-  updateData.run(newModel, newModel);
 
   db.prepare("COMMIT").run();
 

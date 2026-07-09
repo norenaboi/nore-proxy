@@ -7,7 +7,8 @@ import { adminRateLimit } from "../middleware/rateLimiter.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
 import Config from "../config/index.js";
-import { loadModelsFromFile, normalizeEndpointUrl } from "../utils/helpers.js";
+import { loadModelsFromFile, normalizeEndpointUrl, getEndpointForModel, getFullUrl } from "../utils/helpers.js";
+import axios from "axios";
 import { calculateCost } from "../utils/logging.js";
 import settingsManager from "../services/settingsManager.js";
 import crypto from "crypto";
@@ -513,6 +514,61 @@ router.patch("/api/models/toggle", verifySession, async (req, res) => {
   }
 });
 
+// POST /api/models/test — fire a silent ping to the upstream for a model.
+// Does NOT touch logs, dashboard, stats, or rate-limit counters.
+router.post("/api/models/test", verifySession, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ ok: false, error: "Model name required" });
+
+    const endpointInfo = getEndpointForModel(name);
+    if (!endpointInfo) {
+      return res.status(404).json({ ok: false, error: `No endpoint configured for model '${name}'` });
+    }
+
+    const { url: backendUrl, token: backendToken, actualModel, customHeaders, apiFormat } = endpointInfo;
+    const fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
+
+    const start = Date.now();
+
+    // Gemini uses a different auth + body shape
+    const isGemini = apiFormat === 'gemini';
+    const requestHeaders = {
+      ...customHeaders,
+      "Content-Type": "application/json",
+      ...(isGemini ? {} : { Authorization: `Bearer ${backendToken}` }),
+    };
+    const requestUrl = isGemini ? `${fullUrl}?key=${backendToken}` : fullUrl;
+    const requestBody = isGemini
+      ? { contents: [{ parts: [{ text: "ping" }] }] }
+      : { model: actualModel, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false };
+
+    const response = await axios({
+      method: "post",
+      url: requestUrl,
+      headers: requestHeaders,
+      data: requestBody,
+      timeout: 15000,
+    });
+
+    const latency_ms = Date.now() - start;
+
+    if (response.status !== 200) {
+      return res.json({ ok: false, error: `Upstream returned HTTP ${response.status}`, latency_ms });
+    }
+
+    return res.json({ ok: true, latency_ms });
+  } catch (error) {
+    const latency_ms = Date.now();
+    const status = error.response?.status;
+    const msg = error.response?.data?.error?.message
+      || error.response?.data?.message
+      || error.message
+      || "Request failed";
+    return res.json({ ok: false, error: status ? `HTTP ${status}: ${msg}` : msg });
+  }
+});
+
 /*
     GET PUT POST DELETE for endpoints.json
 */
@@ -580,7 +636,7 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "URL and at least one token are required" });
 
     // Validate and capture apiFormat
-    const VALID_FORMATS = ['openai', 'anthropic', 'openai-responses', 'gemini'];
+    const VALID_FORMATS = ['openai', 'anthropic', 'gemini'];
     const apiFormat = req.body.apiFormat || 'openai';
     if (!VALID_FORMATS.includes(apiFormat)) {
       return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${VALID_FORMATS.join(', ')}` });
@@ -656,7 +712,7 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "Index and URL are required" });
 
     // Validate and capture apiFormat (undefined means keep existing)
-    const VALID_FORMATS = ['openai', 'anthropic', 'openai-responses', 'gemini'];
+    const VALID_FORMATS = ['openai', 'anthropic', 'gemini'];
     let apiFormat = undefined;
     if (req.body.apiFormat !== undefined) {
       apiFormat = req.body.apiFormat;

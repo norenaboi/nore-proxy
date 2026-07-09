@@ -167,9 +167,27 @@ function addCacheControlToMessage(message) {
   return message;
 }
 
-export function estimateTokens(text) {
-  if (!text) return 0;
-  return Math.floor(String(text).length / 4);
+export function estimateTokens(input) {
+  if (!input) return 0;
+
+  if (typeof input === "string") {
+    return Math.floor(input.length / 4);
+  }
+
+  if (Array.isArray(input)) {
+    const text = input
+      .map((m) =>
+        typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      )
+      .join(" ");
+    return Math.floor(text.length / 4);
+  }
+
+  if (input.messages && Array.isArray(input.messages)) {
+    return estimateTokens(input.messages);
+  }
+
+  return Math.floor(String(input).length / 4);
 }
 
 /**
@@ -191,17 +209,21 @@ export function normalizeEndpointUrl(rawUrl) {
 /**
  * Builds the full backend URL by appending the correct path for the given apiFormat.
  * @param {string} baseUrl - normalized base URL (no trailing /v1)
- * @param {string} apiFormat - one of: 'openai', 'anthropic', 'openai-responses', 'gemini'
+ * @param {string} apiFormat - one of: 'openai', 'anthropic', 'gemini'
+ * @param {string} modelName - the actual model name (used by gemini to build the path)
+ * @param {boolean} isStreaming - when true, returns the streaming endpoint for formats that need a different URL (gemini)
  * @returns {string} full URL with path appended
  */
-export function getFullUrl(baseUrl, apiFormat) {
+export function getFullUrl(baseUrl, apiFormat, modelName, isStreaming = false) {
   switch (apiFormat) {
     case 'anthropic':
       return `${baseUrl}/v1/messages`;
-    case 'openai-responses':
-      return `${baseUrl}/v1/responses`;
+
     case 'gemini':
-      return `${baseUrl}/v1beta/generateContent`;
+      // Gemini uses a separate streaming endpoint with SSE output
+      return isStreaming
+        ? `${baseUrl}/v1beta/models/${modelName}:streamGenerateContent`
+        : `${baseUrl}/v1beta/models/${modelName}:generateContent`;
     case 'openai':
     default:
       return `${baseUrl}/v1/chat/completions`;

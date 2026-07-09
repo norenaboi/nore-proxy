@@ -77,13 +77,6 @@ class LogService extends EventEmitter {
   clearLogs() {
     this.logs = [];
   }
-
-  restoreConsole() {
-    console.log = this.originalConsole.log;
-    console.error = this.originalConsole.error;
-    console.warn = this.originalConsole.warn;
-    console.info = this.originalConsole.info;
-  }
 }
 
 const logService = new LogService();

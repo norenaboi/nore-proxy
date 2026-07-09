@@ -25,7 +25,7 @@ router.get("/api/summary", async (req, res) => {
   const successful = recent24hLogs.filter(
     (log) => log.status === "success",
   ).length;
-  const failed = totalRequests - successful;
+  const failed = recent24hLogs.length - successful;
 
   const totalInputTokens = logs.reduce(
     (sum, log) => sum + (log.input_tokens || 0),
@@ -85,7 +85,7 @@ router.get("/api/summary", async (req, res) => {
     daily_cache_write_tokens: dailyCacheWriteTokens,
     daily_cache_read_tokens: dailyCacheReadTokens,
     avg_duration: avgDuration,
-    success_rate: totalRequests > 0 ? (successful / totalRequests) * 100 : 0,
+    success_rate: recent24hLogs.length > 0 ? (successful / recent24hLogs.length) * 100 : 0,
     uptime: Date.now() / 1000 - startupTime,
     total_api_keys: allApiKeys.length,
   });

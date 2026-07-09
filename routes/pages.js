@@ -69,18 +69,7 @@ router.get("/admin", (req, res) => {
 });
 
 router.get("/admin/login", (req, res) => {
-  const cookies = {};
-  const header = req.headers.cookie;
-  if (header) {
-    for (const part of header.split(";")) {
-      const idx = part.indexOf("=");
-      if (idx < 0) continue;
-      cookies[part.slice(0, idx).trim()] = decodeURIComponent(
-        part.slice(idx + 1).trim(),
-      );
-    }
-  }
-  if (validateSession(cookies.adminSession)) {
+  if (validateSession(req.cookies?.adminSession)) {
     return res.redirect("/admin/dashboard");
   }
   serveAdmin(res, "login.html");

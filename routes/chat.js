@@ -13,6 +13,7 @@ import {
   isClaudeModel,
   applyClaudePromptCaching,
 } from "../utils/helpers.js";
+import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import settingsManager from "../services/settingsManager.js";
 
 const router = express.Router();
@@ -20,7 +21,7 @@ const router = express.Router();
 router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
   const apiKey = req.apiKey;
 
-  const contextTokens = estimateTokens(JSON.stringify(req.body.messages || []));
+  const contextTokens = estimateTokens(req.body.messages || []);
 
   try {
     apiKeyManager.checkForGeneration(apiKey, rateLimiter, contextTokens);
@@ -109,6 +110,7 @@ async function streamFromBackend(
   cacheDepth = -1,
 ) {
   let accumulatedContent = "";
+  let accumulatedReasoning = "";
 
   const endpointInfo = getEndpointForModel(modelName);
 
@@ -143,7 +145,8 @@ async function streamFromBackend(
   }
 
   const { url: backendUrl, token: backendToken, actualModel, customHeaders, apiFormat } = endpointInfo;
-  const fullUrl = getFullUrl(backendUrl, apiFormat);
+  const adapter = getAdapter(apiFormat);
+  const fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true); // true = streaming
 
   // Set streaming headers
   res.setHeader("Content-Type", "text/event-stream");
@@ -151,11 +154,20 @@ async function streamFromBackend(
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
 
+  // Build adapter context for building OpenAI-shaped chunks
+  const streamCtx = {
+    requestId,
+    modelName,
+    streamId: `chatcmpl-${requestId}`,
+    streamCreated: Math.floor(Date.now() / 1000),
+  };
+
   try {
     let messages = openaiReq.messages || [];
     let streamUsage = null;
 
     // Apply Claude prompt caching if the target model is Claude and caching is enabled
+    // (only meaningful for OpenAI-compat and Anthropic formats)
     if (isClaudeModel(actualModel) && cacheDepth !== -1) {
       messages = applyClaudePromptCaching(messages, cacheDepth);
       console.log(
@@ -170,32 +182,35 @@ async function streamFromBackend(
       );
     }
 
-    const data = {
-      model: actualModel,
-      stream: true,
-      messages,
-      max_tokens: openaiReq.max_tokens,
-      temperature: openaiReq.temperature,
-      top_p: openaiReq.top_p,
-      tools: openaiReq.tools,
-      tool_choice: openaiReq.tool_choice,
+    // Build the request body using the adapter
+    const reqForAdapter = { ...openaiReq, messages };
+    const data = adapter.transformStreamRequest(reqForAdapter, actualModel);
+
+    // Build headers: custom + adapter-specific (e.g. anthropic-version) + auth
+    const extraHeaders = getExtraHeaders(apiFormat);
+    const headers = {
+      ...customHeaders,
+      ...extraHeaders,
+      "Content-Type": "application/json",
     };
 
-    // Remove undefined values
-    Object.keys(data).forEach((key) => {
-      if (data[key] === undefined || data[key] === null) {
-        delete data[key];
-      }
-    });
+    // Auth depends on format: gemini uses ?key=, anthropic uses x-api-key, openai uses Bearer
+    if (apiFormat === "gemini") {
+      // Auth is in the URL query param, no auth header needed
+    } else if (apiFormat === "anthropic") {
+      headers["x-api-key"] = backendToken;
+    } else {
+      headers["Authorization"] = `Bearer ${backendToken}`;
+    }
+
+    const requestUrl = apiFormat === "gemini"
+      ? `${fullUrl}?alt=sse&key=${backendToken}`
+      : fullUrl;
 
     const response = await axios({
       method: "post",
-      url: fullUrl,
-      headers: {
-        ...customHeaders,
-        Authorization: `Bearer ${backendToken}`,
-        "Content-Type": "application/json",
-      },
+      url: requestUrl,
+      headers,
       data,
       responseType: "stream",
       timeout: 180000,
@@ -227,8 +242,7 @@ async function streamFromBackend(
     }
 
     let buffer = "";
-    const streamId = `chatcmpl-${requestId}`;
-    const streamCreated = Math.floor(Date.now() / 1000);
+    let currentEvent = null; // track event: type for typed-event streams (anthropic, responses)
 
     response.data.on("data", (chunk) => {
       buffer += chunk.toString();
@@ -237,53 +251,47 @@ async function streamFromBackend(
 
       for (const line of lines) {
         const trimmed = line.trim();
+
+        // Track event type for typed-event streams (Anthropic, Responses API)
+        if (trimmed.startsWith("event: ")) {
+          currentEvent = trimmed.slice(7).trim();
+          continue;
+        }
+
         if (trimmed.startsWith("data: ")) {
           const payload = trimmed.slice(6).trim();
 
-          if (payload === "[DONE]") {
+          // Check for [DONE] sentinel (OpenAI / OpenAI-compat streams)
+          if (adapter.isStreamEnd(payload)) {
             res.write("data: [DONE]\n\n");
             return;
           }
 
           try {
             const chunkData = JSON.parse(payload);
-
             if (chunkData && typeof chunkData === "object") {
-              const choices = chunkData.choices || [];
-              if (choices.length > 0) {
-                const delta = choices[0].delta || {};
-                if (delta.content) {
-                  accumulatedContent += delta.content;
+              // Build OpenAI-compatible chunk via adapter
+              const openaiChunk = adapter.buildStreamChunk(chunkData, streamCtx);
+              if (openaiChunk) {
+                // Track accumulated content for usage estimation
+                const parsed = adapter.parseStreamChunk(chunkData, streamCtx);
+                if (parsed?.deltaContent) {
+                  accumulatedContent += parsed.deltaContent;
                 }
+                if (parsed?.deltaReasoning) {
+                  accumulatedReasoning += parsed.deltaReasoning;
+                }
+                if (parsed?.usage) {
+                  streamUsage = parsed.usage;
+                }
+                res.write(`data: ${JSON.stringify(openaiChunk)}\n\n`);
               }
-              // Capture usage from the final chunk (sent by OpenRouter before [DONE])
-              if (chunkData.usage) {
-                streamUsage = chunkData.usage;
-              }
-
-              // Ensure OpenAI-compatible structure
-              const openaiChunk = {
-                id: chunkData.id || streamId,
-                object: "chat.completion.chunk",
-                created: chunkData.created || streamCreated,
-                model: modelName,
-                choices: choices.map((choice, index) => ({
-                  index: choice.index !== undefined ? choice.index : index,
-                  delta: choice.delta || {},
-                  finish_reason: choice.finish_reason || null,
-                })),
-              };
-
-              // Include usage if present (for final chunk)
-              if (chunkData.usage) {
-                openaiChunk.usage = chunkData.usage;
-              }
-
-              res.write(`data: ${JSON.stringify(openaiChunk)}\n\n`);
             }
           } catch (e) {
             console.warn(`BACKEND [ID: ${requestId}]: Invalid JSON in stream.`);
           }
+          // Reset event tracker after processing data line
+          currentEvent = null;
         }
       }
     });
@@ -291,13 +299,24 @@ async function streamFromBackend(
     response.data.on("end", () => {
       // Use real usage from the final chunk if available, otherwise estimate
       const inputTokens =
-        streamUsage?.prompt_tokens ?? estimateTokens(JSON.stringify(openaiReq));
+        streamUsage?.prompt_tokens ?? estimateTokens(openaiReq);
+      // Include reasoning text in the estimate — thinking models can spend
+      // many tokens on reasoning that isn't in accumulatedContent. If the
+      // upstream reported a non-zero completion_tokens we trust that;
+      // otherwise estimate from content + reasoning combined.
+      const estimatedOutput =
+        estimateTokens(accumulatedContent) +
+        estimateTokens(accumulatedReasoning);
       const outputTokens =
-        streamUsage?.completion_tokens ?? estimateTokens(accumulatedContent);
+        streamUsage?.completion_tokens ?? estimatedOutput;
       const cacheWriteTokens =
-        streamUsage?.prompt_tokens_details?.cache_write_tokens ?? 0;
+        streamUsage?.prompt_tokens_details?.cache_creation_input_tokens
+        ?? streamUsage?.prompt_tokens_details?.cache_write_tokens
+        ?? 0;
       const cacheReadTokens =
-        streamUsage?.prompt_tokens_details?.cached_tokens ?? 0;
+        streamUsage?.prompt_tokens_details?.cached_tokens
+        ?? streamUsage?.prompt_tokens_details?.cache_read_tokens
+        ?? 0;
       logRequestEnd(
         requestId,
         true,
@@ -309,6 +328,8 @@ async function streamFromBackend(
         cacheWriteTokens,
         cacheReadTokens,
       );
+      // Always send [DONE] to close the stream for the client
+      res.write("data: [DONE]\n\n");
       res.end();
     });
 
@@ -383,7 +404,8 @@ async function makeBackendRequest(
   }
 
   const { url: backendUrl, token: backendToken, actualModel, customHeaders, apiFormat } = endpointInfo;
-  const fullUrl = getFullUrl(backendUrl, apiFormat);
+  const adapter = getAdapter(apiFormat);
+  const fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
 
   try {
     let messages = openaiReq.messages || [];
@@ -403,31 +425,32 @@ async function makeBackendRequest(
       );
     }
 
-    const data = {
-      model: actualModel,
-      messages,
-      max_tokens: openaiReq.max_tokens,
-      temperature: openaiReq.temperature,
-      top_p: openaiReq.top_p,
-      tools: openaiReq.tools,
-      tool_choice: openaiReq.tool_choice,
+    // Build the request body using the adapter
+    const reqForAdapter = { ...openaiReq, messages };
+    const data = adapter.transformRequest(reqForAdapter, actualModel);
+
+    // Build headers: custom + adapter-specific + auth
+    const extraHeaders = getExtraHeaders(apiFormat);
+    const headers = {
+      ...customHeaders,
+      ...extraHeaders,
+      "Content-Type": "application/json",
     };
 
-    // Remove undefined values
-    Object.keys(data).forEach((key) => {
-      if (data[key] === undefined || data[key] === null) {
-        delete data[key];
-      }
-    });
+    if (apiFormat === "gemini") {
+      // Auth is in the URL query param
+    } else if (apiFormat === "anthropic") {
+      headers["x-api-key"] = backendToken;
+    } else {
+      headers["Authorization"] = `Bearer ${backendToken}`;
+    }
+
+    const requestUrl = apiFormat === "gemini" ? `${fullUrl}?key=${backendToken}` : fullUrl;
 
     const response = await axios({
       method: "post",
-      url: fullUrl,
-      headers: {
-        ...customHeaders,
-        Authorization: `Bearer ${backendToken}`,
-        "Content-Type": "application/json",
-      },
+      url: requestUrl,
+      headers,
       data,
       timeout: 180000,
     });
@@ -435,21 +458,30 @@ async function makeBackendRequest(
     if (response.status !== 200) {
       console.error(`BACKEND [ID: ${requestId}]:`, response.data);
       const error = new Error(
-        `Error ${response.status}: ${response.data.statusMessage}`,
+        `Error ${response.status}: ${response.data.statusMessage ?? response.data?.error?.message ?? "Unknown error"}`,
       );
       error.statusCode = response.status;
       throw error;
     }
 
-    const responseData = response.data;
-    const content = responseData.choices?.[0]?.message?.content || "";
-    const usage = responseData.usage || {};
+    const rawData = response.data;
+
+    // Parse the response using the adapter
+    const parsed = adapter.parseResponseData(rawData);
+
+    const content = parsed.content;
+    const usage = parsed.usage || {};
     const inputTokens =
-      usage.prompt_tokens ?? estimateTokens(JSON.stringify(openaiReq));
+      usage.prompt_tokens ?? estimateTokens(openaiReq);
     const outputTokens = usage.completion_tokens ?? estimateTokens(content);
     const cacheWriteTokens =
-      usage.prompt_tokens_details?.cache_creation_input_tokens ?? 0;
-    const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens ?? 0;
+      usage.prompt_tokens_details?.cache_creation_input_tokens
+      ?? usage.prompt_tokens_details?.cache_write_tokens
+      ?? 0;
+    const cacheReadTokens =
+      usage.prompt_tokens_details?.cached_tokens
+      ?? usage.prompt_tokens_details?.cache_read_tokens
+      ?? 0;
 
     logRequestEnd(
       requestId,
@@ -463,7 +495,8 @@ async function makeBackendRequest(
       cacheReadTokens,
     );
 
-    return responseData;
+    // Return the OpenAI-compatible response object
+    return parsed.response ?? rawData;
   } catch (error) {
     console.error(`BACKEND [ID: ${requestId}]: Error:`, error.message);
     if (error.response) {
