@@ -14,7 +14,6 @@ import {
   applyClaudePromptCaching,
 } from "../utils/helpers.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
-import settingsManager from "../services/settingsManager.js";
 
 const router = express.Router();
 
@@ -37,15 +36,15 @@ router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
   const modelName = openaiReq.model;
 
   // Extract and remove cache_depth before forwarding.
-  // Per-request override takes priority; falls back to the admin panel setting.
-  let cacheDepth;
+  // Per-request override takes priority; falls back to per-endpoint setting.
+  let cacheDepth = -1;
   if (openaiReq.cache_depth !== undefined) {
     cacheDepth = parseInt(openaiReq.cache_depth, 10);
   } else {
-    const cachingEnabled = settingsManager.get("promptCachingEnabled");
-    cacheDepth = cachingEnabled
-      ? settingsManager.get("promptCachingDepth")
-      : -1;
+    const endpointInfo = getEndpointForModel(modelName);
+    if (endpointInfo?.promptCaching?.enabled === true && isClaudeModel(endpointInfo.actualModel)) {
+      cacheDepth = endpointInfo.promptCaching.depth;
+    }
   }
   delete openaiReq.cache_depth;
 

@@ -7,6 +7,7 @@ services:
     volumes:
       - ./endpoints.json:/app/endpoints.json
       - ./models.json:/app/models.json
+      - ./settings.json:/app/settings.json
       - ./logs:/app/logs
       - ./.env:/app/.env
     ports:

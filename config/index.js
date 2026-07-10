@@ -92,6 +92,8 @@ class Config {
           apiFormat: endpoint.apiFormat || 'openai',
           // Per-endpoint generation defaults applied when the client omits them.
           generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
+          // Per-endpoint prompt caching (null for old endpoints = deliberately disabled/off).
+          promptCaching: endpoint.promptCaching !== undefined ? endpoint.promptCaching : null,
         };
         this._rrCounters[index] = 0;
       }

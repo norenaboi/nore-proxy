@@ -601,6 +601,7 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
         headers: endpoint.headers || {},
         apiFormat: endpoint.apiFormat || 'openai',
         generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
+        promptCaching: endpoint.promptCaching !== undefined ? endpoint.promptCaching : null,
       });
     }
 
@@ -686,20 +687,13 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
     // Resolve generation defaults from admin panel settings when client provides none
     let generationDefaults = validateGenerationDefaults(req.body.generationDefaults);
     if (!req.body.generationDefaults || typeof req.body.generationDefaults !== "object" || Array.isArray(req.body.generationDefaults)) {
-      generationDefaults = {
-        temperature: {
-          enabled: settingsManager.get("defaultEndpointTemperatureEnabled"),
-          value: settingsManager.get("defaultEndpointTemperature"),
-        },
-        top_p: {
-          enabled: settingsManager.get("defaultEndpointTopPEnabled"),
-          value: settingsManager.get("defaultEndpointTopP"),
-        },
-        max_tokens: {
-          enabled: settingsManager.get("defaultEndpointMaxTokensEnabled"),
-          value: settingsManager.get("defaultEndpointMaxTokens"),
-        },
-      };
+      generationDefaults = settingsManager.getDefaultGenerationDefaults();
+    }
+
+    // Resolve prompt caching from admin panel defaults when client provides none
+    let promptCaching = validatePromptCaching(req.body.promptCaching);
+    if (req.body.promptCaching === undefined) {
+      promptCaching = settingsManager.getDefaultPromptCaching();
     }
 
     data[endpointKey] = {
@@ -709,6 +703,7 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       headers: headersObj,
       apiFormat,
       generationDefaults,
+      promptCaching,
     };
 
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
@@ -742,6 +737,12 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     let generationDefaults = undefined;
     if (req.body.generationDefaults !== undefined) {
       generationDefaults = validateGenerationDefaults(req.body.generationDefaults);
+    }
+
+    // Validate optional prompt caching if provided
+    let promptCaching = undefined;
+    if (req.body.promptCaching !== undefined) {
+      promptCaching = validatePromptCaching(req.body.promptCaching);
     }
 
     // Validate index is a plain positive integer to prevent RegExp injection
@@ -849,6 +850,9 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     }
     if (generationDefaults !== undefined) {
       data[endpointKey].generationDefaults = generationDefaults;
+    }
+    if (promptCaching !== undefined) {
+      data[endpointKey].promptCaching = promptCaching;
     }
 
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
@@ -1268,6 +1272,31 @@ function validateGenerationDefaults(input) {
   }
 
   return defaults;
+}
+
+/**
+ * Validate prompt caching payload.
+ * Expected shape: { enabled: boolean, depth: number }
+ * Returns a sanitized object. Non-objects become { enabled: false, depth: 2 }.
+ */
+function validatePromptCaching(input) {
+  const defaults = { enabled: false, depth: 2 };
+
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return defaults;
+  }
+
+  const enabled = input.enabled === true;
+  let depth = defaults.depth;
+
+  if (input.depth !== undefined && input.depth !== null && input.depth !== "") {
+    const num = Number(input.depth);
+    if (!Number.isNaN(num)) {
+      depth = Math.max(0, Math.floor(num));
+    }
+  }
+
+  return { enabled, depth };
 }
 
 export default router;

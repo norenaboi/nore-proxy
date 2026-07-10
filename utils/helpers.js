@@ -261,6 +261,7 @@ export function getEndpointForModel(modelName) {
         customHeaders: endpoint.headers || {},
         apiFormat: endpoint.apiFormat || 'openai',
         generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
+        promptCaching: endpoint.promptCaching !== undefined ? endpoint.promptCaching : null,
       };
     }
   }

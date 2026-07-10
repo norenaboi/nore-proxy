@@ -418,19 +418,6 @@
                     <div class="loading-row" style="width: 60%"></div>
                 </div>
             </div>
-
-            <!-- Prompt Caching -->
-            <div class="card">
-                <div class="card-header">
-                    <i class="fa-solid fa-bolt"></i>
-                    <h2>Prompt Caching</h2>
-                    <span class="card-subtitle">Anthropic / OpenRouter</span>
-                </div>
-                <div class="card-body" id="promptCachingBody">
-                    <div class="loading-row"></div>
-                    <div class="loading-row" style="width: 60%"></div>
-                </div>
-            </div>
         </main>
 
         <script>
@@ -466,7 +453,6 @@
                 settings = { ...s };
                 renderKeyDefaults(s);
                 renderEndpointDefaults(s);
-                renderPromptCaching(s);
             }
 
             function renderKeyDefaults(s) {
@@ -612,60 +598,29 @@
                         </div>
                     </div>
                 </div>
-            `;
-            }
 
-            function renderPromptCaching(s) {
-                const body = document.getElementById("promptCachingBody");
-                body.innerHTML = `
                 <div class="setting-row">
                     <div class="setting-info">
-                        <div class="setting-label">Enable Prompt Caching</div>
+                        <div class="setting-label">Default Prompt Caching for Claude</div>
                         <div class="setting-description">
-                            When enabled, the proxy automatically injects
-                            <code style="background:var(--gray-100);padding:1px 5px;border-radius:4px;font-size:12px;">cache_control</code>
-                            breakpoints into Claude messages before forwarding them to the backend.
-                            Caching can reduce costs and latency on long, repeated contexts.
-                            <br><br>
-                            Individual requests can still override this by including a
-                            <code style="background:var(--gray-100);padding:1px 5px;border-radius:4px;font-size:12px;">cache_depth</code>
-                            field in the request body
-                            (<code style="background:var(--gray-100);padding:1px 5px;border-radius:4px;font-size:12px;">-1</code> = disable for that request).
+                            When enabled, new endpoints will have prompt caching turned on with the specified cache depth.
+                            Caching only applies to Claude models and can still be disabled per request with
+                            <code style="background:var(--gray-100);padding:1px 5px;border-radius:4px;font-size:12px;">cache_depth: -1</code>.
                         </div>
                     </div>
                     <div class="setting-control">
-                        <label class="toggle" title="Toggle prompt caching">
-                            <input type="checkbox" id="cachingEnabled"
-                                   ${s.promptCachingEnabled ? "checked" : ""}
-                                   onchange="onCachingToggle()">
-                            <div class="toggle-track"></div>
-                            <div class="toggle-thumb"></div>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="setting-row" id="depthRow" style="${s.promptCachingEnabled ? "" : "opacity:0.45;pointer-events:none;"}">
-                    <div class="setting-info">
-                        <div class="setting-label">Cache Depth</div>
-                        <div class="setting-description">
-                            Controls how many recent messages are <em>excluded</em> from caching.
-                            <br>
-                            <strong>0</strong> &mdash; cache all messages.
-                            &nbsp;|&nbsp;
-                            <strong>1</strong> &mdash; cache all except the last message (most recent user turn).
-                            &nbsp;|&nbsp;
-                            <strong>N</strong> &mdash; cache all except the last N messages.
-                            <br><br>
-                            Anthropic allows up to 4 cache breakpoints per request; the proxy
-                            distributes them evenly across eligible messages.
-                        </div>
-                    </div>
-                    <div class="setting-control">
-                        <div class="number-input-wrapper">
-                            <input type="number" class="number-input" id="cachingDepth"
-                                   min="0" max="100" step="1"
-                                   value="${s.promptCachingDepth}"
-                                   ${s.promptCachingEnabled ? "" : "disabled"}>
+                        <div class="number-input-wrapper" style="gap:12px;">
+                            <label class="toggle" title="Enable default prompt caching for Claude">
+                                <input type="checkbox" id="defaultEndpointPromptCachingEnabled"
+                                       ${s.defaultEndpointPromptCachingEnabled ? "checked" : ""}
+                                       onchange="onEndpointDefaultToggle('PromptCaching')">
+                                <div class="toggle-track"></div>
+                                <div class="toggle-thumb"></div>
+                            </label>
+                            <input type="number" class="number-input" id="defaultEndpointPromptCachingDepth"
+                                   min="0" max="100" step="1" placeholder="2"
+                                   value="${s.defaultEndpointPromptCachingDepth}"
+                                   ${s.defaultEndpointPromptCachingEnabled ? "" : "disabled"}>
                         </div>
                     </div>
                 </div>
@@ -679,17 +634,6 @@
                 if (enabled) {
                     input.focus();
                 }
-            }
-
-            // ── Toggle handler ───────────────────────────────────────────────
-            function onCachingToggle() {
-                const enabled =
-                    document.getElementById("cachingEnabled").checked;
-                const depthRow = document.getElementById("depthRow");
-                const depthInput = document.getElementById("cachingDepth");
-                depthRow.style.opacity = enabled ? "1" : "0.45";
-                depthRow.style.pointerEvents = enabled ? "auto" : "none";
-                depthInput.disabled = !enabled;
             }
 
             // ── Load ─────────────────────────────────────────────────────────
@@ -720,8 +664,6 @@
                 const rpdDefault = parseInt(document.getElementById("rpdDefault").value, 10);
                 const rpmDefault = parseInt(document.getElementById("rpmDefault").value, 10);
                 const maxContextSizeDefault = parseInt(document.getElementById("maxContextSizeDefault").value, 10);
-                const cachingEnabledEl = document.getElementById("cachingEnabled");
-                const depthEl = document.getElementById("cachingDepth");
 
                 if (isNaN(rpdDefault) || rpdDefault < 1) {
                     showToast("RPD default must be at least 1", "error");
@@ -736,15 +678,6 @@
                     return;
                 }
 
-                const depth = parseInt(depthEl.value, 10);
-                if (isNaN(depth) || depth < 0) {
-                    showToast(
-                        "Cache depth must be a non-negative integer",
-                        "error",
-                    );
-                    return;
-                }
-
                 const apiFormat = document.getElementById("defaultEndpointApiFormat").value;
                 const tempEnabled = document.getElementById("defaultEndpointTemperatureEnabled").checked;
                 const temp = parseFloat(document.getElementById("defaultEndpointTemperature").value);
@@ -752,6 +685,8 @@
                 const topP = parseFloat(document.getElementById("defaultEndpointTopP").value);
                 const maxTokensEnabled = document.getElementById("defaultEndpointMaxTokensEnabled").checked;
                 const maxTokens = parseInt(document.getElementById("defaultEndpointMaxTokens").value, 10);
+                const promptCachingEnabled = document.getElementById("defaultEndpointPromptCachingEnabled").checked;
+                const promptCachingDepth = parseInt(document.getElementById("defaultEndpointPromptCachingDepth").value, 10);
 
                 if (tempEnabled && (isNaN(temp) || temp < 0 || temp > 2)) {
                     showToast("Temperature must be between 0 and 2", "error");
@@ -763,6 +698,10 @@
                 }
                 if (maxTokensEnabled && (isNaN(maxTokens) || maxTokens < 1)) {
                     showToast("Max tokens must be at least 1", "error");
+                    return;
+                }
+                if (promptCachingEnabled && (isNaN(promptCachingDepth) || promptCachingDepth < 0)) {
+                    showToast("Cache depth must be a non-negative integer", "error");
                     return;
                 }
 
@@ -780,8 +719,6 @@
                             rpdDefault,
                             rpmDefault,
                             maxContextSizeDefault,
-                            promptCachingEnabled: cachingEnabledEl.checked,
-                            promptCachingDepth: depth,
                             defaultEndpointApiFormat: apiFormat,
                             defaultEndpointTemperatureEnabled: tempEnabled,
                             defaultEndpointTemperature: temp,
@@ -789,6 +726,8 @@
                             defaultEndpointTopP: topP,
                             defaultEndpointMaxTokensEnabled: maxTokensEnabled,
                             defaultEndpointMaxTokens: maxTokens,
+                            defaultEndpointPromptCachingEnabled: promptCachingEnabled,
+                            defaultEndpointPromptCachingDepth: promptCachingDepth,
                         }),
                     });
 

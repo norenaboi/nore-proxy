@@ -26,9 +26,9 @@ class SettingsManager {
       rpmDefault: 10,
       maxContextSizeDefault: 0,
 
-      // Prompt caching
-      promptCachingEnabled: false,
-      promptCachingDepth: 2,
+      // Default prompt caching for new endpoints (only applied at creation time)
+      defaultEndpointPromptCachingEnabled: false,
+      defaultEndpointPromptCachingDepth: 2,
 
       // Default endpoint creation settings (only affect new endpoints)
       defaultEndpointApiFormat: "openai",
@@ -105,6 +105,16 @@ class SettingsManager {
       this._overrides[key] = value;
     }
     this._saveToFile();
+  }
+
+  /**
+   * Returns default prompt caching settings for new endpoints.
+   */
+  getDefaultPromptCaching() {
+    return {
+      enabled: this.get("defaultEndpointPromptCachingEnabled"),
+      depth: this.get("defaultEndpointPromptCachingDepth"),
+    };
   }
 
   /**
