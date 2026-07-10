@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import Config from "../config/index.js";
+import settingsManager from "../services/settingsManager.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,6 +11,11 @@ const __dirname = path.dirname(__filename);
 export let MODEL_ALIASES = {};
 export let MODEL_REGISTRY = {};
 export let MODEL_PRICING = {};
+
+export function maskKey(key) {
+  if (!key || key.length <= 8) return key ? "****" : key;
+  return key.substring(0, 5) + "..." + key.substring(key.length - 3);
+}
 
 export function resolveModelName(modelName) {
   return MODEL_ALIASES[modelName] || modelName;
@@ -254,11 +260,7 @@ export function getEndpointForModel(modelName) {
         actualModel,
         customHeaders: endpoint.headers || {},
         apiFormat: endpoint.apiFormat || 'openai',
-        generationDefaults: endpoint.generationDefaults || {
-          temperature: { enabled: false, value: null },
-          top_p: { enabled: false, value: null },
-          max_tokens: { enabled: false, value: null },
-        },
+        generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
       };
     }
   }

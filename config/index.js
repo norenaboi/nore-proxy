@@ -91,11 +91,7 @@ class Config {
           // Valid values: 'openai' (default), 'anthropic', 'gemini'
           apiFormat: endpoint.apiFormat || 'openai',
           // Per-endpoint generation defaults applied when the client omits them.
-          generationDefaults: endpoint.generationDefaults || {
-            temperature: { enabled: false, value: null },
-            top_p: { enabled: false, value: null },
-            max_tokens: { enabled: false, value: null },
-          },
+          generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
         };
         this._rrCounters[index] = 0;
       }

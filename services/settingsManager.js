@@ -107,6 +107,27 @@ class SettingsManager {
     this._saveToFile();
   }
 
+  /**
+   * Returns the default generationDefaults object for endpoints that do not
+   * define their own and for which the client did not send a value.
+   */
+  getDefaultGenerationDefaults() {
+    return {
+      temperature: {
+        enabled: this.get("defaultEndpointTemperatureEnabled"),
+        value: this.get("defaultEndpointTemperature"),
+      },
+      top_p: {
+        enabled: this.get("defaultEndpointTopPEnabled"),
+        value: this.get("defaultEndpointTopP"),
+      },
+      max_tokens: {
+        enabled: this.get("defaultEndpointMaxTokensEnabled"),
+        value: this.get("defaultEndpointMaxTokens"),
+      },
+    };
+  }
+
   reload() {
     this._loadDefaults();
     this._overrides = this._loadFromFile();

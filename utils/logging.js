@@ -1,7 +1,7 @@
 import logManager from "../services/logManager.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import realtimeStats from "../services/realtimeStats.js";
-import { MODEL_PRICING } from "./helpers.js";
+import { MODEL_PRICING, maskKey } from "./helpers.js";
 
 // Cost calculation function based on model type
 export function calculateCost(
@@ -158,11 +158,6 @@ export function logRequestEnd(
   logManager.writeRequestLog(logEntry);
 
   realtimeStats.activeRequests.delete(requestId);
-}
-
-function maskKey(key) {
-  if (!key || key.length <= 8) return key ? "****" : key;
-  return key.substring(0, 5) + "..." + key.substring(key.length - 3);
 }
 
 export function logError(requestId, errorType, errorMessage, stackTrace = "") {

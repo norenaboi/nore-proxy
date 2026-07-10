@@ -3,6 +3,7 @@ import path from "path";
 import Config from "../config/index.js";
 import logManager from "./logManager.js";
 import settingsManager from "./settingsManager.js";
+import { maskKey } from "../utils/helpers.js";
 
 class APIKeyManager {
   constructor(dbFile = "api_keys.db") {
@@ -266,12 +267,7 @@ class APIKeyManager {
     const dayAgo = currentTime - 86400;
 
     // Logs store a masked version of the key — apply the same mask before comparing
-    const maskedKey =
-      apiKey && apiKey.length > 8
-        ? apiKey.substring(0, 5) + "..." + apiKey.substring(apiKey.length - 3)
-        : apiKey
-          ? "****"
-          : apiKey;
+    const maskedKey = maskKey(apiKey);
 
     const apiKeyLogs24h = logs.filter(
       (log) => log.api_key === maskedKey && (log.timestamp || 0) > dayAgo,

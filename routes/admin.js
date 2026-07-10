@@ -8,7 +8,7 @@ import settingsManager from "../services/settingsManager.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
 import Config from "../config/index.js";
-import { loadModelsFromFile, normalizeEndpointUrl, getEndpointForModel, getFullUrl } from "../utils/helpers.js";
+import { loadModelsFromFile, normalizeEndpointUrl, getEndpointForModel, getFullUrl, maskKey } from "../utils/helpers.js";
 import axios from "axios";
 import { calculateCost } from "../utils/logging.js";
 import crypto from "crypto";
@@ -132,12 +132,7 @@ router.get("/api/logs", verifySession, async (req, res) => {
     const stats = apiKeyManager.getUsageStats(apiKey);
 
     // Compute masked key used in logs for this API key
-    const maskedKey =
-      apiKey && apiKey.length > 8
-        ? apiKey.substring(0, 5) + "..." + apiKey.substring(apiKey.length - 3)
-        : apiKey
-          ? "****"
-          : apiKey;
+    const maskedKey = maskKey(apiKey);
 
     const keyLogs = allLogs.filter((l) => l.api_key === maskedKey);
     const { total_cost, daily_cost } = computeCostsFromLogs(keyLogs);
@@ -605,11 +600,7 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
         tokens: maskedTokens,
         headers: endpoint.headers || {},
         apiFormat: endpoint.apiFormat || 'openai',
-        generationDefaults: endpoint.generationDefaults || {
-          temperature: { enabled: false, value: null },
-          top_p: { enabled: false, value: null },
-          max_tokens: { enabled: false, value: null },
-        },
+        generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
       });
     }
 

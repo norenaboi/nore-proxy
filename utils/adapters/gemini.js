@@ -75,19 +75,19 @@ function contentToParts(content) {
 /**
  * Transform an OpenAI Chat Completions request into a Gemini generateContent body.
  */
-export function transformRequest(openaiReq, actualModel) {
-  return buildGeminiBody(openaiReq, false);
+export function transformRequest(openaiReq) {
+  return buildGeminiBody(openaiReq);
 }
 
 /**
  * Transform for streaming — same body, streaming is controlled by the URL
  * (streamGenerateContent endpoint) not a body flag, but we keep the same interface.
  */
-export function transformStreamRequest(openaiReq, actualModel) {
-  return buildGeminiBody(openaiReq, true);
+export function transformStreamRequest(openaiReq) {
+  return buildGeminiBody(openaiReq);
 }
 
-function buildGeminiBody(openaiReq, isStream) {
+function buildGeminiBody(openaiReq) {
   const messages = openaiReq.messages || [];
   const contents = [];
   let systemInstruction = null;
