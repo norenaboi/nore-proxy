@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import settingsManager from "../services/settingsManager.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,12 +31,19 @@ class Config {
     }
     return key;
   })();
-  static RPD_DEFAULT = parseInt(process.env.RPD_DEFAULT || "500", 10);
-  static RPM_DEFAULT = parseInt(process.env.RPM_DEFAULT || "10", 10);
-  static MAX_CONTEXT_SIZE_DEFAULT = parseInt(
-    process.env.MAX_CONTEXT_SIZE_DEFAULT || "0",
-    10,
-  );
+
+  // Runtime settings are managed by settingsManager and persisted in settings.json.
+  static get RPD_DEFAULT() {
+    return settingsManager.get("rpdDefault");
+  }
+
+  static get RPM_DEFAULT() {
+    return settingsManager.get("rpmDefault");
+  }
+
+  static get MAX_CONTEXT_SIZE_DEFAULT() {
+    return settingsManager.get("maxContextSizeDefault");
+  }
 
   static ENDPOINTS = {};
 
@@ -67,7 +75,7 @@ class Config {
 
         const index = match[1];
         const tokens = Array.isArray(endpoint.tokens) ? endpoint.tokens : [];
-        
+
         if (!endpoint.url || tokens.length === 0) {
           console.warn(`Warning: Endpoint "${key}" missing url or tokens — skipping`);
           continue;
@@ -127,12 +135,6 @@ class Config {
       process.exit(1);
     }
     this.MASTER_KEY = key;
-    this.RPD_DEFAULT = parseInt(process.env.RPD_DEFAULT || "500", 10);
-    this.RPM_DEFAULT = parseInt(process.env.RPM_DEFAULT || "10", 10);
-    this.MAX_CONTEXT_SIZE_DEFAULT = parseInt(
-      process.env.MAX_CONTEXT_SIZE_DEFAULT || "0",
-      10,
-    );
     this.loadEndpoints();
   }
 }

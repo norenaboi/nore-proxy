@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import Config from "../config/index.js";
 import logManager from "./logManager.js";
+import settingsManager from "./settingsManager.js";
 
 class APIKeyManager {
   constructor(dbFile = "api_keys.db") {
@@ -44,7 +45,7 @@ class APIKeyManager {
         console.log("Migrating database: adding rpm column...");
         this.db.exec(`ALTER TABLE api_keys ADD COLUMN rpm INTEGER`);
         this.db.exec(
-          `UPDATE api_keys SET rpm = ${Config.RPM_DEFAULT} WHERE rpm IS NULL`,
+          `UPDATE api_keys SET rpm = ${settingsManager.get("rpmDefault")} WHERE rpm IS NULL`,
         );
         console.log("Database migration (rpm) completed successfully.");
       }
@@ -55,7 +56,7 @@ class APIKeyManager {
           `ALTER TABLE api_keys ADD COLUMN max_context_size INTEGER`,
         );
         this.db.exec(
-          `UPDATE api_keys SET max_context_size = ${Config.MAX_CONTEXT_SIZE_DEFAULT} WHERE max_context_size IS NULL`,
+          `UPDATE api_keys SET max_context_size = ${settingsManager.get("maxContextSizeDefault")} WHERE max_context_size IS NULL`,
         );
         console.log(
           "Database migration (max_context_size) completed successfully.",
@@ -150,7 +151,7 @@ class APIKeyManager {
     }
 
     // Check RPD limit
-    const rpdLimit = keyData.rpd || Config.RPD_DEFAULT;
+    const rpdLimit = keyData.rpd || settingsManager.get("rpdDefault");
     if (parseInt(keyData.usage_today) >= parseInt(rpdLimit)) {
       const error = new Error(
         `You exceeded your requests per day limit (${rpdLimit}). Please wait until it resets at midnight.`,
@@ -160,12 +161,12 @@ class APIKeyManager {
     }
 
     // Check rate limit (RPM) - use key-specific RPM or default
-    const rpmLimit = keyData.rpm || Config.RPM_DEFAULT;
+    const rpmLimit = keyData.rpm || settingsManager.get("rpmDefault");
     rateLimiter.checkRateLimit(apiKey, rpmLimit);
 
     // Check context size limit (0 means unlimited)
     const maxContextSize =
-      keyData.max_context_size ?? Config.MAX_CONTEXT_SIZE_DEFAULT;
+      keyData.max_context_size ?? settingsManager.get("maxContextSizeDefault");
     if (maxContextSize > 0 && contextTokens > maxContextSize) {
       const error = new Error(
         `Your request context (${contextTokens} tokens) exceeds the maximum allowed context size of ${maxContextSize} tokens for your API key.`,
@@ -209,9 +210,9 @@ class APIKeyManager {
   addKey(
     apiKey,
     name,
-    rpd = Config.RPD_DEFAULT,
-    rpm = Config.RPM_DEFAULT,
-    max_context_size = Config.MAX_CONTEXT_SIZE_DEFAULT,
+    rpd = settingsManager.get("rpdDefault"),
+    rpm = settingsManager.get("rpmDefault"),
+    max_context_size = settingsManager.get("maxContextSizeDefault"),
     usage_today = 0,
   ) {
     this.keys[apiKey] = {

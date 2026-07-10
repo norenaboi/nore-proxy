@@ -4,13 +4,13 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { verifySession } from "../middleware/auth.js";
 import { adminRateLimit } from "../middleware/rateLimiter.js";
+import settingsManager from "../services/settingsManager.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
 import Config from "../config/index.js";
 import { loadModelsFromFile, normalizeEndpointUrl, getEndpointForModel, getFullUrl } from "../utils/helpers.js";
 import axios from "axios";
 import { calculateCost } from "../utils/logging.js";
-import settingsManager from "../services/settingsManager.js";
 import crypto from "crypto";
 import { createSession, deleteSession } from "../services/sessionManager.js";
 
@@ -265,12 +265,12 @@ router.post("/api/keys", verifySession, async (req, res) => {
   try {
     const apiKey = (req.body.api_key || "").trim();
     const name = (req.body.name || "").trim();
-    const rpd = req.body.rpd || Config.RPD_DEFAULT;
-    const rpm = req.body.rpm || Config.RPM_DEFAULT;
+    const rpd = req.body.rpd || settingsManager.get("rpdDefault");
+    const rpm = req.body.rpm || settingsManager.get("rpmDefault");
     const max_context_size =
       req.body.max_context_size !== undefined
         ? parseInt(req.body.max_context_size, 10)
-        : Config.MAX_CONTEXT_SIZE_DEFAULT;
+        : settingsManager.get("maxContextSizeDefault");
 
     if (!apiKey || !name) {
       return res.status(400).json({ error: "API key and name are required" });
@@ -300,7 +300,7 @@ router.put("/api/keys", verifySession, async (req, res) => {
     const max_context_size =
       req.body.max_context_size !== undefined
         ? parseInt(req.body.max_context_size, 10)
-        : Config.MAX_CONTEXT_SIZE_DEFAULT;
+        : settingsManager.get("maxContextSizeDefault");
     const active = req.body.active;
 
     if (!newName) {
@@ -640,9 +640,10 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
     if (!url || tokens.length === 0)
       return res.status(400).json({ error: "URL and at least one token are required" });
 
-    // Validate and capture apiFormat
+    // Validate and capture apiFormat from request, falling back to admin panel default
     const VALID_FORMATS = ['openai', 'anthropic', 'gemini'];
-    const apiFormat = req.body.apiFormat || 'openai';
+    const apiFormat =
+      (req.body.apiFormat !== undefined ? req.body.apiFormat : settingsManager.get("defaultEndpointApiFormat")) || 'openai';
     if (!VALID_FORMATS.includes(apiFormat)) {
       return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${VALID_FORMATS.join(', ')}` });
     }
@@ -691,8 +692,24 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
     const endpointKey = `v${newIndex}`;
     const normalizedUrl = normalizeEndpointUrl(url);
 
-    // Validate optional generation defaults
-    const generationDefaults = validateGenerationDefaults(req.body.generationDefaults);
+    // Resolve generation defaults from admin panel settings when client provides none
+    let generationDefaults = validateGenerationDefaults(req.body.generationDefaults);
+    if (!req.body.generationDefaults || typeof req.body.generationDefaults !== "object" || Array.isArray(req.body.generationDefaults)) {
+      generationDefaults = {
+        temperature: {
+          enabled: settingsManager.get("defaultEndpointTemperatureEnabled"),
+          value: settingsManager.get("defaultEndpointTemperature"),
+        },
+        top_p: {
+          enabled: settingsManager.get("defaultEndpointTopPEnabled"),
+          value: settingsManager.get("defaultEndpointTopP"),
+        },
+        max_tokens: {
+          enabled: settingsManager.get("defaultEndpointMaxTokensEnabled"),
+          value: settingsManager.get("defaultEndpointMaxTokens"),
+        },
+      };
+    }
 
     data[endpointKey] = {
       name: name || `Endpoint ${newIndex}`,
@@ -1001,6 +1018,18 @@ router.put("/api/settings", verifySession, (req, res) => {
         .status(400)
         .json({ error: "Request body must be a JSON object of settings." });
     }
+
+    // Validate key defaults if present
+    if (updates.rpdDefault !== undefined && (!Number.isInteger(updates.rpdDefault) || updates.rpdDefault < 1)) {
+      return res.status(400).json({ error: "RPD default must be an integer >= 1" });
+    }
+    if (updates.rpmDefault !== undefined && (!Number.isInteger(updates.rpmDefault) || updates.rpmDefault < 1)) {
+      return res.status(400).json({ error: "RPM default must be an integer >= 1" });
+    }
+    if (updates.maxContextSizeDefault !== undefined && (!Number.isInteger(updates.maxContextSizeDefault) || updates.maxContextSizeDefault < 0)) {
+      return res.status(400).json({ error: "Max context size default must be an integer >= 0" });
+    }
+
     settingsManager.update(updates);
     res.json({
       message: "Settings updated successfully.",

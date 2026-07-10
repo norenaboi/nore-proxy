@@ -1,4 +1,5 @@
 import Config from "../config/index.js";
+import settingsManager from "../services/settingsManager.js";
 import { getClientIp } from "../utils/helpers.js";
 
 // IP-level brute-force limiter for admin/auth routes
@@ -68,7 +69,7 @@ class RateLimiter {
     this.apiKeyUsage = new Map();
   }
 
-  checkRateLimit(apiKey, rateLimit = Config.RPM_DEFAULT) {
+  checkRateLimit(apiKey, rateLimit = settingsManager.get("rpmDefault")) {
     const currentTime = Date.now() / 1000;
 
     // Get or initialize timestamps for this API key

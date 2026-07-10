@@ -1,47 +1,71 @@
 /**
  * SettingsManager — runtime overrides for proxy settings.
- * 
- * Defaults are always read from .env (via process.env).
- * Admin panel PUT updates persist in memory only and reset on reload() or restart.
- * No settings.json file is used.
+ *
+ * Defaults are hardcoded. Admin panel PUT updates persist to settings.json
+ * and survive process restarts. No .env variables are used here.
  */
 
-function parseEnvBool(val) {
-  if (val === undefined || val === null || val === "") return false;
-  const lower = String(val).toLowerCase().trim();
-  return lower === "true" || lower === "1";
-}
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
-function parseEnvInt(val, fallback) {
-  const parsed = parseInt(val, 10);
-  return isNaN(parsed) ? fallback : parsed;
-}
-
-function parseEnvFloat(val, fallback) {
-  const parsed = parseFloat(val);
-  return Number.isNaN(parsed) ? fallback : parsed;
-}
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const SETTINGS_PATH = path.join(__dirname, "..", "settings.json");
 
 class SettingsManager {
   constructor() {
     this._loadDefaults();
-    // In-memory overrides (empty on startup)
-    this._overrides = {};
+    this._overrides = this._loadFromFile();
   }
 
   _loadDefaults() {
     this._defaults = {
-      promptCachingEnabled: parseEnvBool(process.env.PROMPT_CACHING),
-      promptCachingDepth: parseEnvInt(process.env.PROMPT_CACHING_DEPTH, 2),
+      // Key defaults
+      rpdDefault: 500,
+      rpmDefault: 10,
+      maxContextSizeDefault: 0,
+
+      // Prompt caching
+      promptCachingEnabled: false,
+      promptCachingDepth: 2,
+
       // Default endpoint creation settings (only affect new endpoints)
-      defaultEndpointApiFormat: process.env.DEFAULT_ENDPOINT_API_FORMAT || "openai",
-      defaultEndpointTemperatureEnabled: parseEnvBool(process.env.DEFAULT_ENDPOINT_TEMPERATURE_ENABLED),
-      defaultEndpointTemperature: parseEnvFloat(process.env.DEFAULT_ENDPOINT_TEMPERATURE, 1),
-      defaultEndpointTopPEnabled: parseEnvBool(process.env.DEFAULT_ENDPOINT_TOP_P_ENABLED),
-      defaultEndpointTopP: parseEnvFloat(process.env.DEFAULT_ENDPOINT_TOP_P, 1),
-      defaultEndpointMaxTokensEnabled: parseEnvBool(process.env.DEFAULT_ENDPOINT_MAX_TOKENS_ENABLED),
-      defaultEndpointMaxTokens: parseEnvInt(process.env.DEFAULT_ENDPOINT_MAX_TOKENS, 4096),
+      defaultEndpointApiFormat: "openai",
+      defaultEndpointTemperatureEnabled: true,
+      defaultEndpointTemperature: 1,
+      defaultEndpointTopPEnabled: true,
+      defaultEndpointTopP: 1,
+      defaultEndpointMaxTokensEnabled: false,
+      defaultEndpointMaxTokens: 4096,
     };
+  }
+
+  _loadFromFile() {
+    try {
+      if (!fs.existsSync(SETTINGS_PATH)) return {};
+      const content = fs.readFileSync(SETTINGS_PATH, "utf-8");
+      const parsed = JSON.parse(content);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return {};
+      }
+      return parsed;
+    } catch (err) {
+      console.error("[SettingsManager] Failed to load settings.json:", err.message);
+      return {};
+    }
+  }
+
+  _saveToFile() {
+    try {
+      fs.writeFileSync(
+        SETTINGS_PATH,
+        JSON.stringify(this._overrides, null, 2),
+      );
+    } catch (err) {
+      console.error("[SettingsManager] Failed to save settings.json:", err.message);
+      throw err;
+    }
   }
 
   _currentSettings() {
@@ -68,6 +92,7 @@ class SettingsManager {
       });
     }
     this._overrides[key] = value;
+    this._saveToFile();
   }
 
   update(updates) {
@@ -79,14 +104,14 @@ class SettingsManager {
       }
       this._overrides[key] = value;
     }
+    this._saveToFile();
   }
 
   reload() {
-    // process.env is already updated by Config.reload() → dotenv.config({ override: true })
     this._loadDefaults();
-    this._overrides = {};
+    this._overrides = this._loadFromFile();
     console.log(
-      "[SettingsManager] Reloaded from .env, cleared runtime overrides:",
+      "[SettingsManager] Reloaded from settings.json:",
       this._currentSettings(),
     );
   }

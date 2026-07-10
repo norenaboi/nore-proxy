@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import Config from "./config/index.js";
+import settingsManager from "./services/settingsManager.js";
 import { loadModelsFromFile, MODEL_REGISTRY } from "./utils/helpers.js";
 import apiKeyManager from "./services/apiKeyManager.js";
 import realtimeStats from "./services/realtimeStats.js";
@@ -198,9 +199,6 @@ const server = app.listen(Config.PORT, async () => {
   console.log("=".repeat(60));
   console.log(`  Launched at:    ${datetime}`);
   console.log(`  Port:           ${Config.PORT}`);
-  console.log(
-    `  Rate Limits:    ${Config.RPM_DEFAULT} RPM / ${Config.RPD_DEFAULT} RPD`,
-  );
   console.log(
     `  Endpoints:      Configured ${Object.keys(Config.ENDPOINTS).length} endpoints`,
   );

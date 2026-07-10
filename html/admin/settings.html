@@ -393,25 +393,40 @@
                 </div>
             </header>
 
+            <!-- Key Defaults -->
             <div class="card">
                 <div class="card-header">
-                    <i class="fa-solid fa-bolt"></i>
-                    <h2>Claude Prompt Caching</h2>
-                    <span class="card-subtitle">Anthropic / OpenRouter</span>
+                    <i class="fa-solid fa-key"></i>
+                    <h2>Keys</h2>
+                    <span class="card-subtitle">Default per-key limits</span>
                 </div>
-                <div class="card-body" id="settingsBody">
+                <div class="card-body" id="keyDefaultsBody">
                     <div class="loading-row"></div>
                     <div class="loading-row" style="width: 60%"></div>
                 </div>
             </div>
 
+            <!-- Endpoint Defaults -->
             <div class="card">
                 <div class="card-header">
                     <i class="fa-solid fa-hexagon-nodes"></i>
-                    <h2>Endpoint Defaults</h2>
+                    <h2>Endpoint</h2>
                     <span class="card-subtitle">New endpoints only</span>
                 </div>
                 <div class="card-body" id="endpointDefaultsBody">
+                    <div class="loading-row"></div>
+                    <div class="loading-row" style="width: 60%"></div>
+                </div>
+            </div>
+
+            <!-- Prompt Caching -->
+            <div class="card">
+                <div class="card-header">
+                    <i class="fa-solid fa-bolt"></i>
+                    <h2>Prompt Caching</h2>
+                    <span class="card-subtitle">Anthropic / OpenRouter</span>
+                </div>
+                <div class="card-body" id="promptCachingBody">
                     <div class="loading-row"></div>
                     <div class="loading-row" style="width: 60%"></div>
                 </div>
@@ -449,65 +464,62 @@
             // ── Render ───────────────────────────────────────────────────────
             function renderSettings(s) {
                 settings = { ...s };
+                renderKeyDefaults(s);
+                renderEndpointDefaults(s);
+                renderPromptCaching(s);
+            }
 
-                const body = document.getElementById("settingsBody");
+            function renderKeyDefaults(s) {
+                const body = document.getElementById("keyDefaultsBody");
                 body.innerHTML = `
-
                 <div class="setting-row">
                     <div class="setting-info">
-                        <div class="setting-label">Enable Prompt Caching</div>
+                        <div class="setting-label">Default RPD</div>
                         <div class="setting-description">
-                            When enabled, the proxy automatically injects
-                            <code style="background:var(--gray-100);padding:1px 5px;border-radius:4px;font-size:12px;">cache_control</code>
-                            breakpoints into Claude messages before forwarding them to the backend.
-                            Caching can reduce costs and latency on long, repeated contexts.
-                            <br><br>
-                            Individual requests can still override this by including a
-                            <code style="background:var(--gray-100);padding:1px 5px;border-radius:4px;font-size:12px;">cache_depth</code>
-                            field in the request body
-                            (<code style="background:var(--gray-100);padding:1px 5px;border-radius:4px;font-size:12px;">-1</code> = disable for that request).
-                        </div>
-                    </div>
-                    <div class="setting-control">
-                        <label class="toggle" title="Toggle prompt caching">
-                            <input type="checkbox" id="cachingEnabled"
-                                   ${s.promptCachingEnabled ? "checked" : ""}
-                                   onchange="onCachingToggle()">
-                            <div class="toggle-track"></div>
-                            <div class="toggle-thumb"></div>
-                        </label>
-                    </div>
-                </div>
-
-
-                <div class="setting-row" id="depthRow" style="${s.promptCachingEnabled ? "" : "opacity:0.45;pointer-events:none;"}">
-                    <div class="setting-info">
-                        <div class="setting-label">Cache Depth</div>
-                        <div class="setting-description">
-                            Controls how many recent messages are <em>excluded</em> from caching.
-                            <br>
-                            <strong>0</strong> &mdash; cache all messages.
-                            &nbsp;|&nbsp;
-                            <strong>1</strong> &mdash; cache all except the last message (most recent user turn).
-                            &nbsp;|&nbsp;
-                            <strong>N</strong> &mdash; cache all except the last N messages.
-                            <br><br>
-                            Anthropic allows up to 4 cache breakpoints per request; the proxy
-                            distributes them evenly across eligible messages.
+                            Requests per day limit applied to new API keys. 0 is not allowed.
                         </div>
                     </div>
                     <div class="setting-control">
                         <div class="number-input-wrapper">
-                            <input type="number" class="number-input" id="cachingDepth"
-                                   min="0" max="100" step="1"
-                                   value="${s.promptCachingDepth}"
-                                   ${s.promptCachingEnabled ? "" : "disabled"}>
+                            <input type="number" class="number-input" id="rpdDefault"
+                                   min="1" step="1" placeholder="500"
+                                   value="${s.rpdDefault}">
                         </div>
                     </div>
                 </div>
-            `;
 
-                renderEndpointDefaults(s);
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Default RPM</div>
+                        <div class="setting-description">
+                            Requests per minute limit applied to new API keys. 0 is not allowed.
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="number-input-wrapper">
+                            <input type="number" class="number-input" id="rpmDefault"
+                                   min="1" step="1" placeholder="10"
+                                   value="${s.rpmDefault}">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Default Max Context Size</div>
+                        <div class="setting-description">
+                            Maximum context size in tokens applied to new API keys. 0 means unlimited.
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="number-input-wrapper">
+                            <input type="number" class="number-input" id="maxContextSizeDefault"
+                                   min="0" step="1" placeholder="0"
+                                   value="${s.maxContextSizeDefault}">
+                        </div>
+                    </div>
+                </div>
+                `;
             }
 
             function renderEndpointDefaults(s) {
@@ -603,6 +615,63 @@
             `;
             }
 
+            function renderPromptCaching(s) {
+                const body = document.getElementById("promptCachingBody");
+                body.innerHTML = `
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Enable Prompt Caching</div>
+                        <div class="setting-description">
+                            When enabled, the proxy automatically injects
+                            <code style="background:var(--gray-100);padding:1px 5px;border-radius:4px;font-size:12px;">cache_control</code>
+                            breakpoints into Claude messages before forwarding them to the backend.
+                            Caching can reduce costs and latency on long, repeated contexts.
+                            <br><br>
+                            Individual requests can still override this by including a
+                            <code style="background:var(--gray-100);padding:1px 5px;border-radius:4px;font-size:12px;">cache_depth</code>
+                            field in the request body
+                            (<code style="background:var(--gray-100);padding:1px 5px;border-radius:4px;font-size:12px;">-1</code> = disable for that request).
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle" title="Toggle prompt caching">
+                            <input type="checkbox" id="cachingEnabled"
+                                   ${s.promptCachingEnabled ? "checked" : ""}
+                                   onchange="onCachingToggle()">
+                            <div class="toggle-track"></div>
+                            <div class="toggle-thumb"></div>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="setting-row" id="depthRow" style="${s.promptCachingEnabled ? "" : "opacity:0.45;pointer-events:none;"}">
+                    <div class="setting-info">
+                        <div class="setting-label">Cache Depth</div>
+                        <div class="setting-description">
+                            Controls how many recent messages are <em>excluded</em> from caching.
+                            <br>
+                            <strong>0</strong> &mdash; cache all messages.
+                            &nbsp;|&nbsp;
+                            <strong>1</strong> &mdash; cache all except the last message (most recent user turn).
+                            &nbsp;|&nbsp;
+                            <strong>N</strong> &mdash; cache all except the last N messages.
+                            <br><br>
+                            Anthropic allows up to 4 cache breakpoints per request; the proxy
+                            distributes them evenly across eligible messages.
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="number-input-wrapper">
+                            <input type="number" class="number-input" id="cachingDepth"
+                                   min="0" max="100" step="1"
+                                   value="${s.promptCachingDepth}"
+                                   ${s.promptCachingEnabled ? "" : "disabled"}>
+                        </div>
+                    </div>
+                </div>
+            `;
+            }
+
             function onEndpointDefaultToggle(param) {
                 const enabled = document.getElementById(`defaultEndpoint${param}Enabled`).checked;
                 const input = document.getElementById(`defaultEndpoint${param}`);
@@ -647,11 +716,23 @@
             // ── Save ─────────────────────────────────────────────────────────
             async function saveSettings() {
                 const saveBtn = document.getElementById("saveBtn");
-                const enabledEl = document.getElementById("cachingEnabled");
+
+                const rpdDefault = parseInt(document.getElementById("rpdDefault").value, 10);
+                const rpmDefault = parseInt(document.getElementById("rpmDefault").value, 10);
+                const maxContextSizeDefault = parseInt(document.getElementById("maxContextSizeDefault").value, 10);
+                const cachingEnabledEl = document.getElementById("cachingEnabled");
                 const depthEl = document.getElementById("cachingDepth");
 
-                if (!enabledEl || !depthEl) {
-                    showToast("Settings not loaded yet", "error");
+                if (isNaN(rpdDefault) || rpdDefault < 1) {
+                    showToast("RPD default must be at least 1", "error");
+                    return;
+                }
+                if (isNaN(rpmDefault) || rpmDefault < 1) {
+                    showToast("RPM default must be at least 1", "error");
+                    return;
+                }
+                if (isNaN(maxContextSizeDefault) || maxContextSizeDefault < 0) {
+                    showToast("Max context size default must be 0 or higher", "error");
                     return;
                 }
 
@@ -696,7 +777,10 @@
                             "Content-Type": "application/json",
                         },
                         body: JSON.stringify({
-                            promptCachingEnabled: enabledEl.checked,
+                            rpdDefault,
+                            rpmDefault,
+                            maxContextSizeDefault,
+                            promptCachingEnabled: cachingEnabledEl.checked,
                             promptCachingDepth: depth,
                             defaultEndpointApiFormat: apiFormat,
                             defaultEndpointTemperatureEnabled: tempEnabled,

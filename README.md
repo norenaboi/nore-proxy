@@ -4,15 +4,13 @@ A unified OpenAI API proxy server
 
 ## Features
 
-- Multi-endpoint API proxying
-- Easy management of models, endpoints and API keys with admin panel
-- Rate limiting (RPD/RPM/Context size)
-- Request logging (SQLLite)
-- Model mapping
-- API key rotation with round robin
-- Custom headers
-- Prompt caching support for Claude
-- Tool call pass
+- **Unified OpenAI-compatible API gateway** — expose a single `/v1/chat/completions` endpoint while routing to multiple upstream backends with per-model endpoint selection.
+- **Multi-provider backend support** — route to OpenAI, Anthropic, Gemini and OpenAI-Responses endpoints through per-adapter request/response translation and streaming normalization.
+- **Intelligent endpoint management** — JSON-backed endpoint config with auto-reload, URL normalization, custom headers, multi-token round-robin rotation and per-endpoint API format selection.
+- **Per-endpoint generation defaults** — configure fallback values for `temperature`, `top_p` and `max_tokens` per backend, merged client-wins before adapter translation.
+- **Model registry & routing** — map display names to upstream model/version pairs, group models by endpoint in the admin UI, and auto-populate model lists from upstream providers.
+- **Operational controls** — model health checks, silent connectivity testing, soft disable/enable, live request logs via SSE, and SQLite-backed usage analytics.
+- **Access control & rate limiting** — per-API-key RPD/RPM/context-size limits with an admin-authenticated management panel.
 
 ## Quick Start
 
@@ -40,15 +38,14 @@ PORT=8741
 # Masterkey used for admin authentication (recommended 32 chars)
 MASTER_KEY=mypasswordissafe
 
-# Rate Limits (leave empty for default)
-RPD_DEFAULT=500
-RPM_DEFAULT=10
-CONTEXT_SIZE_DEFAULT=100000
+# Admin rate limiting (attempts per minute per IP)
 ADMIN_MAX_ATTEMPTS=100
 
-# Prompt Caching for Claude
-PROMPT_CACHING=false
-PROMPT_CACHING_DEPTH=2
+# Session lifetime in hours
+SESSION_TTL_HOURS=24
+
+# CORS origin restriction (leave empty or remove to allow all origins)
+CORS_ORIGIN=*
 ```
 
 3. Install dependencies:
@@ -83,13 +80,14 @@ PORT=8741
 # Masterkey used for admin authentication (recommended 32 chars)
 MASTER_KEY=mypasswordissafe
 
-# Rate Limits (leave empty for default)
-RPD_DEFAULT=500
-RPM_DEFAULT=10
+# Admin rate limiting (attempts per minute per IP)
+ADMIN_MAX_ATTEMPTS=100
 
-# Prompt Caching for Claude
-PROMPT_CACHING=false
-PROMPT_CACHING_DEPTH=2
+# Session lifetime in hours
+SESSION_TTL_HOURS=24
+
+# CORS origin restriction (leave empty or remove to allow all origins)
+CORS_ORIGIN=*
 ```
 
 3. Deploy on Docker Compose:
@@ -100,14 +98,19 @@ docker compose up -d
 
 ## Configuration
 
+Environment variables configure server-level behavior that cannot be changed at runtime.
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | Server port | 8741 |
 | `MASTER_KEY` | Admin authentication key | mypasswordissafe |
-| `RPD_DEFAULT` | Requests per day limit | 500 |
-| `RPM_DEFAULT` | Requests per minute limit | 10 |
-| `PROMPT_CACHING` | Prompt caching for Claude | false |
-| `PROMPT_CACHING_DEPTH` | Prompt caching depth | 2 |
+| `ADMIN_MAX_ATTEMPTS` | Admin login attempts per minute per IP | 100 |
+| `SESSION_TTL_HOURS` | Admin session lifetime | 24 |
+| `CORS_ORIGIN` | Allowed CORS origin(s) | `*` |
+
+### Runtime settings
+
+Rate-limit defaults, prompt caching, and endpoint creation defaults are managed through the admin Settings UI and persisted in `settings.json`. They can be changed without restarting the server.
 
 The server will not initiate if your `MASTER_KEY` is shorter than 16 characters.
 
@@ -128,6 +131,8 @@ All admin endpoints require authentication.
 | `/api/models` | POST | Add new model |
 | `/api/models` | PUT | Update existing model |
 | `/api/models` | DELETE | Delete model |
+| `/api/models/toggle` | PATCH | Enable/disable a model |
+| `/api/models/test` | POST | Silent model connectivity test |
 | `/api/model-usage` | GET | Get model usage statistics |
 | `/api/endpoints` | GET | Get all endpoints |
 | `/api/endpoints` | POST | Add new endpoint |
