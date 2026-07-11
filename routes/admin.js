@@ -534,9 +534,17 @@ router.post("/api/models/test", verifySession, async (req, res) => {
       ...(isGemini ? {} : { Authorization: `Bearer ${backendToken}` }),
     };
     const requestUrl = isGemini ? `${fullUrl}?key=${backendToken}` : fullUrl;
-    const requestBody = isGemini
-      ? { contents: [{ parts: [{ text: "ping" }] }] }
-      : { model: actualModel, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false };
+    let requestBody;
+    if (isGemini) {
+      requestBody = { contents: [{ parts: [{ text: "ping" }] }] };
+    } else if (apiFormat === 'anthropic') {
+      // Anthropic requires max_tokens — keep it but don't send temperature/top_p
+      requestBody = { model: actualModel, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false };
+    } else {
+      // OpenAI format — newer reasoning models reject max_tokens, temperature, top_p
+      // This is just a connectivity ping, so send the bare minimum.
+      requestBody = { model: actualModel, messages: [{ role: "user", content: "ping" }], stream: false };
+    }
 
     const response = await axios({
       method: "post",
