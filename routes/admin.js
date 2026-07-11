@@ -240,6 +240,99 @@ router.get("/api/logs", verifySession, async (req, res) => {
   });
 });
 
+// List stored upstream errors with exact-match filters and pagination.
+router.get("/api/errors", verifySession, (req, res) => {
+  try {
+    const parseInteger = (value, fallback, minimum, maximum) => {
+      if (value === undefined) return fallback;
+      if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+
+      const parsed = Number(value);
+      if (parsed < minimum || parsed > maximum) return null;
+      return parsed;
+    };
+
+    const limit = parseInteger(req.query.limit, 50, 1, 200);
+    const offset = parseInteger(
+      req.query.offset,
+      0,
+      0,
+      Number.MAX_SAFE_INTEGER,
+    );
+    if (limit === null || offset === null) {
+      return res.status(400).json({ error: "Invalid pagination values" });
+    }
+
+    let statusCode;
+    if (req.query.status !== undefined) {
+      statusCode = parseInteger(req.query.status, null, 100, 599);
+      if (statusCode === null) {
+        return res.status(400).json({ error: "Invalid HTTP status" });
+      }
+    }
+
+    if (
+      (req.query.model !== undefined && typeof req.query.model !== "string") ||
+      (req.query.endpoint !== undefined &&
+        typeof req.query.endpoint !== "string")
+    ) {
+      return res.status(400).json({ error: "Invalid filter value" });
+    }
+
+    const filters = {
+      limit,
+      offset,
+      model: req.query.model?.trim() || null,
+      endpoint: req.query.endpoint?.trim() || null,
+      statusCode,
+    };
+    const errors = logManager.getErrorLogs(filters);
+    const total = logManager.getErrorLogCount(filters);
+
+    return res.json({ errors, total, limit, offset });
+  } catch (error) {
+    console.error("Error loading stored errors:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Filter values must be declared before /api/errors/:id.
+router.get("/api/errors/filters", verifySession, (_req, res) => {
+  try {
+    return res.json(logManager.getErrorLogFilters());
+  } catch (error) {
+    console.error("Error loading error filters:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.get("/api/errors/:id", verifySession, (req, res) => {
+  if (!/^\d+$/.test(req.params.id) || Number(req.params.id) < 1) {
+    return res.status(400).json({ error: "Invalid error ID" });
+  }
+
+  try {
+    const errorLog = logManager.getErrorLogById(req.params.id);
+    if (!errorLog) {
+      return res.status(404).json({ error: "Error log not found" });
+    }
+    return res.json({ error: errorLog });
+  } catch (error) {
+    console.error("Error loading error detail:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.delete("/api/errors", verifySession, (_req, res) => {
+  try {
+    const deleted = logManager.clearErrorLogs();
+    return res.json({ success: true, deleted });
+  } catch (error) {
+    console.error("Error clearing stored errors:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 /*
     GET PUT POST DELETE for API keys in database
 */

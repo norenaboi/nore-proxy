@@ -3,15 +3,147 @@ import Database from "better-sqlite3";
 import Config from "../config/index.js";
 import fs from "fs";
 
-class LogManager {
-  constructor() {
-    if (!fs.existsSync(Config.LOG_DIR)) {
-      fs.mkdirSync(Config.LOG_DIR, { recursive: true });
+const ERROR_LOG_COLUMNS = [
+  "id",
+  "timestamp",
+  "request_id",
+  "model",
+  "upstream_model",
+  "endpoint_key",
+  "endpoint_name",
+  "api_format",
+  "status_code",
+  "error_type",
+  "error_code",
+  "error_message",
+  "request_params",
+  "request_headers",
+  "upstream_url",
+  "response_body",
+  "stack_trace",
+];
+
+const CREATE_ERROR_LOG_TABLE = `
+  CREATE TABLE error_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    request_id TEXT,
+    model TEXT,
+    upstream_model TEXT,
+    endpoint_key TEXT,
+    endpoint_name TEXT,
+    api_format TEXT,
+    status_code INTEGER,
+    error_type TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    request_params TEXT,
+    request_headers TEXT,
+    upstream_url TEXT,
+    response_body TEXT,
+    stack_trace TEXT
+  )
+`;
+
+const CREATE_MIGRATION_TABLE = CREATE_ERROR_LOG_TABLE.replace(
+  /CREATE TABLE error_logs/,
+  "CREATE TABLE error_logs_migration",
+);
+
+function serializeJson(value) {
+  if (value === undefined || value === null) return null;
+
+  const seen = new WeakSet();
+  return JSON.stringify(value, (_key, item) => {
+    if (typeof item === "bigint") return item.toString();
+    if (typeof item === "object" && item !== null) {
+      if (seen.has(item)) return "[Circular]";
+      seen.add(item);
     }
-    const dbPath = path.join(Config.LOG_DIR, "logs.db");
+    return item;
+  });
+}
+
+function parseJson(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") return value;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeJsonForStorage(value) {
+  return serializeJson(parseJson(value));
+}
+
+function normalizeTimestamp(value) {
+  if (value === undefined || value === null || value === "") {
+    return new Date().toISOString();
+  }
+
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && String(value).trim() !== "") {
+    const milliseconds = numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+    const parsed = new Date(milliseconds);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+
+  return String(value);
+}
+
+function mapErrorRow(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    timestamp: row.timestamp,
+    requestId: row.request_id ?? null,
+    model: row.model ?? null,
+    upstreamModel: row.upstream_model ?? null,
+    endpointKey: row.endpoint_key ?? null,
+    endpointName: row.endpoint_name ?? null,
+    apiFormat: row.api_format ?? null,
+    statusCode: row.status_code ?? null,
+    errorType: row.error_type ?? null,
+    errorCode: row.error_code ?? null,
+    errorMessage: row.error_message ?? null,
+    requestParams: parseJson(row.request_params),
+    requestHeaders: parseJson(row.request_headers),
+    upstreamUrl: row.upstream_url ?? null,
+    responseBody: parseJson(row.response_body),
+    stackTrace: row.stack_trace ?? null,
+  };
+}
+
+function firstPresent(row, legacyData, ...keys) {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null) return row[key];
+    if (legacyData[key] !== undefined && legacyData[key] !== null) {
+      return legacyData[key];
+    }
+  }
+  return null;
+}
+
+export class LogManager {
+  constructor(
+    dbPath =
+      process.env.NORE_PROXY_LOG_DB_PATH ||
+      path.join(Config.LOG_DIR, "logs.db"),
+  ) {
+    if (dbPath !== ":memory:") {
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    }
+
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
+    this.initializeSchema();
+  }
 
+  initializeSchema() {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS request_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -20,13 +152,189 @@ class LogManager {
         model TEXT,
         data TEXT
       );
-      CREATE TABLE IF NOT EXISTS error_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT,
-        data TEXT
-      );
       CREATE INDEX IF NOT EXISTS idx_request_type ON request_logs(type);
       CREATE INDEX IF NOT EXISTS idx_request_model ON request_logs(model);
+    `);
+
+    this.ensureErrorLogSchema();
+    this.createErrorLogIndexes();
+  }
+
+  ensureErrorLogSchema() {
+    const tableExists = this.db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'error_logs'",
+      )
+      .get();
+
+    if (!tableExists) {
+      this.db.exec(CREATE_ERROR_LOG_TABLE);
+      return;
+    }
+
+    const existingColumns = this.db
+      .prepare("PRAGMA table_info(error_logs)")
+      .all()
+      .map((column) => column.name);
+    const isStructured = ERROR_LOG_COLUMNS.every((column) =>
+      existingColumns.includes(column),
+    );
+
+    if (!isStructured) this.migrateErrorLogs();
+  }
+
+  migrateErrorLogs() {
+    const legacyRows = this.db.prepare("SELECT * FROM error_logs ORDER BY id").all();
+
+    const migrate = this.db.transaction(() => {
+      this.db.exec("DROP TABLE IF EXISTS error_logs_migration");
+      this.db.exec(CREATE_MIGRATION_TABLE);
+
+      const insert = this.db.prepare(`
+        INSERT INTO error_logs_migration (
+          id, timestamp, request_id, model, upstream_model,
+          endpoint_key, endpoint_name, api_format, status_code,
+          error_type, error_code, error_message, request_params,
+          request_headers, upstream_url, response_body, stack_trace
+        ) VALUES (
+          @id, @timestamp, @requestId, @model, @upstreamModel,
+          @endpointKey, @endpointName, @apiFormat, @statusCode,
+          @errorType, @errorCode, @errorMessage, @requestParams,
+          @requestHeaders, @upstreamUrl, @responseBody, @stackTrace
+        )
+      `);
+
+      for (const row of legacyRows) {
+        const parsedLegacy = parseJson(row.data);
+        const legacyData =
+          parsedLegacy && typeof parsedLegacy === "object" ? parsedLegacy : {};
+        const statusValue = firstPresent(
+          row,
+          legacyData,
+          "status_code",
+          "statusCode",
+        );
+        const numericStatus = Number(statusValue);
+
+        insert.run({
+          id: row.id ?? null,
+          timestamp: normalizeTimestamp(
+            firstPresent(row, legacyData, "timestamp"),
+          ),
+          requestId: firstPresent(
+            row,
+            legacyData,
+            "request_id",
+            "requestId",
+          ),
+          model: firstPresent(row, legacyData, "model"),
+          upstreamModel: firstPresent(
+            row,
+            legacyData,
+            "upstream_model",
+            "upstreamModel",
+            "actual_model",
+            "actualModel",
+          ),
+          endpointKey: firstPresent(
+            row,
+            legacyData,
+            "endpoint_key",
+            "endpointKey",
+          ),
+          endpointName: firstPresent(
+            row,
+            legacyData,
+            "endpoint_name",
+            "endpointName",
+            "endpoint",
+          ),
+          apiFormat: firstPresent(
+            row,
+            legacyData,
+            "api_format",
+            "apiFormat",
+          ),
+          statusCode: Number.isInteger(numericStatus) ? numericStatus : null,
+          errorType: firstPresent(
+            row,
+            legacyData,
+            "error_type",
+            "errorType",
+          ),
+          errorCode: firstPresent(
+            row,
+            legacyData,
+            "error_code",
+            "errorCode",
+          ),
+          errorMessage:
+            firstPresent(
+              row,
+              legacyData,
+              "error_message",
+              "errorMessage",
+            ) || (typeof parsedLegacy === "string" ? parsedLegacy : null),
+          requestParams: normalizeJsonForStorage(
+            firstPresent(
+              row,
+              legacyData,
+              "request_params",
+              "requestParams",
+              "request_body",
+              "requestBody",
+            ),
+          ),
+          requestHeaders: normalizeJsonForStorage(
+            firstPresent(
+              row,
+              legacyData,
+              "request_headers",
+              "requestHeaders",
+            ),
+          ),
+          upstreamUrl: firstPresent(
+            row,
+            legacyData,
+            "upstream_url",
+            "upstreamUrl",
+          ),
+          responseBody: normalizeJsonForStorage(
+            firstPresent(
+              row,
+              legacyData,
+              "response_body",
+              "responseBody",
+            ),
+          ),
+          stackTrace: firstPresent(
+            row,
+            legacyData,
+            "stack_trace",
+            "stackTrace",
+          ),
+        });
+      }
+
+      this.db.exec(`
+        DROP TABLE error_logs;
+        ALTER TABLE error_logs_migration RENAME TO error_logs;
+      `);
+    });
+
+    migrate();
+  }
+
+  createErrorLogIndexes() {
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_error_logs_timestamp
+        ON error_logs(timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_error_logs_model
+        ON error_logs(model);
+      CREATE INDEX IF NOT EXISTS idx_error_logs_endpoint_name
+        ON error_logs(endpoint_name);
+      CREATE INDEX IF NOT EXISTS idx_error_logs_status_code
+        ON error_logs(status_code);
     `);
   }
 
@@ -43,13 +351,50 @@ class LogManager {
   }
 
   writeErrorLog(logEntry) {
-    const stmt = this.db.prepare(
-      "INSERT INTO error_logs (timestamp, data) VALUES (?, ?)",
-    );
-    stmt.run(
-      logEntry.timestamp || new Date().toISOString(),
-      JSON.stringify(logEntry),
-    );
+    const statusValue = logEntry.statusCode ?? logEntry.status_code;
+    const numericStatus = Number(statusValue);
+    const stmt = this.db.prepare(`
+      INSERT INTO error_logs (
+        timestamp, request_id, model, upstream_model,
+        endpoint_key, endpoint_name, api_format, status_code,
+        error_type, error_code, error_message, request_params,
+        request_headers, upstream_url, response_body, stack_trace
+      ) VALUES (
+        @timestamp, @requestId, @model, @upstreamModel,
+        @endpointKey, @endpointName, @apiFormat, @statusCode,
+        @errorType, @errorCode, @errorMessage, @requestParams,
+        @requestHeaders, @upstreamUrl, @responseBody, @stackTrace
+      )
+    `);
+
+    const result = stmt.run({
+      timestamp: normalizeTimestamp(logEntry.timestamp),
+      requestId: logEntry.requestId ?? logEntry.request_id ?? null,
+      model: logEntry.model ?? null,
+      upstreamModel:
+        logEntry.upstreamModel ?? logEntry.upstream_model ?? null,
+      endpointKey: logEntry.endpointKey ?? logEntry.endpoint_key ?? null,
+      endpointName:
+        logEntry.endpointName ?? logEntry.endpoint_name ?? null,
+      apiFormat: logEntry.apiFormat ?? logEntry.api_format ?? null,
+      statusCode: Number.isInteger(numericStatus) ? numericStatus : null,
+      errorType: logEntry.errorType ?? logEntry.error_type ?? null,
+      errorCode: logEntry.errorCode ?? logEntry.error_code ?? null,
+      errorMessage: logEntry.errorMessage ?? logEntry.error_message ?? null,
+      requestParams: serializeJson(
+        logEntry.requestParams ?? logEntry.request_params,
+      ),
+      requestHeaders: serializeJson(
+        logEntry.requestHeaders ?? logEntry.request_headers,
+      ),
+      upstreamUrl: logEntry.upstreamUrl ?? logEntry.upstream_url ?? null,
+      responseBody: serializeJson(
+        logEntry.responseBody ?? logEntry.response_body,
+      ),
+      stackTrace: logEntry.stackTrace ?? logEntry.stack_trace ?? null,
+    });
+
+    return Number(result.lastInsertRowid);
   }
 
   readRequestLogs(limit = 100, offset = 0, model = null) {
@@ -65,11 +410,101 @@ class LogManager {
     return rows.map((row) => JSON.parse(row.data));
   }
 
-  readErrorLogs(limit = 50) {
+  buildErrorWhere(filters = {}) {
+    const clauses = [];
+    const params = {};
+
+    if (filters.model) {
+      clauses.push("model = @model");
+      params.model = filters.model;
+    }
+    if (filters.endpoint) {
+      clauses.push("endpoint_name = @endpoint");
+      params.endpoint = filters.endpoint;
+    }
+    if (
+      filters.statusCode !== undefined &&
+      filters.statusCode !== null &&
+      filters.statusCode !== ""
+    ) {
+      const statusCode = Number(filters.statusCode);
+      if (Number.isInteger(statusCode)) {
+        clauses.push("status_code = @statusCode");
+        params.statusCode = statusCode;
+      }
+    }
+
+    return {
+      clause: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "",
+      params,
+    };
+  }
+
+  getErrorLogs(filters = {}) {
+    const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 200);
+    const offset = Math.max(Number(filters.offset) || 0, 0);
+    const { clause, params } = this.buildErrorWhere(filters);
     const rows = this.db
-      .prepare("SELECT data FROM error_logs ORDER BY id DESC LIMIT ?")
-      .all(limit);
-    return rows.map((row) => JSON.parse(row.data));
+      .prepare(
+        `SELECT
+          id, timestamp, request_id, model, upstream_model,
+          endpoint_key, endpoint_name, api_format, status_code,
+          error_type, error_code, error_message
+        FROM error_logs${clause}
+        ORDER BY timestamp DESC, id DESC
+        LIMIT @limit OFFSET @offset`,
+      )
+      .all({ ...params, limit, offset });
+
+    return rows.map(mapErrorRow);
+  }
+
+  getErrorLogCount(filters = {}) {
+    const { clause, params } = this.buildErrorWhere(filters);
+    return this.db
+      .prepare(`SELECT COUNT(*) AS count FROM error_logs${clause}`)
+      .get(params).count;
+  }
+
+  getErrorLogFilters() {
+    const readValues = (column) =>
+      this.db
+        .prepare(
+          `SELECT DISTINCT ${column} AS value
+           FROM error_logs
+           WHERE ${column} IS NOT NULL AND ${column} != ''
+           ORDER BY ${column}`,
+        )
+        .all()
+        .map((row) => row.value);
+
+    return {
+      models: readValues("model"),
+      endpoints: readValues("endpoint_name"),
+      statuses: readValues("status_code"),
+    };
+  }
+
+  getErrorLogById(id) {
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId < 1) return null;
+
+    const row = this.db
+      .prepare("SELECT * FROM error_logs WHERE id = ?")
+      .get(numericId);
+    return mapErrorRow(row);
+  }
+
+  clearErrorLogs() {
+    return this.db.prepare("DELETE FROM error_logs").run().changes;
+  }
+
+  readErrorLogs(limit = 50) {
+    return this.getErrorLogs({ limit });
+  }
+
+  close() {
+    if (this.db?.open) this.db.close();
   }
 }
 

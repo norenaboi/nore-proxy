@@ -14,8 +14,71 @@ import {
   applyClaudePromptCaching,
 } from "../utils/helpers.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
+import {
+  buildUpstreamErrorContext,
+  getUpstreamErrorMessage,
+  readUpstreamErrorBody,
+} from "../utils/upstreamErrors.js";
 
 const router = express.Router();
+
+function persistUpstreamError({
+  requestId,
+  modelName,
+  endpointInfo,
+  requestParams,
+  requestHeaders,
+  upstreamUrl,
+  error,
+  statusCode,
+  responseBody,
+}) {
+  const context = buildUpstreamErrorContext({
+    modelName,
+    endpointInfo,
+    requestParams,
+    requestHeaders,
+    upstreamUrl,
+    error,
+    statusCode,
+    responseBody,
+  });
+
+  return logError(
+    requestId,
+    error?.name || "Error",
+    error?.message || "Unknown error",
+    error?.stack || "",
+    context,
+  );
+}
+
+function sendStreamError(res, requestId, modelName, error, statusCode = 500) {
+  if (res.writableEnded) return;
+
+  const errorChunk = {
+    id: `chatcmpl-${requestId}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    model: modelName,
+    choices: [
+      {
+        index: 0,
+        delta: {},
+        finish_reason: "error",
+      },
+    ],
+    error: {
+      message: error?.message || "Unknown error",
+      type: "server_error",
+      code: statusCode,
+    },
+  };
+
+  res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
 
 router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
   const apiKey = req.apiKey;
@@ -107,9 +170,14 @@ router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
   } catch (error) {
     logRequestEnd(requestId, false, 0, 0, error.message);
     console.error(`API [ID: ${requestId}]: Exception:`, error);
-    res.status(500).json({
-      error: `Error: ${error}`,
-    });
+
+    if (!res.headersSent) {
+      res.status(error.statusCode || error.response?.status || 500).json({
+        error: { message: error.message || String(error) },
+      });
+    } else if (!res.writableEnded) {
+      res.end();
+    }
   }
 });
 
@@ -125,42 +193,6 @@ async function streamFromBackend(
   let accumulatedContent = "";
   let accumulatedReasoning = "";
 
-  const endpointInfo = getEndpointForModel(modelName);
-
-  if (!endpointInfo) {
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-
-    const errorChunk = {
-      id: `chatcmpl-${requestId}`,
-      object: "chat.completion.chunk",
-      created: Math.floor(Date.now() / 1000),
-      model: modelName,
-      choices: [
-        {
-          index: 0,
-          delta: {},
-          finish_reason: "error",
-        },
-      ],
-      error: {
-        message: "Error 404: Can't find the model you're looking for.",
-        type: "server_error",
-        code: 404,
-      },
-    };
-    res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
-    res.write(`data: [DONE]\n\n`);
-    res.end();
-    return;
-  }
-
-  const { url: backendUrl, token: backendToken, actualModel, customHeaders, apiFormat } = endpointInfo;
-  const adapter = getAdapter(apiFormat);
-  const fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true); // true = streaming
-
   // Set streaming headers
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -175,7 +207,31 @@ async function streamFromBackend(
     streamCreated: Math.floor(Date.now() / 1000),
   };
 
+  let endpointInfo = null;
+  let adapter = null;
+  let fullUrl = null;
+  let data = null;
+  let headers = {};
+  let streamSettled = false;
+
   try {
+    endpointInfo = getEndpointForModel(modelName);
+    if (!endpointInfo) {
+      const error = new Error("Can't find the model you're looking for.");
+      error.name = "EndpointResolutionError";
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const {
+      url: backendUrl,
+      token: backendToken,
+      actualModel,
+      customHeaders,
+      apiFormat,
+    } = endpointInfo;
+    adapter = getAdapter(apiFormat);
+    fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true);
     let messages = openaiReq.messages || [];
     let streamUsage = null;
 
@@ -197,11 +253,11 @@ async function streamFromBackend(
 
     // Build the request body using the adapter
     const reqForAdapter = { ...openaiReq, messages };
-    const data = adapter.transformStreamRequest(reqForAdapter, actualModel);
+    data = adapter.transformStreamRequest(reqForAdapter, actualModel);
 
     // Build headers: custom + adapter-specific (e.g. anthropic-version) + auth
     const extraHeaders = getExtraHeaders(apiFormat);
-    const headers = {
+    headers = {
       ...customHeaders,
       ...extraHeaders,
       "Content-Type": "application/json",
@@ -227,30 +283,29 @@ async function streamFromBackend(
       data,
       responseType: "stream",
       timeout: 180000,
+      validateStatus: () => true,
     });
 
-    if (response.status !== 200) {
-      const errorChunk = {
-        id: `chatcmpl-${requestId}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model: modelName,
-        choices: [
-          {
-            index: 0,
-            delta: {},
-            finish_reason: "error",
-          },
-        ],
-        error: {
-          message: `Error ${response.status}: ${response.data.statusMessage}`,
-          type: "server_error",
-          code: response.status,
-        },
-      };
-      res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
-      res.write(`data: [DONE]\n\n`);
-      res.end();
+    if (response.status < 200 || response.status >= 300) {
+      const responseBody = await readUpstreamErrorBody(response.data);
+      const upstreamMessage = getUpstreamErrorMessage(responseBody);
+      const error = new Error(`Error ${response.status}: ${upstreamMessage}`);
+      error.name = "UpstreamHttpError";
+      error.statusCode = response.status;
+
+      persistUpstreamError({
+        requestId,
+        modelName,
+        endpointInfo,
+        requestParams: data,
+        requestHeaders: headers,
+        upstreamUrl: fullUrl,
+        error,
+        statusCode: response.status,
+        responseBody,
+      });
+      logRequestEnd(requestId, false, 0, 0, error.message);
+      sendStreamError(res, requestId, modelName, error, response.status);
       return;
     }
 
@@ -280,8 +335,15 @@ async function streamFromBackend(
             return;
           }
 
+          let chunkData;
           try {
-            const chunkData = JSON.parse(payload);
+            chunkData = JSON.parse(payload);
+          } catch {
+            console.warn(`BACKEND [ID: ${requestId}]: Invalid JSON in stream.`);
+            continue;
+          }
+
+          try {
             if (chunkData && typeof chunkData === "object") {
               // Build OpenAI-compatible chunk via adapter
               const openaiChunk = adapter.buildStreamChunk(chunkData, streamCtx);
@@ -297,11 +359,30 @@ async function streamFromBackend(
                 if (parsed?.usage) {
                   streamUsage = parsed.usage;
                 }
-                res.write(`data: ${JSON.stringify(openaiChunk)}\n\n`);
+                if (!res.writableEnded) {
+                  res.write(`data: ${JSON.stringify(openaiChunk)}\n\n`);
+                }
               }
             }
-          } catch (e) {
-            console.warn(`BACKEND [ID: ${requestId}]: Invalid JSON in stream.`);
+          } catch (error) {
+            if (streamSettled) return;
+            streamSettled = true;
+            error.name = error.name || "StreamAdapterError";
+
+            persistUpstreamError({
+              requestId,
+              modelName,
+              endpointInfo,
+              requestParams: data,
+              requestHeaders: headers,
+              upstreamUrl: fullUrl,
+              error,
+              responseBody: chunkData,
+            });
+            logRequestEnd(requestId, false, 0, 0, error.message);
+            sendStreamError(res, requestId, modelName, error, 500);
+            response.data.destroy();
+            return;
           }
           // Reset event tracker after processing data line
           currentEvent = null;
@@ -310,6 +391,9 @@ async function streamFromBackend(
     });
 
     response.data.on("end", () => {
+      if (streamSettled) return;
+      streamSettled = true;
+
       // Use real usage from the final chunk if available, otherwise estimate
       const inputTokens =
         streamUsage?.prompt_tokens ?? estimateTokens(openaiReq);
@@ -342,62 +426,49 @@ async function streamFromBackend(
         cacheReadTokens,
       );
       // Always send [DONE] to close the stream for the client
-      res.write("data: [DONE]\n\n");
-      res.end();
+      if (!res.writableEnded) {
+        res.write("data: [DONE]\n\n");
+        res.end();
+      }
     });
 
     response.data.on("error", (error) => {
+      if (streamSettled) return;
+      streamSettled = true;
       console.error(`BACKEND [ID: ${requestId}]: Stream error:`, error);
-      const errorChunk = {
-        id: `chatcmpl-${requestId}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model: modelName,
-        choices: [
-          {
-            index: 0,
-            delta: {},
-            finish_reason: "error",
-          },
-        ],
-        error: {
-          message: error.message || "Stream error occurred",
-          type: "server_error",
-          code: 500,
-        },
-      };
-      res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
-      res.write(`data: [DONE]\n\n`);
-      logError(requestId, error.name, error.message, error.stack);
+
+      persistUpstreamError({
+        requestId,
+        modelName,
+        endpointInfo,
+        requestParams: data,
+        requestHeaders: headers,
+        upstreamUrl: fullUrl,
+        error,
+      });
       logRequestEnd(requestId, false, 0, 0, error.message);
-      res.end();
+      sendStreamError(res, requestId, modelName, error, 500);
     });
   } catch (error) {
     console.error(`BACKEND [ID: ${requestId}]: Stream error:`, error);
+    const responseBody = await readUpstreamErrorBody(
+      error.responseBody ?? error.response?.data,
+    );
+    const statusCode = error.response?.status ?? error.statusCode ?? 500;
 
-    const errorChunk = {
-      id: `chatcmpl-${requestId}`,
-      object: "chat.completion.chunk",
-      created: Math.floor(Date.now() / 1000),
-      model: modelName,
-      choices: [
-        {
-          index: 0,
-          delta: {},
-          finish_reason: "error",
-        },
-      ],
-      error: {
-        message: error.message || "Unknown error",
-        type: "server_error",
-        code: 500,
-      },
-    };
-    res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
-    res.write(`data: [DONE]\n\n`);
-    logError(requestId, error.name || "Error", error.message, error.stack);
+    persistUpstreamError({
+      requestId,
+      modelName,
+      endpointInfo,
+      requestParams: data ?? openaiReq,
+      requestHeaders: headers,
+      upstreamUrl: fullUrl,
+      error,
+      statusCode,
+      responseBody,
+    });
     logRequestEnd(requestId, false, 0, 0, error.message);
-    res.end();
+    sendStreamError(res, requestId, modelName, error, statusCode);
   }
 }
 
@@ -408,19 +479,30 @@ async function makeBackendRequest(
   apiKey,
   cacheDepth = -1,
 ) {
-  const endpointInfo = getEndpointForModel(modelName);
-
-  if (!endpointInfo) {
-    const error = new Error("Can't find the model you're looking for.");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  const { url: backendUrl, token: backendToken, actualModel, customHeaders, apiFormat } = endpointInfo;
-  const adapter = getAdapter(apiFormat);
-  const fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
+  let endpointInfo = null;
+  let fullUrl = null;
+  let data = null;
+  let headers = {};
+  let upstreamResponseBody = null;
 
   try {
+    endpointInfo = getEndpointForModel(modelName);
+    if (!endpointInfo) {
+      const error = new Error("Can't find the model you're looking for.");
+      error.name = "EndpointResolutionError";
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const {
+      url: backendUrl,
+      token: backendToken,
+      actualModel,
+      customHeaders,
+      apiFormat,
+    } = endpointInfo;
+    const adapter = getAdapter(apiFormat);
+    fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
     let messages = openaiReq.messages || [];
 
     // Apply Claude prompt caching if the target model is Claude and caching is enabled
@@ -440,11 +522,11 @@ async function makeBackendRequest(
 
     // Build the request body using the adapter
     const reqForAdapter = { ...openaiReq, messages };
-    const data = adapter.transformRequest(reqForAdapter, actualModel);
+    data = adapter.transformRequest(reqForAdapter, actualModel);
 
     // Build headers: custom + adapter-specific + auth
     const extraHeaders = getExtraHeaders(apiFormat);
-    const headers = {
+    headers = {
       ...customHeaders,
       ...extraHeaders,
       "Content-Type": "application/json",
@@ -466,14 +548,19 @@ async function makeBackendRequest(
       headers,
       data,
       timeout: 180000,
+      validateStatus: () => true,
     });
 
-    if (response.status !== 200) {
+    upstreamResponseBody = response.data;
+
+    if (response.status < 200 || response.status >= 300) {
       console.error(`BACKEND [ID: ${requestId}]:`, response.data);
       const error = new Error(
-        `Error ${response.status}: ${response.data.statusMessage ?? response.data?.error?.message ?? "Unknown error"}`,
+        `Error ${response.status}: ${getUpstreamErrorMessage(response.data)}`,
       );
+      error.name = "UpstreamHttpError";
       error.statusCode = response.status;
+      error.responseBody = response.data;
       throw error;
     }
 
@@ -511,18 +598,30 @@ async function makeBackendRequest(
     // Return the OpenAI-compatible response object
     return parsed.response ?? rawData;
   } catch (error) {
+    const responseBody = await readUpstreamErrorBody(
+      error.responseBody ?? error.response?.data ?? upstreamResponseBody,
+    );
+    const statusCode = error.response?.status ?? error.statusCode ?? null;
+
     console.error(`BACKEND [ID: ${requestId}]: Error:`, error.message);
-    if (error.response) {
-      console.error(
-        `BACKEND [ID: ${requestId}]: Status:`,
-        error.response.status,
-      );
-      console.error(
-        `BACKEND [ID: ${requestId}]: Response:`,
-        JSON.stringify(error.response.data, null, 2),
-      );
+    if (statusCode) {
+      console.error(`BACKEND [ID: ${requestId}]: Status:`, statusCode);
     }
-    logError(requestId, error.name || "Error", error.message, error.stack);
+    if (responseBody !== null) {
+      console.error(`BACKEND [ID: ${requestId}]: Response:`, responseBody);
+    }
+
+    persistUpstreamError({
+      requestId,
+      modelName,
+      endpointInfo,
+      requestParams: data ?? openaiReq,
+      requestHeaders: headers,
+      upstreamUrl: fullUrl,
+      error,
+      statusCode,
+      responseBody,
+    });
     logRequestEnd(requestId, false, 0, 0, error.message);
     throw error;
   }

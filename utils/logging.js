@@ -2,6 +2,9 @@ import logManager from "../services/logManager.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import realtimeStats from "../services/realtimeStats.js";
 import { MODEL_PRICING, maskKey } from "./helpers.js";
+import { sanitizeHeadersForLogging } from "./errorLogging.js";
+
+export { sanitizeHeadersForLogging } from "./errorLogging.js";
 
 // Cost calculation function based on model type
 export function calculateCost(
@@ -160,17 +163,33 @@ export function logRequestEnd(
   realtimeStats.activeRequests.delete(requestId);
 }
 
-export function logError(requestId, errorType, errorMessage, stackTrace = "") {
-  // Log full stack trace to console only — not persisted to DB
+export function logError(
+  requestId,
+  errorType,
+  errorMessage,
+  stackTrace = "",
+  context = {},
+) {
   if (stackTrace) console.error(`[${requestId}] ${errorType}:`, stackTrace);
 
   const errorData = {
-    timestamp: Date.now() / 1000,
-    request_id: requestId,
-    error_type: errorType,
-    error_message: errorMessage,
-    // stack_trace intentionally omitted from DB storage
+    timestamp: context.timestamp || new Date().toISOString(),
+    requestId,
+    model: context.model ?? null,
+    upstreamModel: context.upstreamModel ?? null,
+    endpointKey: context.endpointKey ?? null,
+    endpointName: context.endpointName ?? null,
+    apiFormat: context.apiFormat ?? null,
+    statusCode: context.statusCode ?? null,
+    errorType,
+    errorCode: context.errorCode ?? null,
+    errorMessage,
+    requestParams: context.requestParams ?? null,
+    requestHeaders: sanitizeHeadersForLogging(context.requestHeaders),
+    upstreamUrl: context.upstreamUrl ?? null,
+    responseBody: context.responseBody ?? null,
+    stackTrace: stackTrace || null,
   };
 
-  logManager.writeErrorLog(errorData);
+  return logManager.writeErrorLog(errorData);
 }

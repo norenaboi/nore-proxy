@@ -5,6 +5,7 @@ node_modules/
 .env
 models.json
 endpoints.json
+settings.json
 
 # Logs
 logs/

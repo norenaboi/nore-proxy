@@ -1,0 +1,1099 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link rel="icon" type="image/x-icon" href="favicon.ico" />
+        <title>Stored Errors - Admin Panel</title>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+            rel="stylesheet"
+        />
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
+            crossorigin="anonymous"
+            referrerpolicy="no-referrer"
+        />
+        <link rel="stylesheet" href="shared.css" />
+        <script src="theme.js"></script>
+        <style>
+            .title-group p {
+                margin-top: 6px;
+                color: var(--text-secondary);
+                font-size: 14px;
+            }
+
+            .toolbar {
+                display: flex;
+                align-items: end;
+                justify-content: space-between;
+                gap: 20px;
+                padding: 20px;
+                margin-bottom: 24px;
+                background: var(--card-bg);
+                border: 1px solid var(--border-color);
+                border-radius: 16px;
+                box-shadow: var(--card-shadow);
+            }
+
+            .filters {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(160px, 220px));
+                gap: 12px;
+                flex: 1;
+            }
+
+            .filter-field {
+                display: flex;
+                flex-direction: column;
+                gap: 7px;
+            }
+
+            .filter-field label {
+                color: var(--text-secondary);
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.45px;
+                text-transform: uppercase;
+            }
+
+            .filter-field select {
+                width: 100%;
+                min-height: 42px;
+                padding: 9px 36px 9px 12px;
+                border: 1px solid var(--input-border);
+                border-radius: 10px;
+                outline: none;
+                font-family: inherit;
+            }
+
+            .filter-field select:focus {
+                border-color: var(--primary);
+                box-shadow: 0 0 0 3px var(--primary-alpha-01);
+            }
+
+            .toolbar-actions {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                min-height: 42px;
+                padding: 10px 15px;
+                border: 1px solid transparent;
+                border-radius: 10px;
+                cursor: pointer;
+                font-family: inherit;
+                font-size: 13px;
+                font-weight: 600;
+                transition: all 0.2s ease;
+            }
+
+            .btn-primary {
+                background: var(--primary);
+                color: white;
+            }
+
+            .btn-primary:hover {
+                background: var(--primary-dark);
+            }
+
+            .btn-secondary {
+                background: var(--bg-tertiary);
+                border-color: var(--border-color);
+                color: var(--text-primary);
+            }
+
+            .btn-secondary:hover {
+                border-color: var(--gray-400);
+            }
+
+            .btn-danger {
+                background: var(--danger-alpha-01);
+                border-color: var(--danger-alpha-02);
+                color: var(--danger);
+            }
+
+            .btn-danger:hover {
+                background: var(--danger);
+                color: white;
+            }
+
+            .btn:disabled {
+                cursor: not-allowed;
+                opacity: 0.45;
+            }
+
+            .errors-card {
+                overflow: hidden;
+                background: var(--card-bg);
+                border: 1px solid var(--border-color);
+                border-radius: 16px;
+                box-shadow: var(--card-shadow);
+            }
+
+            .card-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 16px;
+                padding: 19px 22px;
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .card-title {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                color: var(--text-primary);
+                font-size: 17px;
+                font-weight: 650;
+            }
+
+            .card-title i {
+                color: var(--danger);
+            }
+
+            .count-pill {
+                display: inline-flex;
+                align-items: center;
+                min-height: 28px;
+                padding: 5px 10px;
+                background: var(--danger-alpha-01);
+                border: 1px solid var(--danger-alpha-02);
+                border-radius: 999px;
+                color: var(--danger);
+                font-size: 12px;
+                font-weight: 700;
+            }
+
+            .table-scroll {
+                overflow-x: auto;
+            }
+
+            table {
+                width: 100%;
+                min-width: 1050px;
+                border-collapse: collapse;
+            }
+
+            th {
+                padding: 13px 16px;
+                border-bottom: 1px solid var(--border-color);
+                color: var(--text-secondary);
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.55px;
+                text-align: left;
+                text-transform: uppercase;
+                white-space: nowrap;
+            }
+
+            td {
+                padding: 15px 16px;
+                border-bottom: 1px solid var(--border-color);
+                color: var(--text-secondary);
+                font-size: 13px;
+                vertical-align: middle;
+            }
+
+            tbody tr {
+                cursor: pointer;
+                transition: background 0.15s ease;
+            }
+
+            tbody tr:hover,
+            tbody tr:focus {
+                background: var(--bg-tertiary);
+                outline: none;
+            }
+
+            tbody tr:last-child td {
+                border-bottom: none;
+            }
+
+            .timestamp {
+                color: var(--text-tertiary);
+                font-variant-numeric: tabular-nums;
+                white-space: nowrap;
+            }
+
+            .status-badge {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 48px;
+                padding: 5px 8px;
+                border-radius: 7px;
+                font-family: "SF Mono", Monaco, Consolas, monospace;
+                font-size: 12px;
+                font-weight: 700;
+            }
+
+            .status-badge.server {
+                background: var(--danger-alpha-01);
+                color: var(--danger);
+            }
+
+            .status-badge.client {
+                background: rgba(245, 158, 11, 0.12);
+                color: var(--warning);
+            }
+
+            .status-badge.network {
+                background: var(--primary-alpha-01);
+                color: var(--primary-dark);
+            }
+
+            .primary-cell {
+                max-width: 190px;
+                overflow: hidden;
+                color: var(--text-primary);
+                font-weight: 600;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .secondary-cell {
+                max-width: 180px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .message-cell {
+                max-width: 340px;
+                overflow: hidden;
+                color: var(--text-primary);
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .type-label {
+                display: inline-flex;
+                padding: 4px 8px;
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border-color);
+                border-radius: 7px;
+                color: var(--text-secondary);
+                font-family: "SF Mono", Monaco, Consolas, monospace;
+                font-size: 11px;
+            }
+
+            .table-state {
+                padding: 70px 24px;
+                color: var(--text-tertiary);
+                text-align: center;
+            }
+
+            .table-state i {
+                display: block;
+                margin-bottom: 14px;
+                color: var(--gray-300);
+                font-size: 38px;
+            }
+
+            .spinner {
+                width: 34px;
+                height: 34px;
+                margin: 0 auto 14px;
+                border: 3px solid var(--border-color);
+                border-top-color: var(--primary);
+                border-radius: 50%;
+                animation: spin 0.8s linear infinite;
+            }
+
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
+            .pagination {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 14px;
+                padding: 16px 20px;
+                border-top: 1px solid var(--border-color);
+                color: var(--text-secondary);
+                font-size: 13px;
+            }
+
+            .pagination-actions {
+                display: flex;
+                gap: 8px;
+            }
+
+            .detail-backdrop {
+                position: fixed;
+                z-index: 1000;
+                inset: 0;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                padding: 28px;
+                background: rgba(15, 23, 42, 0.68);
+                backdrop-filter: blur(5px);
+            }
+
+            .detail-backdrop.open {
+                display: flex;
+            }
+
+            .detail-panel {
+                display: flex;
+                flex-direction: column;
+                width: min(1040px, 100%);
+                max-height: calc(100vh - 56px);
+                overflow: hidden;
+                background: var(--card-bg);
+                border: 1px solid var(--border-color);
+                border-radius: 18px;
+                box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+            }
+
+            .detail-header {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 20px;
+                padding: 22px 24px;
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .detail-heading {
+                min-width: 0;
+            }
+
+            .detail-heading h2 {
+                margin-bottom: 6px;
+                color: var(--text-primary);
+                font-size: 20px;
+            }
+
+            .detail-heading p {
+                overflow: hidden;
+                color: var(--text-secondary);
+                font-size: 13px;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .icon-button {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 36px;
+                height: 36px;
+                flex: 0 0 auto;
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border-color);
+                border-radius: 9px;
+                color: var(--text-secondary);
+                cursor: pointer;
+            }
+
+            .icon-button:hover {
+                color: var(--danger);
+            }
+
+            .detail-body {
+                overflow-y: auto;
+                padding: 24px;
+            }
+
+            .detail-grid {
+                display: grid;
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                gap: 12px;
+                margin-bottom: 20px;
+            }
+
+            .detail-field {
+                min-width: 0;
+                padding: 13px 14px;
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border-color);
+                border-radius: 10px;
+            }
+
+            .detail-field.wide {
+                grid-column: span 2;
+            }
+
+            .detail-label {
+                display: block;
+                margin-bottom: 6px;
+                color: var(--text-tertiary);
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.55px;
+                text-transform: uppercase;
+            }
+
+            .detail-value {
+                display: block;
+                overflow-wrap: anywhere;
+                color: var(--text-primary);
+                font-size: 13px;
+                font-weight: 550;
+            }
+
+            .detail-section {
+                margin-top: 16px;
+            }
+
+            .detail-section h3 {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 9px;
+                color: var(--text-primary);
+                font-size: 13px;
+            }
+
+            .detail-section h3 i {
+                color: var(--primary);
+            }
+
+            .code-block {
+                width: 100%;
+                max-height: 300px;
+                overflow: auto;
+                padding: 15px;
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border-color);
+                border-radius: 10px;
+                color: var(--text-secondary);
+                font-family: "SF Mono", Monaco, Consolas, monospace;
+                font-size: 12px;
+                line-height: 1.55;
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+
+            .error-message-block {
+                border-left: 3px solid var(--danger);
+                color: var(--text-primary);
+            }
+
+            @media (max-width: 1100px) {
+                .toolbar {
+                    align-items: stretch;
+                    flex-direction: column;
+                }
+
+                .toolbar-actions {
+                    justify-content: flex-end;
+                }
+
+                .detail-grid {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+            }
+
+            @media (max-width: 700px) {
+                .filters {
+                    grid-template-columns: 1fr;
+                }
+
+                .toolbar-actions .btn {
+                    flex: 1;
+                }
+
+                .detail-backdrop {
+                    padding: 10px;
+                }
+
+                .detail-panel {
+                    max-height: calc(100vh - 20px);
+                }
+
+                .detail-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .detail-field.wide {
+                    grid-column: span 1;
+                }
+
+                .pagination {
+                    align-items: stretch;
+                    flex-direction: column;
+                }
+
+                .pagination-actions .btn {
+                    flex: 1;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">
+                    <i class="fa-brands fa-square-web-awesome-stroke"></i>
+                </div>
+                <span class="logo-text">Admin Panel</span>
+            </div>
+
+            <nav class="nav-menu">
+                <a class="nav-item" href="/admin/dashboard">
+                    <i class="fa-brands fa-quinscape"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a class="nav-item" href="/admin/model-usage">
+                    <i class="fa-solid fa-chart-line"></i>
+                    <span>Model Usage</span>
+                </a>
+                <a class="nav-item" href="/admin/users">
+                    <i class="fa-solid fa-users"></i>
+                    <span>Users</span>
+                </a>
+                <a class="nav-item" href="/admin/keys">
+                    <i class="fa-solid fa-key"></i>
+                    <span>API Keys</span>
+                </a>
+                <a class="nav-item" href="/admin/endpoints">
+                    <i class="fa-solid fa-hexagon-nodes"></i>
+                    <span>Endpoints</span>
+                </a>
+                <a class="nav-item" href="/admin/models">
+                    <i class="fa-solid fa-comment-nodes"></i>
+                    <span>Models</span>
+                </a>
+                <a class="nav-item" href="/admin/logs">
+                    <i class="fa-solid fa-terminal"></i>
+                    <span>Logs</span>
+                </a>
+                <a class="nav-item active">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span>Errors</span>
+                </a>
+                <a class="nav-item" href="/admin/settings">
+                    <i class="fa-solid fa-sliders"></i>
+                    <span>Settings</span>
+                </a>
+            </nav>
+
+            <button class="logout" onclick="logout()">
+                <i class="fa-solid fa-right-from-bracket"></i>
+                <span>Logout</span>
+            </button>
+        </aside>
+
+        <main class="main-content">
+            <header class="header">
+                <div class="title-group">
+                    <h1>Stored Errors</h1>
+                    <p>Inspect failed upstream requests without exposing credentials.</p>
+                </div>
+                <div class="header-actions">
+                    <button
+                        class="theme-toggle"
+                        onclick="toggleTheme()"
+                        aria-label="Toggle theme"
+                    >
+                        <span class="theme-toggle-slider">
+                            <i class="fa-solid fa-sun"></i>
+                        </span>
+                    </button>
+                </div>
+            </header>
+
+            <section class="toolbar" aria-label="Error filters">
+                <div class="filters">
+                    <div class="filter-field">
+                        <label for="modelFilter">Model</label>
+                        <select id="modelFilter">
+                            <option value="">All models</option>
+                        </select>
+                    </div>
+                    <div class="filter-field">
+                        <label for="endpointFilter">Endpoint</label>
+                        <select id="endpointFilter">
+                            <option value="">All endpoints</option>
+                        </select>
+                    </div>
+                    <div class="filter-field">
+                        <label for="statusFilter">HTTP status</label>
+                        <select id="statusFilter">
+                            <option value="">All statuses</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="toolbar-actions">
+                    <button class="btn btn-primary" onclick="applyFilters()">
+                        <i class="fa-solid fa-filter"></i>
+                        Apply
+                    </button>
+                    <button class="btn btn-secondary" onclick="refreshErrors()">
+                        <i class="fa-solid fa-rotate"></i>
+                        Refresh
+                    </button>
+                    <button class="btn btn-danger" onclick="clearErrors()">
+                        <i class="fa-solid fa-trash"></i>
+                        Clear all
+                    </button>
+                </div>
+            </section>
+
+            <section class="errors-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        Upstream failures
+                    </div>
+                    <span id="errorCount" class="count-pill">0 errors</span>
+                </div>
+
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Status</th>
+                                <th>Model</th>
+                                <th>Upstream model</th>
+                                <th>Endpoint</th>
+                                <th>Type</th>
+                                <th>Message</th>
+                            </tr>
+                        </thead>
+                        <tbody id="errorsTableBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="pagination">
+                    <span id="pageSummary">Showing 0 errors</span>
+                    <div class="pagination-actions">
+                        <button
+                            id="previousButton"
+                            class="btn btn-secondary"
+                            onclick="previousPage()"
+                            disabled
+                        >
+                            <i class="fa-solid fa-chevron-left"></i>
+                            Previous
+                        </button>
+                        <button
+                            id="nextButton"
+                            class="btn btn-secondary"
+                            onclick="nextPage()"
+                            disabled
+                        >
+                            Next
+                            <i class="fa-solid fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <div
+            id="detailBackdrop"
+            class="detail-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="detailTitle"
+            onclick="closeDetailFromBackdrop(event)"
+        >
+            <article class="detail-panel">
+                <header class="detail-header">
+                    <div class="detail-heading">
+                        <h2 id="detailTitle">Error details</h2>
+                        <p id="detailSubtitle">Loading stored context…</p>
+                    </div>
+                    <button
+                        class="icon-button"
+                        onclick="closeDetail()"
+                        aria-label="Close error details"
+                    >
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </header>
+
+                <div class="detail-body">
+                    <div class="detail-grid">
+                        <div class="detail-field wide">
+                            <span class="detail-label">Timestamp</span>
+                            <span id="detailTimestamp" class="detail-value">—</span>
+                        </div>
+                        <div class="detail-field wide">
+                            <span class="detail-label">Request ID</span>
+                            <span id="detailRequestId" class="detail-value">—</span>
+                        </div>
+                        <div class="detail-field">
+                            <span class="detail-label">HTTP status</span>
+                            <span id="detailStatus" class="detail-value">—</span>
+                        </div>
+                        <div class="detail-field">
+                            <span class="detail-label">API format</span>
+                            <span id="detailApiFormat" class="detail-value">—</span>
+                        </div>
+                        <div class="detail-field">
+                            <span class="detail-label">Requested model</span>
+                            <span id="detailModel" class="detail-value">—</span>
+                        </div>
+                        <div class="detail-field">
+                            <span class="detail-label">Upstream model</span>
+                            <span id="detailUpstreamModel" class="detail-value">—</span>
+                        </div>
+                        <div class="detail-field wide">
+                            <span class="detail-label">Endpoint</span>
+                            <span id="detailEndpoint" class="detail-value">—</span>
+                        </div>
+                        <div class="detail-field wide">
+                            <span class="detail-label">Upstream URL</span>
+                            <span id="detailUrl" class="detail-value">—</span>
+                        </div>
+                    </div>
+
+                    <section class="detail-section">
+                        <h3><i class="fa-solid fa-circle-exclamation"></i> Error message</h3>
+                        <pre id="detailMessage" class="code-block error-message-block"></pre>
+                    </section>
+                    <section class="detail-section">
+                        <h3><i class="fa-solid fa-heading"></i> Request headers</h3>
+                        <pre id="detailHeaders" class="code-block"></pre>
+                    </section>
+                    <section class="detail-section">
+                        <h3><i class="fa-solid fa-arrow-up-from-bracket"></i> Request body</h3>
+                        <pre id="detailRequest" class="code-block"></pre>
+                    </section>
+                    <section class="detail-section">
+                        <h3><i class="fa-solid fa-arrow-down"></i> Response body</h3>
+                        <pre id="detailResponse" class="code-block"></pre>
+                    </section>
+                    <section class="detail-section">
+                        <h3><i class="fa-solid fa-code"></i> Stack trace</h3>
+                        <pre id="detailStack" class="code-block"></pre>
+                    </section>
+                </div>
+            </article>
+        </div>
+
+        <script>
+            const state = {
+                limit: 25,
+                offset: 0,
+                total: 0,
+                loading: false,
+            };
+
+            const tableBody = document.getElementById("errorsTableBody");
+            const modelFilter = document.getElementById("modelFilter");
+            const endpointFilter = document.getElementById("endpointFilter");
+            const statusFilter = document.getElementById("statusFilter");
+            const detailBackdrop = document.getElementById("detailBackdrop");
+
+            async function apiFetch(url, options = {}) {
+                const response = await fetch(url, options);
+                if (response.status === 401 || response.status === 403) {
+                    window.location.href = "/admin/login";
+                    throw new Error("Admin session expired");
+                }
+
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(data.error || `Request failed (${response.status})`);
+                }
+                return data;
+            }
+
+            function appendOptions(select, values, formatter = (value) => value) {
+                for (const value of values) {
+                    const option = document.createElement("option");
+                    option.value = String(value);
+                    option.textContent = formatter(value);
+                    select.appendChild(option);
+                }
+            }
+
+            async function loadFilters() {
+                const current = {
+                    model: modelFilter.value,
+                    endpoint: endpointFilter.value,
+                    status: statusFilter.value,
+                };
+                const data = await apiFetch("/api/errors/filters");
+
+                modelFilter.length = 1;
+                endpointFilter.length = 1;
+                statusFilter.length = 1;
+                appendOptions(modelFilter, data.models || []);
+                appendOptions(endpointFilter, data.endpoints || []);
+                appendOptions(statusFilter, data.statuses || [], (value) => `HTTP ${value}`);
+
+                modelFilter.value = current.model;
+                endpointFilter.value = current.endpoint;
+                statusFilter.value = current.status;
+            }
+
+            function buildListUrl() {
+                const params = new URLSearchParams({
+                    limit: String(state.limit),
+                    offset: String(state.offset),
+                });
+                if (modelFilter.value) params.set("model", modelFilter.value);
+                if (endpointFilter.value) params.set("endpoint", endpointFilter.value);
+                if (statusFilter.value) params.set("status", statusFilter.value);
+                return `/api/errors?${params.toString()}`;
+            }
+
+            function showTableState(type, message) {
+                tableBody.replaceChildren();
+                const row = document.createElement("tr");
+                const cell = document.createElement("td");
+                cell.colSpan = 7;
+                cell.className = "table-state";
+
+                if (type === "loading") {
+                    const spinner = document.createElement("div");
+                    spinner.className = "spinner";
+                    cell.appendChild(spinner);
+                } else {
+                    const icon = document.createElement("i");
+                    icon.className =
+                        type === "error"
+                            ? "fa-solid fa-circle-exclamation"
+                            : "fa-solid fa-shield-halved";
+                    cell.appendChild(icon);
+                }
+
+                const text = document.createElement("p");
+                text.textContent = message;
+                cell.appendChild(text);
+                row.appendChild(cell);
+                tableBody.appendChild(row);
+            }
+
+            function addTextCell(row, value, className = "") {
+                const cell = document.createElement("td");
+                if (className) cell.className = className;
+                cell.textContent = value ?? "—";
+                cell.title = value ?? "";
+                row.appendChild(cell);
+                return cell;
+            }
+
+            function statusClass(statusCode) {
+                if (!statusCode) return "network";
+                if (statusCode >= 500) return "server";
+                if (statusCode >= 400) return "client";
+                return "network";
+            }
+
+            function formatTimestamp(timestamp) {
+                if (!timestamp) return "—";
+                const date = new Date(timestamp);
+                if (Number.isNaN(date.getTime())) return String(timestamp);
+                return date.toLocaleString();
+            }
+
+            function renderErrors(errors) {
+                tableBody.replaceChildren();
+                if (!errors.length) {
+                    showTableState("empty", "No stored errors match these filters.");
+                    return;
+                }
+
+                for (const error of errors) {
+                    const row = document.createElement("tr");
+                    row.tabIndex = 0;
+                    row.setAttribute("aria-label", `Inspect error ${error.id}`);
+                    row.addEventListener("click", () => openDetail(error.id));
+                    row.addEventListener("keydown", (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openDetail(error.id);
+                        }
+                    });
+
+                    addTextCell(row, formatTimestamp(error.timestamp), "timestamp");
+
+                    const statusCell = document.createElement("td");
+                    const badge = document.createElement("span");
+                    badge.className = `status-badge ${statusClass(error.statusCode)}`;
+                    badge.textContent = error.statusCode || "N/A";
+                    statusCell.appendChild(badge);
+                    row.appendChild(statusCell);
+
+                    addTextCell(row, error.model, "primary-cell");
+                    addTextCell(row, error.upstreamModel, "secondary-cell");
+                    addTextCell(row, error.endpointName, "secondary-cell");
+
+                    const typeCell = document.createElement("td");
+                    const type = document.createElement("span");
+                    type.className = "type-label";
+                    type.textContent = error.errorType || error.errorCode || "Error";
+                    typeCell.appendChild(type);
+                    row.appendChild(typeCell);
+
+                    addTextCell(row, error.errorMessage, "message-cell");
+                    tableBody.appendChild(row);
+                }
+            }
+
+            function updatePagination() {
+                const start = state.total === 0 ? 0 : state.offset + 1;
+                const end = Math.min(state.offset + state.limit, state.total);
+                document.getElementById("errorCount").textContent =
+                    `${state.total.toLocaleString()} ${state.total === 1 ? "error" : "errors"}`;
+                document.getElementById("pageSummary").textContent =
+                    state.total === 0
+                        ? "Showing 0 errors"
+                        : `Showing ${start.toLocaleString()}–${end.toLocaleString()} of ${state.total.toLocaleString()}`;
+                document.getElementById("previousButton").disabled =
+                    state.loading || state.offset === 0;
+                document.getElementById("nextButton").disabled =
+                    state.loading || state.offset + state.limit >= state.total;
+            }
+
+            async function loadErrors() {
+                if (state.loading) return;
+                state.loading = true;
+                showTableState("loading", "Loading stored errors…");
+                updatePagination();
+
+                try {
+                    const data = await apiFetch(buildListUrl());
+                    state.total = data.total || 0;
+
+                    if (state.offset >= state.total && state.offset > 0) {
+                        state.offset = Math.max(
+                            0,
+                            Math.floor(Math.max(state.total - 1, 0) / state.limit) *
+                                state.limit,
+                        );
+                        state.loading = false;
+                        return loadErrors();
+                    }
+
+                    renderErrors(data.errors || []);
+                } catch (error) {
+                    console.error("Error loading stored errors:", error);
+                    showTableState("error", error.message || "Could not load errors.");
+                } finally {
+                    state.loading = false;
+                    updatePagination();
+                }
+            }
+
+            async function openDetail(id) {
+                detailBackdrop.classList.add("open");
+                document.body.style.overflow = "hidden";
+                document.getElementById("detailTitle").textContent = `Error #${id}`;
+                document.getElementById("detailSubtitle").textContent = "Loading stored context…";
+
+                try {
+                    const { error } = await apiFetch(`/api/errors/${id}`);
+                    document.getElementById("detailTitle").textContent =
+                        `${error.errorType || "Error"} · #${error.id}`;
+                    document.getElementById("detailSubtitle").textContent =
+                        error.errorCode || error.errorMessage || "Stored upstream failure";
+                    setText("detailTimestamp", formatTimestamp(error.timestamp));
+                    setText("detailRequestId", error.requestId);
+                    setText("detailStatus", error.statusCode ? `HTTP ${error.statusCode}` : "No response");
+                    setText("detailApiFormat", error.apiFormat);
+                    setText("detailModel", error.model);
+                    setText("detailUpstreamModel", error.upstreamModel);
+                    setText(
+                        "detailEndpoint",
+                        [error.endpointName, error.endpointKey]
+                            .filter(Boolean)
+                            .join(" · "),
+                    );
+                    setText("detailUrl", error.upstreamUrl);
+                    setText("detailMessage", error.errorMessage);
+                    setJson("detailHeaders", error.requestHeaders);
+                    setJson("detailRequest", error.requestParams);
+                    setJson("detailResponse", error.responseBody);
+                    setText("detailStack", error.stackTrace);
+                } catch (error) {
+                    document.getElementById("detailSubtitle").textContent = error.message;
+                    setText("detailMessage", "Unable to load this stored error.");
+                }
+            }
+
+            function setText(id, value) {
+                document.getElementById(id).textContent = value || "Not available";
+            }
+
+            function setJson(id, value) {
+                document.getElementById(id).textContent =
+                    value === null || value === undefined
+                        ? "Not available"
+                        : JSON.stringify(value, null, 2);
+            }
+
+            function closeDetail() {
+                detailBackdrop.classList.remove("open");
+                document.body.style.overflow = "";
+            }
+
+            function closeDetailFromBackdrop(event) {
+                if (event.target === detailBackdrop) closeDetail();
+            }
+
+            function applyFilters() {
+                state.offset = 0;
+                loadErrors();
+            }
+
+            async function refreshErrors() {
+                await Promise.all([loadFilters(), loadErrors()]);
+            }
+
+            function previousPage() {
+                if (state.offset === 0) return;
+                state.offset = Math.max(0, state.offset - state.limit);
+                loadErrors();
+            }
+
+            function nextPage() {
+                if (state.offset + state.limit >= state.total) return;
+                state.offset += state.limit;
+                loadErrors();
+            }
+
+            async function clearErrors() {
+                if (state.total === 0) return;
+                const confirmed = window.confirm(
+                    `Permanently delete ${state.total.toLocaleString()} stored ${state.total === 1 ? "error" : "errors"}?`,
+                );
+                if (!confirmed) return;
+
+                try {
+                    await apiFetch("/api/errors", { method: "DELETE" });
+                    state.offset = 0;
+                    await Promise.all([loadFilters(), loadErrors()]);
+                } catch (error) {
+                    window.alert(error.message || "Could not clear stored errors.");
+                }
+            }
+
+            async function logout() {
+                await fetch("/admin/logout", { method: "POST" }).catch(() => {});
+                window.location.href = "/admin/login";
+            }
+
+            document.addEventListener("keydown", (event) => {
+                if (event.key === "Escape" && detailBackdrop.classList.contains("open")) {
+                    closeDetail();
+                }
+            });
+
+            Promise.all([loadFilters(), loadErrors()]).catch((error) => {
+                console.error("Error initializing stored errors page:", error);
+            });
+        </script>
+    </body>
+</html>

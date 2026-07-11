@@ -258,6 +258,8 @@ export function getEndpointForModel(modelName) {
         url: normalizedUrl,
         token,
         actualModel,
+        endpointKey,
+        endpointName: endpoint.name || endpointKey,
         customHeaders: endpoint.headers || {},
         apiFormat: endpoint.apiFormat || 'openai',
         generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),

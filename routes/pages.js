@@ -107,4 +107,8 @@ router.get("/admin/logs", verifySession, (req, res) => {
   serveAdmin(res, "logs.html");
 });
 
+router.get("/admin/errors", verifySession, (req, res) => {
+  serveAdmin(res, "errors.html");
+});
+
 export default router;
