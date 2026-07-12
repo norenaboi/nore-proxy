@@ -26,22 +26,23 @@ test("buildUpstreamErrorContext captures routing and Axios failure details", () 
   const context = buildUpstreamErrorContext({
     modelName: "gemini-friendly",
     endpointInfo,
-    requestParams: { model: "gemini-2.5-pro", contents: [] },
     requestHeaders: { "Content-Type": "application/json" },
     upstreamUrl:
       "https://provider.example/v1beta/models/gemini-2.5-pro:generateContent?key=top-secret&alt=sse",
     error,
   });
 
+  // requestParams is no longer captured in the upstream error context
+  // (the outbound payload is no longer persisted to error_logs).
   assert.deepEqual(context, {
     model: "gemini-friendly",
     upstreamModel: "gemini-2.5-pro",
     endpointKey: "v4",
     endpointName: "Fallback Gemini",
     apiFormat: "gemini",
+    maskedApiKey: null,
     statusCode: 503,
     errorCode: "ERR_BAD_RESPONSE",
-    requestParams: { model: "gemini-2.5-pro", contents: [] },
     requestHeaders: { "Content-Type": "application/json" },
     upstreamUrl:
       "https://provider.example/v1beta/models/gemini-2.5-pro:generateContent?alt=sse",

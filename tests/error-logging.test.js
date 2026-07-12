@@ -92,6 +92,7 @@ test("fresh databases use the structured error schema and indexes", () => {
     "upstream_url",
     "response_body",
     "stack_trace",
+    "masked_api_key",
   ]);
 
   const indexes = manager.db
@@ -136,6 +137,7 @@ test("legacy JSON error rows are migrated without data loss", () => {
   assert.equal(migrated.errorMessage, "Preserve me");
   assert.equal(migrated.model, null);
   assert.equal(migrated.requestParams, null);
+  assert.equal(migrated.maskedApiKey, null);
 });
 
 test("structured errors round-trip JSON fields and support detail lookup", () => {
@@ -152,10 +154,48 @@ test("structured errors round-trip JSON fields and support detail lookup", () =>
   assert.equal(error.apiFormat, "anthropic");
   assert.equal(error.statusCode, 502);
   assert.equal(error.errorCode, "ERR_BAD_RESPONSE");
-  assert.deepEqual(error.requestParams, sampleError().requestParams);
+  // requestParams is no longer persisted for new writes (privacy/disk).
+  // The column remains in the schema for legacy rows restored by migration.
+  assert.equal(error.requestParams, null);
+  assert.equal(error.maskedApiKey, null);
   assert.deepEqual(error.requestHeaders, sampleError().requestHeaders);
   assert.deepEqual(error.responseBody, sampleError().responseBody);
   assert.equal(error.stackTrace, sampleError().stackTrace);
+});
+
+test("response_body, stack_trace, and request_headers are truncated when exceeding limits", () => {
+  const MARKER = "…[truncated]";
+  const manager = createManager("truncation.db");
+  const id = manager.writeErrorLog(
+    sampleError({
+      responseBody: "x".repeat(10000),
+      stackTrace: "y".repeat(5000),
+      requestHeaders: "z".repeat(9000),
+    }),
+  );
+  const error = manager.getErrorLogById(id);
+
+  assert.ok(error, "getErrorLogById should return the persisted row");
+  assert.equal(typeof error.responseBody, "string");
+  assert.equal(error.responseBody.length, 8192 + MARKER.length);
+  assert.ok(error.responseBody.endsWith(MARKER));
+  // serializeJson wraps the raw string in quotes before truncation. The exact
+  // `cap + marker` length plus marker suffix confirms head-truncation: only a
+  // first-`cap`-chars-then-marker shape can produce this length.
+  assert.ok(error.responseBody.startsWith('"'));
+
+  assert.equal(typeof error.stackTrace, "string");
+  assert.equal(error.stackTrace.length, 4096 + MARKER.length);
+  assert.ok(error.stackTrace.endsWith(MARKER));
+  // stackTrace is stored raw (no serializeJson), so the 4096-char head is
+  // the first 4096 y's — directly verifiable. Head-truncation confirmed:
+  // the head is kept and the marker appended, not the tail preserved.
+  assert.ok(error.stackTrace.startsWith("y".repeat(4096)));
+
+  assert.equal(typeof error.requestHeaders, "string");
+  assert.equal(error.requestHeaders.length, 8192 + MARKER.length);
+  assert.ok(error.requestHeaders.endsWith(MARKER));
+  assert.ok(error.requestHeaders.startsWith('"'));
 });
 
 test("error listing supports newest-first pagination, filters, counts, and filter values", () => {

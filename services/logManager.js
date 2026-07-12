@@ -21,6 +21,7 @@ const ERROR_LOG_COLUMNS = [
   "upstream_url",
   "response_body",
   "stack_trace",
+  "masked_api_key",
 ];
 
 const CREATE_ERROR_LOG_TABLE = `
@@ -41,7 +42,8 @@ const CREATE_ERROR_LOG_TABLE = `
     request_headers TEXT,
     upstream_url TEXT,
     response_body TEXT,
-    stack_trace TEXT
+    stack_trace TEXT,
+    masked_api_key TEXT
   )
 `;
 
@@ -94,6 +96,12 @@ function normalizeTimestamp(value) {
   return String(value);
 }
 
+function truncateText(text, maxLen) {
+  if (text == null) return null;
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen) + "…[truncated]";
+}
+
 function mapErrorRow(row) {
   if (!row) return null;
 
@@ -115,6 +123,7 @@ function mapErrorRow(row) {
     upstreamUrl: row.upstream_url ?? null,
     responseBody: parseJson(row.response_body),
     stackTrace: row.stack_trace ?? null,
+    maskedApiKey: row.masked_api_key ?? null,
   };
 }
 
@@ -195,12 +204,14 @@ export class LogManager {
           id, timestamp, request_id, model, upstream_model,
           endpoint_key, endpoint_name, api_format, status_code,
           error_type, error_code, error_message, request_params,
-          request_headers, upstream_url, response_body, stack_trace
+          request_headers, upstream_url, response_body, stack_trace,
+          masked_api_key
         ) VALUES (
           @id, @timestamp, @requestId, @model, @upstreamModel,
           @endpointKey, @endpointName, @apiFormat, @statusCode,
           @errorType, @errorCode, @errorMessage, @requestParams,
-          @requestHeaders, @upstreamUrl, @responseBody, @stackTrace
+          @requestHeaders, @upstreamUrl, @responseBody, @stackTrace,
+          @maskedApiKey
         )
       `);
 
@@ -313,6 +324,7 @@ export class LogManager {
             "stack_trace",
             "stackTrace",
           ),
+          maskedApiKey: null,
         });
       }
 
@@ -357,15 +369,25 @@ export class LogManager {
       INSERT INTO error_logs (
         timestamp, request_id, model, upstream_model,
         endpoint_key, endpoint_name, api_format, status_code,
-        error_type, error_code, error_message, request_params,
-        request_headers, upstream_url, response_body, stack_trace
+        error_type, error_code, error_message,
+        request_headers, upstream_url, response_body, stack_trace,
+        masked_api_key
       ) VALUES (
         @timestamp, @requestId, @model, @upstreamModel,
         @endpointKey, @endpointName, @apiFormat, @statusCode,
-        @errorType, @errorCode, @errorMessage, @requestParams,
-        @requestHeaders, @upstreamUrl, @responseBody, @stackTrace
+        @errorType, @errorCode, @errorMessage,
+        @requestHeaders, @upstreamUrl, @responseBody, @stackTrace,
+        @maskedApiKey
       )
     `);
+
+    const serializedHeaders = serializeJson(
+      logEntry.requestHeaders ?? logEntry.request_headers,
+    );
+    const serializedBody = serializeJson(
+      logEntry.responseBody ?? logEntry.response_body,
+    );
+    const rawStackTrace = logEntry.stackTrace ?? logEntry.stack_trace ?? null;
 
     const result = stmt.run({
       timestamp: normalizeTimestamp(logEntry.timestamp),
@@ -381,17 +403,11 @@ export class LogManager {
       errorType: logEntry.errorType ?? logEntry.error_type ?? null,
       errorCode: logEntry.errorCode ?? logEntry.error_code ?? null,
       errorMessage: logEntry.errorMessage ?? logEntry.error_message ?? null,
-      requestParams: serializeJson(
-        logEntry.requestParams ?? logEntry.request_params,
-      ),
-      requestHeaders: serializeJson(
-        logEntry.requestHeaders ?? logEntry.request_headers,
-      ),
+      requestHeaders: truncateText(serializedHeaders, 8192),
       upstreamUrl: logEntry.upstreamUrl ?? logEntry.upstream_url ?? null,
-      responseBody: serializeJson(
-        logEntry.responseBody ?? logEntry.response_body,
-      ),
-      stackTrace: logEntry.stackTrace ?? logEntry.stack_trace ?? null,
+      responseBody: truncateText(serializedBody, 8192),
+      stackTrace: truncateText(rawStackTrace, 4096),
+      maskedApiKey: logEntry.maskedApiKey ?? logEntry.masked_api_key ?? null,
     });
 
     return Number(result.lastInsertRowid);

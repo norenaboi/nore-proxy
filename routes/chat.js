@@ -26,7 +26,6 @@ function persistUpstreamError({
   requestId,
   modelName,
   endpointInfo,
-  requestParams,
   requestHeaders,
   upstreamUrl,
   error,
@@ -36,7 +35,6 @@ function persistUpstreamError({
   const context = buildUpstreamErrorContext({
     modelName,
     endpointInfo,
-    requestParams,
     requestHeaders,
     upstreamUrl,
     error,
@@ -297,7 +295,6 @@ async function streamFromBackend(
         requestId,
         modelName,
         endpointInfo,
-        requestParams: data,
         requestHeaders: headers,
         upstreamUrl: fullUrl,
         error,
@@ -373,7 +370,6 @@ async function streamFromBackend(
               requestId,
               modelName,
               endpointInfo,
-              requestParams: data,
               requestHeaders: headers,
               upstreamUrl: fullUrl,
               error,
@@ -435,13 +431,22 @@ async function streamFromBackend(
     response.data.on("error", (error) => {
       if (streamSettled) return;
       streamSettled = true;
+      // Skip logging client-side stream aborts (user disconnected) — not an upstream failure.
+      if (error && typeof error.message === "string" && /abort/i.test(error.message)) {
+        console.error(`BACKEND [ID: ${requestId}]: Client aborted stream, skipping error log.`);
+        logRequestEnd(requestId, false, 0, 0, error.message);
+        if (!res.writableEnded) {
+          try { res.end(); } catch (_) {}
+        }
+        response.data.destroy();
+        return;
+      }
       console.error(`BACKEND [ID: ${requestId}]: Stream error:`, error);
 
       persistUpstreamError({
         requestId,
         modelName,
         endpointInfo,
-        requestParams: data,
         requestHeaders: headers,
         upstreamUrl: fullUrl,
         error,
@@ -460,7 +465,6 @@ async function streamFromBackend(
       requestId,
       modelName,
       endpointInfo,
-      requestParams: data ?? openaiReq,
       requestHeaders: headers,
       upstreamUrl: fullUrl,
       error,
@@ -615,7 +619,6 @@ async function makeBackendRequest(
       requestId,
       modelName,
       endpointInfo,
-      requestParams: data ?? openaiReq,
       requestHeaders: headers,
       upstreamUrl: fullUrl,
       error,

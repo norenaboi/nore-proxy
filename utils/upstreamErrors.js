@@ -1,3 +1,5 @@
+import { maskKey } from "./helpers.js";
+
 const SENSITIVE_QUERY_PATTERN =
   /^(?:key|.*(?:authorization|api[-_]?key|cookie|token|secret).*)$/i;
 const MAX_ERROR_BODY_BYTES = 1024 * 1024;
@@ -88,7 +90,6 @@ export function getUpstreamErrorMessage(body, fallback = "Unknown error") {
 export function buildUpstreamErrorContext({
   modelName,
   endpointInfo,
-  requestParams = null,
   requestHeaders = null,
   upstreamUrl = null,
   error = null,
@@ -105,9 +106,9 @@ export function buildUpstreamErrorContext({
     endpointKey: endpointInfo?.endpointKey ?? null,
     endpointName: endpointInfo?.endpointName ?? null,
     apiFormat: endpointInfo?.apiFormat ?? null,
+    maskedApiKey: endpointInfo?.token ? maskKey(endpointInfo.token) : null,
     statusCode: Number.isInteger(numericStatus) ? numericStatus : null,
     errorCode: error?.code ?? null,
-    requestParams,
     requestHeaders,
     upstreamUrl: sanitizeUpstreamUrl(upstreamUrl),
     responseBody:

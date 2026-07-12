@@ -739,6 +739,10 @@
                             <span id="detailApiFormat" class="detail-value">—</span>
                         </div>
                         <div class="detail-field">
+                            <span class="detail-label">API key (masked)</span>
+                            <span id="detailApiKey" class="detail-value">—</span>
+                        </div>
+                        <div class="detail-field">
                             <span class="detail-label">Requested model</span>
                             <span id="detailModel" class="detail-value">—</span>
                         </div>
@@ -763,10 +767,6 @@
                     <section class="detail-section">
                         <h3><i class="fa-solid fa-heading"></i> Request headers</h3>
                         <pre id="detailHeaders" class="code-block"></pre>
-                    </section>
-                    <section class="detail-section">
-                        <h3><i class="fa-solid fa-arrow-up-from-bracket"></i> Request body</h3>
-                        <pre id="detailRequest" class="code-block"></pre>
                     </section>
                     <section class="detail-section">
                         <h3><i class="fa-solid fa-arrow-down"></i> Response body</h3>
@@ -1003,6 +1003,7 @@
                     setText("detailRequestId", error.requestId);
                     setText("detailStatus", error.statusCode ? `HTTP ${error.statusCode}` : "No response");
                     setText("detailApiFormat", error.apiFormat);
+                    setText("detailApiKey", error.maskedApiKey);
                     setText("detailModel", error.model);
                     setText("detailUpstreamModel", error.upstreamModel);
                     setText(
@@ -1014,7 +1015,6 @@
                     setText("detailUrl", error.upstreamUrl);
                     setText("detailMessage", error.errorMessage);
                     setJson("detailHeaders", error.requestHeaders);
-                    setJson("detailRequest", error.requestParams);
                     setJson("detailResponse", error.responseBody);
                     setText("detailStack", error.stackTrace);
                 } catch (error) {
