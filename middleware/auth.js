@@ -33,3 +33,11 @@ export function verifySession(req, res, next) {
   }
   next();
 }
+
+export function verifySessionOrRedirect(req, res, next) {
+  const sessionId = req.cookies?.adminSession;
+  if (!validateSession(sessionId)) {
+    return res.redirect("/admin/login");
+  }
+  next();
+}

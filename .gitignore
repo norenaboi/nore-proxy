@@ -39,6 +39,8 @@ build/
 .classpath
 .settings/
 .hermes/
+.claude/
+.plans/
 
 # OS files
 .DS_Store

@@ -2,7 +2,7 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { verifySession } from "../middleware/auth.js";
+import { verifySessionOrRedirect } from "../middleware/auth.js";
 import { validateSession } from "../services/sessionManager.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -75,39 +75,39 @@ router.get("/admin/login", (req, res) => {
   serveAdmin(res, "login.html");
 });
 
-router.get("/admin/dashboard", verifySession, (req, res) => {
+router.get("/admin/dashboard", verifySessionOrRedirect, (req, res) => {
   serveAdmin(res, "dashboard.html");
 });
 
-router.get("/admin/keys", verifySession, (req, res) => {
+router.get("/admin/keys", verifySessionOrRedirect, (req, res) => {
   serveAdmin(res, "keys.html");
 });
 
-router.get("/admin/models", verifySession, (req, res) => {
+router.get("/admin/models", verifySessionOrRedirect, (req, res) => {
   serveAdmin(res, "models.html");
 });
 
-router.get("/admin/endpoints", verifySession, (req, res) => {
+router.get("/admin/endpoints", verifySessionOrRedirect, (req, res) => {
   serveAdmin(res, "endpoints.html");
 });
 
-router.get("/admin/settings", verifySession, (req, res) => {
+router.get("/admin/settings", verifySessionOrRedirect, (req, res) => {
   serveAdmin(res, "settings.html");
 });
 
-router.get("/admin/users", verifySession, (req, res) => {
+router.get("/admin/users", verifySessionOrRedirect, (req, res) => {
   serveAdmin(res, "users.html");
 });
 
-router.get("/admin/model-usage", verifySession, (req, res) => {
+router.get("/admin/model-usage", verifySessionOrRedirect, (req, res) => {
   serveAdmin(res, "model-usage.html");
 });
 
-router.get("/admin/logs", verifySession, (req, res) => {
+router.get("/admin/logs", verifySessionOrRedirect, (req, res) => {
   serveAdmin(res, "logs.html");
 });
 
-router.get("/admin/errors", verifySession, (req, res) => {
+router.get("/admin/errors", verifySessionOrRedirect, (req, res) => {
   serveAdmin(res, "errors.html");
 });
 
