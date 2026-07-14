@@ -4,13 +4,14 @@ A unified OpenAI API proxy server
 
 ## Features
 
-- **Unified OpenAI-compatible API gateway** — expose a single `/v1/chat/completions` endpoint while routing to multiple upstream backends with per-model endpoint selection.
-- **Multi-provider backend support** — route to OpenAI, Anthropic, Gemini and OpenAI-Responses endpoints through per-adapter request/response translation and streaming normalization.
-- **Intelligent endpoint management** — JSON-backed endpoint config with auto-reload, URL normalization, custom headers, multi-token round-robin rotation and per-endpoint API format selection.
-- **Per-endpoint generation defaults** — configure fallback values for `temperature`, `top_p` and `max_tokens` per backend, merged client-wins before adapter translation.
-- **Model registry & routing** — map display names to upstream model/version pairs, group models by endpoint in the admin UI, and auto-populate model lists from upstream providers.
-- **Operational controls** — model health checks, silent connectivity testing, soft disable/enable, live request logs via SSE, and SQLite-backed usage analytics.
-- **Access control & rate limiting** — per-API-key RPD/RPM/context-size limits with an admin-authenticated management panel.
+- **Unified API gateway**: `/v1/chat/completions` (OpenAI format) and `/v1/messages` (Anthropic format) endpoints, both routing to multiple upstream backends with per-model endpoint selection.
+- **Claude Code support**: `/v1/messages` accepts the Anthropic Messages API format natively, translates requests to upstream OpenAI/Anthropic/Gemini backends, and normalizes streaming responses back to Anthropic format.
+- **Multi-provider backend support**: route to OpenAI, Anthropic, Gemini, and OpenAI-Responses endpoints through per-adapter request/response translation and streaming normalization.
+- **Intelligent endpoint management**: JSON-backed endpoint config with auto-reload, URL normalization, custom headers, multi-token round-robin rotation, and per-endpoint API format selection.
+- **Per-endpoint generation defaults**: configure fallback values for `temperature`, `top_p`, and `max_tokens` per backend, merged client-wins before adapter translation.
+- **Model registry & routing**: map display names to upstream model/version pairs, group models by endpoint in the admin UI, and auto-populate model lists from upstream providers.
+- **Operational controls**: model health checks, silent connectivity testing, soft disable/enable, live request logs via SSE, and SQLite-backed usage analytics.
+- **Access control & rate limiting**: per-API-key RPD/RPM/context-size limits with an admin-authenticated management panel.
 
 ## Quick Start
 
@@ -150,7 +151,8 @@ All admin endpoints require authentication.
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/v1/models` | GET | View models |
-| `/v1/chat/completions` | POST | API Handler |
+| `/v1/chat/completions` | POST | OpenAI-format chat completions |
+| `/v1/messages` | POST | Anthropic-format messages, Claude Code compatible |
 | `/api/summary` | GET | Summary of statistics |
 | `/api/usage` | POST | View usage statistics |
 

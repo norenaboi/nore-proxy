@@ -10,6 +10,7 @@ import realtimeStats from "./services/realtimeStats.js";
 // Import routes
 import rateLimiter from "./middleware/rateLimiter.js";
 import chatRoutes from "./routes/chat.js";
+import messagesRoutes from "./routes/messages.js";
 import modelsRoutes from "./routes/models.js";
 import statsRoutes, { setStartupTime } from "./routes/stats.js";
 import adminRoutes from "./routes/admin.js";
@@ -140,6 +141,7 @@ function stopBackgroundTasks() {
 
 // Routes
 app.use(chatRoutes);
+app.use(messagesRoutes);
 app.use(modelsRoutes);
 app.use(statsRoutes);
 app.use(adminRoutes);

@@ -1,6 +1,10 @@
 import apiKeyManager from "../services/apiKeyManager.js";
 import { validateSession } from "../services/sessionManager.js";
 
+/**
+ * Bearer-token auth for OpenAI-format endpoints (/v1/chat/completions).
+ * Expects: Authorization: Bearer <token>
+ */
 export function verifyApiKey(req, res, next) {
   const authorization = req.headers.authorization;
 
@@ -8,7 +12,7 @@ export function verifyApiKey(req, res, next) {
     return res.status(401).json({
       error: {
         message:
-          "Invalid authorization header format. Expected 'Bearer <token>'",
+          "Invalid authorization header format. Expected 'Authorization: Bearer <token>'.",
       },
     });
   }
