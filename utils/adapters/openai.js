@@ -67,6 +67,7 @@ export function parseStreamChunk(rawChunk, ctx) {
 
   return {
     deltaContent: delta.content || null,
+    toolCalls: delta.tool_calls || null,
     finishReason: choice.finish_reason || null,
     usage: rawChunk.usage || null,
   };

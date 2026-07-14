@@ -48,28 +48,58 @@ function anthropicToOpenAIMessages(anthropicReq) {
     }
 
     if (Array.isArray(content)) {
-      const openaiBlocks = content.map((block) => {
+      const openaiBlocks = [];
+      const toolCalls = [];
+      const toolResultMessages = [];
+
+      for (const block of content) {
         if (block.type === "text") {
-          return { type: "text", text: block.text };
-        }
-        if (block.type === "image") {
+          openaiBlocks.push({ type: "text", text: block.text });
+        } else if (block.type === "image") {
           const src = block.source;
           if (src?.type === "base64") {
-            return {
+            openaiBlocks.push({
               type: "image_url",
               image_url: { url: `data:${src.media_type};base64,${src.data}` },
-            };
+            });
           }
+        } else if (block.type === "tool_use") {
+          toolCalls.push({
+            id: block.id,
+            type: "function",
+            function: {
+              name: block.name,
+              arguments: JSON.stringify(block.input ?? {}),
+            },
+          });
+        } else if (block.type === "tool_result") {
+          toolResultMessages.push({
+            role: "tool",
+            tool_call_id: block.tool_use_id,
+            content: toolResultText(block.content),
+          });
+        } else {
+          openaiBlocks.push(block);
         }
-        if (block.type === "tool_use") {
-          return { type: "text", text: JSON.stringify(block) };
-        }
-        if (block.type === "tool_result") {
-          return { type: "text", text: JSON.stringify(block) };
-        }
-        return block;
-      });
-      messages.push({ role, content: openaiBlocks });
+      }
+
+      // Emit the assistant/user message, attaching any tool_calls it produced.
+      // Skip it entirely when the turn carried only tool_result blocks —
+      // those become their own role:"tool" messages below.
+      if (toolCalls.length > 0) {
+        messages.push({
+          role,
+          content: openaiBlocks.length > 0 ? openaiBlocks : null,
+          tool_calls: toolCalls,
+        });
+      } else if (openaiBlocks.length > 0 || toolResultMessages.length === 0) {
+        messages.push({ role, content: openaiBlocks });
+      }
+
+      // tool_result blocks become their own role:"tool" messages.
+      for (const trm of toolResultMessages) {
+        messages.push(trm);
+      }
       continue;
     }
 
@@ -138,6 +168,24 @@ function openAIResponseToAnthropic(openaiData, modelName, requestId) {
 
 function safeParseJSON(str) {
   try { return JSON.parse(str); } catch { return {}; }
+}
+
+// Anthropic tool_result content may be a string or an array of blocks.
+// OpenAI's role:"tool" message expects a plain string.
+function toolResultText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((b) => {
+        if (typeof b === "string") return b;
+        if (b?.type === "text") return b.text || "";
+        return JSON.stringify(b);
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (content == null) return "";
+  return JSON.stringify(content);
 }
 
 // --- Anthropic SSE stream writer ---
@@ -605,8 +653,12 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
   let accumulatedContent = "";
   let streamUsage = null;
   let sentMessageStart = false;
-  let contentBlockIndex = 0;
-  let contentBlockStarted = false;
+  let terminated = false;
+  let nextBlockIndex = 0;
+  let textBlockOpen = false;
+  let textBlockIndex = -1;
+  const toolBlocks = new Map(); // OpenAI tool_call index -> { index, id, name }
+  let lastToolIndex = null;
   const msgId = `msg_${requestId.replace(/-/g, "").slice(0, 20)}`;
 
   const streamCtx = {
@@ -634,14 +686,53 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
     });
   }
 
-  function ensureContentBlockStart() {
-    if (contentBlockStarted) return;
-    contentBlockStarted = true;
+  // Open a text content block on demand. Only used for text deltas so a
+  // tool_use block is never masked by an empty text block (issue 6).
+  function ensureTextBlockStart() {
+    if (textBlockOpen) return;
+    textBlockIndex = nextBlockIndex++;
+    textBlockOpen = true;
     writeAnthropicEvent(res, "content_block_start", {
       type: "content_block_start",
-      index: contentBlockIndex,
+      index: textBlockIndex,
       content_block: { type: "text", text: "" },
     });
+  }
+
+  // Close any currently-open content block (text or tool_use).
+  function closeOpenBlocks() {
+    if (textBlockOpen) {
+      writeAnthropicEvent(res, "content_block_stop", {
+        type: "content_block_stop",
+        index: textBlockIndex,
+      });
+      textBlockOpen = false;
+      textBlockIndex = -1;
+    }
+    for (const block of toolBlocks.values()) {
+      writeAnthropicEvent(res, "content_block_stop", {
+        type: "content_block_stop",
+        index: block.index,
+      });
+    }
+    toolBlocks.clear();
+    lastToolIndex = null;
+  }
+
+  // Emit the terminal message_delta + message_stop exactly once (issue 5).
+  function emitTerminal(finishReason) {
+    if (terminated) return;
+    terminated = true;
+    closeOpenBlocks();
+    const stopReason = finishReason === "length" ? "max_tokens"
+      : finishReason === "tool_calls" ? "tool_use"
+      : "end_turn";
+    writeAnthropicEvent(res, "message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: stopReason, stop_sequence: null },
+      usage: { output_tokens: streamUsage?.completion_tokens ?? estimateTokens(accumulatedContent) },
+    });
+    writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
   }
 
   stream.on("data", (chunk) => {
@@ -658,19 +749,9 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
       const payload = trimmed.slice(6).trim();
 
       if (adapter.isStreamEnd(payload)) {
-        // End the stream — send content_block_stop + message_delta + message_stop
-        if (contentBlockStarted) {
-          writeAnthropicEvent(res, "content_block_stop", {
-            type: "content_block_stop",
-            index: contentBlockIndex,
-          });
-        }
-        writeAnthropicEvent(res, "message_delta", {
-          type: "message_delta",
-          delta: { stop_reason: "end_turn", stop_sequence: null },
-          usage: { output_tokens: streamUsage?.completion_tokens ?? estimateTokens(accumulatedContent) },
-        });
-        writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
+        // [DONE] — terminal events are guarded so they fire only once
+        // even if a finish_reason chunk already emitted them (issue 5).
+        emitTerminal("stop");
         return;
       }
 
@@ -684,37 +765,52 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
         ensureMessageStart();
 
         if (parsed.deltaContent) {
-          ensureContentBlockStart();
+          ensureTextBlockStart();
           accumulatedContent += parsed.deltaContent;
           writeAnthropicEvent(res, "content_block_delta", {
             type: "content_block_delta",
-            index: contentBlockIndex,
+            index: textBlockIndex,
             delta: { type: "text_delta", text: parsed.deltaContent },
           });
         }
 
         if (parsed.toolCalls) {
           for (const tc of parsed.toolCalls) {
-            if (tc.id) {
-              // New tool use block — close previous text block if open
-              if (contentBlockStarted) {
+            // Route by OpenAI's tool_call index so parallel tool calls land
+            // in distinct content blocks (issue 3). Fall back to the last
+            // seen index for argument-only deltas that omit it.
+            const tcIndex = tc.index ?? lastToolIndex ?? 0;
+
+            let block = toolBlocks.get(tcIndex);
+
+            // Open a new tool_use block the first time we see this index, or
+            // when an id arrives for it. Close any open text block first.
+            if (!block && tc.id) {
+              if (textBlockOpen) {
                 writeAnthropicEvent(res, "content_block_stop", {
                   type: "content_block_stop",
-                  index: contentBlockIndex,
+                  index: textBlockIndex,
                 });
-                contentBlockIndex++;
-                contentBlockStarted = false;
+                textBlockOpen = false;
+                textBlockIndex = -1;
               }
-              contentBlockStarted = true;
+              block = { index: nextBlockIndex++, id: tc.id, name: tc.function?.name || "" };
+              toolBlocks.set(tcIndex, block);
               writeAnthropicEvent(res, "content_block_start", {
                 type: "content_block_start",
-                index: contentBlockIndex,
-                content_block: { type: "tool_use", id: tc.id, name: tc.function?.name || "", input: {} },
+                index: block.index,
+                content_block: { type: "tool_use", id: block.id, name: block.name, input: {} },
               });
-            } else if (tc.function?.arguments) {
+            }
+
+            lastToolIndex = tcIndex;
+
+            // Emit any arguments present in this same chunk — including the
+            // first chunk that also carried the id (issue 4).
+            if (block && tc.function?.arguments) {
               writeAnthropicEvent(res, "content_block_delta", {
                 type: "content_block_delta",
-                index: contentBlockIndex,
+                index: block.index,
                 delta: { type: "input_json_delta", partial_json: tc.function.arguments },
               });
             }
@@ -725,24 +821,8 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
           streamUsage = parsed.usage;
         }
 
-        if (parsed.finishReason && parsed.finishReason !== "stop" && parsed.finishReason !== "error") {
-          // If finish reason is tool_calls, close the tool block
-          if (contentBlockStarted) {
-            writeAnthropicEvent(res, "content_block_stop", {
-              type: "content_block_stop",
-              index: contentBlockIndex,
-            });
-            contentBlockStarted = false;
-          }
-          const stopReason = parsed.finishReason === "length" ? "max_tokens"
-            : parsed.finishReason === "tool_calls" ? "tool_use"
-            : "end_turn";
-          writeAnthropicEvent(res, "message_delta", {
-            type: "message_delta",
-            delta: { stop_reason: stopReason, stop_sequence: null },
-            usage: { output_tokens: streamUsage?.completion_tokens ?? estimateTokens(accumulatedContent) },
-          });
-          writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
+        if (parsed.finishReason && parsed.finishReason !== "error") {
+          emitTerminal(parsed.finishReason);
         }
       } catch (error) {
         if (getSettled()) return;
