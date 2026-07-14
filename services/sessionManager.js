@@ -1,37 +1,61 @@
 import crypto from 'crypto';
+import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
+import Config from '../config/index.js';
 
 const SESSION_TTL = parseInt(process.env.SESSION_TTL_HOURS || '24', 10) * 60 * 60 * 1000;
 
-// In-memory session store: sessionId -> { expiresAt }
-const sessions = new Map();
+// Persistent session store — survives restarts and crashes.
+// better-sqlite3 is synchronous, so the exported API stays sync-compatible
+// with all existing callers (routes/admin.js, routes/pages.js, middleware/auth.js).
+const dbPath = process.env.NORE_PROXY_SESSION_DB_PATH || path.join(Config.LOG_DIR, 'sessions.db');
+if (dbPath !== ':memory:') {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+}
+
+const db = new Database(dbPath);
+db.pragma('journal_mode = WAL');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+`);
+
+const stmtInsert = db.prepare('INSERT INTO sessions (id, expires_at) VALUES (?, ?)');
+const stmtGet = db.prepare('SELECT expires_at FROM sessions WHERE id = ?');
+const stmtDelete = db.prepare('DELETE FROM sessions WHERE id = ?');
+const stmtDeleteExpired = db.prepare('DELETE FROM sessions WHERE expires_at <= ?');
+
+// Purge sessions that expired while the server was down.
+stmtDeleteExpired.run(Date.now());
 
 export function createSession() {
   const sessionId = crypto.randomBytes(32).toString('hex');
-  sessions.set(sessionId, { expiresAt: Date.now() + SESSION_TTL });
+  stmtInsert.run(sessionId, Date.now() + SESSION_TTL);
   return sessionId;
 }
 
 export function validateSession(sessionId) {
   if (!sessionId) return false;
-  const session = sessions.get(sessionId);
+  const session = stmtGet.get(sessionId);
   if (!session) return false;
-  if (Date.now() > session.expiresAt) {
-    sessions.delete(sessionId);
+  if (Date.now() > session.expires_at) {
+    stmtDelete.run(sessionId);
     return false;
   }
   return true;
 }
 
 export function deleteSession(sessionId) {
-  if (sessionId) sessions.delete(sessionId);
+  if (sessionId) stmtDelete.run(sessionId);
 }
 
-// Periodically remove expired sessions (every hour)
+// Periodically remove expired sessions (every hour).
 setInterval(() => {
-  const now = Date.now();
-  for (const [id, session] of sessions) {
-    if (now > session.expiresAt) sessions.delete(id);
-  }
+  stmtDeleteExpired.run(Date.now());
 }, 60 * 60 * 1000).unref();
 
 export default { createSession, validateSession, deleteSession };
