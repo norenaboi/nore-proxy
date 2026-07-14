@@ -26,6 +26,8 @@ const ADAPTERS = {
   openai: openaiAdapter,
   gemini: geminiAdapter,
   anthropic: anthropicAdapter,
+  // Gemini OpenAI-compatible endpoint uses the same passthrough as OpenAI
+  'gemini-openai': openaiAdapter,
 };
 
 /**

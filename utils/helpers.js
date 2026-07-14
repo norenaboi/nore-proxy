@@ -230,6 +230,11 @@ export function getFullUrl(baseUrl, apiFormat, modelName, isStreaming = false) {
       return isStreaming
         ? `${baseUrl}/v1beta/models/${modelName}:streamGenerateContent`
         : `${baseUrl}/v1beta/models/${modelName}:generateContent`;
+
+    case 'gemini-openai':
+      // Gemini's OpenAI-compatible endpoint — same body/response shape as OpenAI
+      return `${baseUrl}/v1beta/openai/chat/completions`;
+
     case 'openai':
     default:
       return `${baseUrl}/v1/chat/completions`;

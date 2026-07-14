@@ -405,6 +405,7 @@
             .api-format-badge.openai { background: var(--primary-alpha-01); color: var(--primary); }
             .api-format-badge.anthropic { background: rgba(217, 119, 6, 0.1); color: #d97706; }
             .api-format-badge.gemini { background: rgba(99, 102, 241, 0.1); color: #6366f1; }
+            .api-format-badge.gemini-openai { background: rgba(168, 85, 247, 0.1); color: #a855f7; }
 
             .gen-setting-row {
                 display: flex;
@@ -680,6 +681,7 @@
                                     <option value="openai">OpenAI — /v1/chat/completions (default)</option>
                                     <option value="anthropic">Anthropic — /v1/messages</option>
                                     <option value="gemini">Gemini — /v1beta/generateContent</option>
+                                    <option value="gemini-openai">Gemini OpenAI — /v1beta/openai/chat/completions</option>
                                 </select>
                                 <p class="form-hint">Controls which API path is appended when forwarding requests to this endpoint.</p>
                             </div>
@@ -833,6 +835,7 @@
                         'openai': 'OpenAI',
                         'anthropic': 'Anthropic',
                         'gemini': 'Gemini',
+                        'gemini-openai': 'Gemini OpenAI',
                     };
                     const fmtLabel = fmtLabels[fmt] || fmt;
                     const fmtBadge = `<span class="api-format-badge ${escapeHtml(fmt)}"><i class="fa-solid fa-plug"></i>${escapeHtml(fmtLabel)}</span>`;

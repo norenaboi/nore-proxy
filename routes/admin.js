@@ -734,7 +734,7 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "URL and at least one token are required" });
 
     // Validate and capture apiFormat from request, falling back to admin panel default
-    const VALID_FORMATS = ['openai', 'anthropic', 'gemini'];
+    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai'];
     const apiFormat =
       (req.body.apiFormat !== undefined ? req.body.apiFormat : settingsManager.get("defaultEndpointApiFormat")) || 'openai';
     if (!VALID_FORMATS.includes(apiFormat)) {
@@ -825,7 +825,7 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "Index and URL are required" });
 
     // Validate and capture apiFormat (undefined means keep existing)
-    const VALID_FORMATS = ['openai', 'anthropic', 'gemini'];
+    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai'];
     let apiFormat = undefined;
     if (req.body.apiFormat !== undefined) {
       apiFormat = req.body.apiFormat;
