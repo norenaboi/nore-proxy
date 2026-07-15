@@ -373,6 +373,117 @@ class KeyStateManager {
     });
   }
 
+  /**
+   * Human-readable reason a single key is unavailable, for error messages.
+   * Returns null when the key IS usable (so the caller only describes the
+   * benched ones). Reads raw token state internally — never returned.
+   *
+   * Examples:
+   *   "sk-…ab12: invalid (last 401)"
+   *   "sk-…ab12: rate-limited (429, recovers in 2.3h)"
+   *   "sk-…ab12: disabled by operator"
+   */
+  _reasonUnavailable(state) {
+    const masked = state.maskedKey || "key";
+    switch (state.status) {
+      case "invalid": {
+        const code = state.lastStatusCode;
+        return `${masked}: invalid${code ? ` (last ${code})` : ""}`;
+      }
+      case "timeout": {
+        const code = state.lastStatusCode ?? 429;
+        if (state.disabledUntil) {
+          const remainingMs = state.disabledUntil - this._now();
+          if (remainingMs > 0) {
+            const hours = remainingMs / (60 * 60 * 1000);
+            const when =
+              hours >= 1
+                ? `${hours.toFixed(1)}h`
+                : `${Math.max(1, Math.round(remainingMs / 60000))}m`;
+            return `${masked}: rate-limited (${code}, recovers in ${when})`;
+          }
+        }
+        return `${masked}: rate-limited (${code})`;
+      }
+      case "disabled":
+        return `${masked}: disabled by operator`;
+      default:
+        return null; // active / usable
+    }
+  }
+
+  /**
+   * Builds a breakdown of why no usable key remains for an endpoint, so the
+   * admin errors page can surface the *real* cause instead of the bare "no
+   * token left" string. Reads tokens from Config directly so callers only need
+   * the endpointKey. Returns { message, details }:
+   *   - message: the generic, client-safe string ("No token left in the chamber.")
+   *     — no key material, no health state. This is what gets sent to the API
+   *     client and shown in the request log.
+   *   - details: a per-key array ("sk-…ab: invalid (last 401)", etc.) — masked
+   *     keys only, never raw. This is persisted to the admin error log via
+   *     responseBody and NEVER sent to the client.
+   *
+   * Falls back to empty details when the endpoint has no keys configured or
+   * when state can't be read (keeps callers safe in odd states).
+   */
+  describeExhaustion(endpointKey) {
+    const GENERIC = "No token left in the chamber.";
+    const endpoint = Config.ENDPOINTS[endpointKey];
+    const tokens = Array.isArray(endpoint?.tokens) ? endpoint.tokens : [];
+
+    if (tokens.length === 0) {
+      return { message: GENERIC, details: ["endpoint has no keys configured"] };
+    }
+
+    const states = this.getStatesForEndpoint(endpointKey, tokens);
+    const details = states
+      .map((s) => this._reasonUnavailable(s))
+      .filter(Boolean);
+
+    if (details.length === 0) {
+      // No key reported unavailable — tried every key this request and each
+      // was benched mid-hop. Surface that honestly, still admin-only.
+      return {
+        message: GENERIC,
+        details: states.map(
+          (s) => `${s.maskedKey || "key"}: attempted, no key succeeded`,
+        ),
+      };
+    }
+
+    return { message: GENERIC, details };
+  }
+
+  /**
+   * Builds the TokenExhaustedError thrown when an endpoint has no usable key.
+   *
+   * SECURITY split:
+   *   - error.message   = generic "No token left in the chamber."  → safe to
+   *     send to the API client (sendStreamError / sendAnthropicStreamError put
+   *     error.message on the wire). Reveals nothing about upstream keys.
+   *   - error.responseBody = { keyStates: [...] } → the per-key breakdown
+   *     (masked keys + why each is unavailable). The catch blocks persist this
+   *     to the admin error_logs table via persistUpstreamError, and it is
+   *     rendered only in the authenticated admin errors page. It is never sent
+   *     to the client.
+   *
+   * endpointKey optional for safety; without it, the breakdown is empty.
+   */
+  buildExhaustionError(endpointKey) {
+    const { message, details } = endpointKey
+      ? this.describeExhaustion(endpointKey)
+      : { message: "No token left in the chamber.", details: [] };
+
+    const error = new Error(message);
+    error.name = "TokenExhaustedError";
+    error.statusCode = 404;
+    if (details.length) {
+      error.responseBody = { keyStates: details };
+    }
+    return error;
+  }
+
   close() {
     if (this.db?.open) this.db.close();
   }

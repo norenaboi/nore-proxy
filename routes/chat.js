@@ -239,10 +239,7 @@ async function streamFromBackend(
         throw error;
       }
       if (endpointInfo.tokenExhausted || !endpointInfo.token) {
-        const error = new Error("No token left in the chamber.");
-        error.name = "TokenExhaustedError";
-        error.statusCode = 404;
-        throw error;
+        throw keyStateManager.buildExhaustionError(endpointInfo.endpointKey);
       }
 
       const {
@@ -353,10 +350,7 @@ async function streamFromBackend(
     }
 
     if (!response) {
-      const error = new Error("No token left in the chamber.");
-      error.name = "TokenExhaustedError";
-      error.statusCode = 404;
-      throw error;
+      throw keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
     }
 
     let buffer = "";
@@ -561,10 +555,7 @@ async function makeBackendRequest(
         throw error;
       }
       if (endpointInfo.tokenExhausted || !endpointInfo.token) {
-        const error = new Error("No token left in the chamber.");
-        error.name = "TokenExhaustedError";
-        error.statusCode = 404;
-        throw error;
+        throw keyStateManager.buildExhaustionError(endpointInfo.endpointKey);
       }
 
       const {
@@ -659,10 +650,7 @@ async function makeBackendRequest(
     }
 
     if (!response) {
-      const error = new Error("No token left in the chamber.");
-      error.name = "TokenExhaustedError";
-      error.statusCode = 404;
-      throw error;
+      throw keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
     }
 
     const rawData = response.data;

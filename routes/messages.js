@@ -329,10 +329,7 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
         throw error;
       }
       if (endpointInfo.tokenExhausted || !endpointInfo.token) {
-        const error = new Error("No token left in the chamber.");
-        error.name = "TokenExhaustedError";
-        error.statusCode = 404;
-        throw error;
+        throw keyStateManager.buildExhaustionError(endpointInfo.endpointKey);
       }
 
       const {
@@ -436,10 +433,7 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
     }
 
     if (!response) {
-      const error = new Error("No token left in the chamber.");
-      error.name = "TokenExhaustedError";
-      error.statusCode = 404;
-      throw error;
+      throw keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
     }
 
     const rawData = response.data;
@@ -531,10 +525,7 @@ async function streamMessages(req, res, requestId, anthropicReq, modelName, apiK
         throw error;
       }
       if (endpointInfo.tokenExhausted || !endpointInfo.token) {
-        const error = new Error("No token left in the chamber.");
-        error.name = "TokenExhaustedError";
-        error.statusCode = 404;
-        throw error;
+        throw keyStateManager.buildExhaustionError(endpointInfo.endpointKey);
       }
 
       const {
@@ -644,10 +635,7 @@ async function streamMessages(req, res, requestId, anthropicReq, modelName, apiK
     }
 
     if (!response) {
-      const error = new Error("No token left in the chamber.");
-      error.name = "TokenExhaustedError";
-      error.statusCode = 404;
-      throw error;
+      throw keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
     }
 
     if (apiFormat === "anthropic") {
