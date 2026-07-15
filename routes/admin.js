@@ -636,6 +636,9 @@ router.post("/api/models/test", verifySession, async (req, res) => {
     } else if (apiFormat === 'anthropic') {
       // Anthropic requires max_tokens — keep it but don't send temperature/top_p
       requestBody = { model: actualModel, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false };
+    } else if (apiFormat === 'openai-responses') {
+      // Responses API uses input instead of messages; don't persist the ping
+      requestBody = { model: actualModel, input: "ping", store: false, stream: false };
     } else {
       // OpenAI format — newer reasoning models reject max_tokens, temperature, top_p
       // This is just a connectivity ping, so send the bare minimum.
@@ -739,7 +742,7 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "URL and at least one token are required" });
 
     // Validate and capture apiFormat from request, falling back to admin panel default
-    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai'];
+    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai', 'openai-responses'];
     const apiFormat =
       (req.body.apiFormat !== undefined ? req.body.apiFormat : settingsManager.get("defaultEndpointApiFormat")) || 'openai';
     if (!VALID_FORMATS.includes(apiFormat)) {
@@ -844,7 +847,7 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "Index and URL are required" });
 
     // Validate and capture apiFormat (undefined means keep existing)
-    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai'];
+    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai', 'openai-responses'];
     let apiFormat = undefined;
     if (req.body.apiFormat !== undefined) {
       apiFormat = req.body.apiFormat;

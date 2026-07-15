@@ -21,6 +21,7 @@
 import * as openaiAdapter from "./openai.js";
 import * as geminiAdapter from "./gemini.js";
 import * as anthropicAdapter from "./anthropic.js";
+import * as openaiResponsesAdapter from "./openai-responses.js";
 
 const ADAPTERS = {
   openai: openaiAdapter,
@@ -28,6 +29,8 @@ const ADAPTERS = {
   anthropic: anthropicAdapter,
   // Gemini OpenAI-compatible endpoint uses the same passthrough as OpenAI
   'gemini-openai': openaiAdapter,
+  // OpenAI Responses API (/v1/responses)
+  'openai-responses': openaiResponsesAdapter,
 };
 
 /**

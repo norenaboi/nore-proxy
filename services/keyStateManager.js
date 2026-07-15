@@ -27,8 +27,8 @@ import settingsManager from "./settingsManager.js";
 import { maskKey } from "../utils/helpers.js";
 
 // Status codes that change a key's status. Everything else is left alone.
-export const ACTIONABLE_CODES = new Set([400, 401, 402, 429]);
-export const INVALID_CODES = new Set([400, 401, 402]);
+export const ACTIONABLE_CODES = new Set([401, 402, 403, 429]);
+export const INVALID_CODES = new Set([401, 402]);
 export const TIMEOUT_CODE = 429;
 
 class KeyStateManager {

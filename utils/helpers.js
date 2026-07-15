@@ -216,7 +216,7 @@ export function normalizeEndpointUrl(rawUrl) {
 /**
  * Builds the full backend URL by appending the correct path for the given apiFormat.
  * @param {string} baseUrl - normalized base URL (no trailing /v1)
- * @param {string} apiFormat - one of: 'openai', 'anthropic', 'gemini'
+ * @param {string} apiFormat - one of: 'openai', 'anthropic', 'gemini', 'gemini-openai', 'openai-responses'
  * @param {string} modelName - the actual model name (used by gemini to build the path)
  * @param {boolean} isStreaming - when true, returns the streaming endpoint for formats that need a different URL (gemini)
  * @returns {string} full URL with path appended
@@ -235,6 +235,9 @@ export function getFullUrl(baseUrl, apiFormat, modelName, isStreaming = false) {
     case 'gemini-openai':
       // Gemini's OpenAI-compatible endpoint — same body/response shape as OpenAI
       return `${baseUrl}/v1beta/openai/chat/completions`;
+
+    case 'openai-responses':
+      return `${baseUrl}/v1/responses`;
 
     case 'openai':
     default:
