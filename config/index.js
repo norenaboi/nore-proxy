@@ -94,6 +94,13 @@ class Config {
           generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
           // Per-endpoint prompt caching (null for old endpoints = deliberately disabled/off).
           promptCaching: endpoint.promptCaching !== undefined ? endpoint.promptCaching : null,
+          // Key rotation mode: 'sticky' | 'roundrobin' | null.
+          // null/absent => fall back to the global defaultEndpointKeyRotation at runtime.
+          keyRotation: endpoint.keyRotation !== undefined ? endpoint.keyRotation : null,
+          // Key health: true | false | null. When true, an actionable error sidelines
+          // the key (invalid/timeout); when false, keys are never sidelined (requests
+          // still hop). null/absent => fall back to defaultEndpointKeyHealth at runtime.
+          keyHealth: endpoint.keyHealth !== undefined ? endpoint.keyHealth : null,
         };
         this._rrCounters[index] = 0;
       }
@@ -122,6 +129,25 @@ class Config {
     const counter = this._rrCounters[idx] || 0;
     const token = tokens[counter % tokens.length];
     this._rrCounters[idx] = (counter + 1) % tokens.length;
+    return token;
+  }
+
+  /**
+   * Advances the round-robin counter over a supplied list of usable tokens and
+   * returns the next one. Used by the smart-key selection path in helpers.js so
+   * that only *usable* keys participate in rotation. Returns null for an empty
+   * list.
+   * @param {string} endpointKey - e.g. "v1"
+   * @param {string[]} usableTokens - subset of the endpoint's tokens that are usable
+   */
+  static rotateUsableToken(endpointKey, usableTokens) {
+    if (!Array.isArray(usableTokens) || usableTokens.length === 0) return null;
+    if (usableTokens.length === 1) return usableTokens[0];
+
+    const idx = endpointKey.replace(/^v/, "");
+    const counter = this._rrCounters[idx] || 0;
+    const token = usableTokens[counter % usableTokens.length];
+    this._rrCounters[idx] = (counter + 1) % usableTokens.length;
     return token;
   }
 

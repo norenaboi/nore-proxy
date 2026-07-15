@@ -223,7 +223,7 @@
                 background: var(--card-bg);
                 border-radius: 16px;
                 width: 100%;
-                max-width: 920px;
+                max-width: 1200px;
                 box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
                 transform: scale(0.9);
                 transition: transform 0.3s ease;
@@ -231,7 +231,7 @@
 
             .modal-body-grid {
                 display: grid;
-                grid-template-columns: 1fr 1fr;
+                grid-template-columns: 1.5fr 1fr 1fr;
                 gap: 24px;
                 align-items: start;
             }
@@ -526,6 +526,69 @@
             .stats-badge i {
                 color: var(--primary);
             }
+
+            .key-states-list {
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                max-height: 460px;
+                overflow-y: auto;
+                scrollbar-width: thin;
+                scrollbar-color: var(--gray-300) transparent;
+            }
+
+            .key-state-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                padding: 12px 14px;
+                border: 1px solid var(--gray-200);
+                border-radius: 10px;
+                background: var(--gray-50);
+            }
+
+            .key-state-main {
+                min-width: 0;
+                display: flex;
+                flex-direction: row;
+                gap: 6px;
+            }
+
+            .key-state-code {
+                font-family: monospace;
+                font-size: 13px;
+                color: var(--gray-800);
+                font-weight: 600;
+            }
+
+            .key-state-stats {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+            }
+
+            .key-state-actions {
+                display: flex;
+                gap: 8px;
+                flex-shrink: 0;
+            }
+
+            .key-status-pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                padding: 3px 10px;
+                border-radius: 20px;
+                font-size: 12px;
+                font-weight: 500;
+                white-space: nowrap;
+            }
+
+            .key-status-pill.active { background: var(--success-alpha-01, rgba(16,185,129,0.1)); color: var(--success); }
+            .key-status-pill.invalid { background: var(--danger-alpha-01); color: var(--danger); }
+            .key-status-pill.timeout { background: rgba(217, 119, 6, 0.1); color: #d97706; }
+            .key-status-pill.disabled { background: var(--gray-200); color: var(--gray-600); }
         </style>
     </head>
     <body>
@@ -664,9 +727,17 @@
                                     <button type="button" class="btn btn-secondary" onclick="addTokenFromInput()" style="white-space:nowrap;">Add</button>
                                 </div>
                                 <p class="form-hint" id="tokenHint">Add one or more tokens. Requests will be round-robined across all tokens.</p>
+                                <div style="margin-top:10px;">
+                                    <textarea id="bulkTokenInput" class="form-input" rows="3" wrap="off"
+                                        placeholder="Paste many tokens, one per line, then click Import"
+                                        style="font-family: monospace; font-size: 13px; resize: vertical; width:100%; box-sizing:border-box; white-space: pre; overflow-x: auto; overflow-wrap: normal;"></textarea>
+                                    <div style="display:flex;justify-content:flex-end;margin-top:6px;">
+                                        <button type="button" class="btn btn-secondary btn-sm" onclick="importBulkTokens()" style="white-space:nowrap;"><i class="fa-solid fa-file-import"></i> Import lines</button>
+                                    </div>
+                                    <p class="form-hint">One token per line. Blank lines, duplicates, and masked placeholders are skipped.</p>
+                                </div>
                             </div>
                         </div>
-
                         <div class="modal-body-col">
                             <div class="form-group">
                                 <label class="form-label">Custom Headers (JSON)</label>
@@ -674,16 +745,6 @@
                                     placeholder='{ "X-Custom-Header": "value" }'
                                     style="font-family: monospace; font-size: 13px; resize: vertical;"></textarea>
                                 <p class="form-hint">Add custom request headers as JSON. Example: {"X-Custom-Header": "value"}</p>
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">API Format</label>
-                                <select id="apiFormatInput" class="form-select">
-                                    <option value="openai">OpenAI — /v1/chat/completions (default)</option>
-                                    <option value="anthropic">Anthropic — /v1/messages</option>
-                                    <option value="gemini">Gemini — /v1beta/generateContent</option>
-                                    <option value="gemini-openai">Gemini OpenAI — /v1beta/openai/chat/completions</option>
-                                </select>
-                                <p class="form-hint">Controls which API path is appended when forwarding requests to this endpoint.</p>
                             </div>
 
                             <div class="form-group">
@@ -732,7 +793,38 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="modal-body-col">
+                            <div class="form-group">
+                                <label class="form-label">API Format</label>
+                                <select id="apiFormatInput" class="form-select">
+                                    <option value="openai">OpenAI — /v1/chat/completions (default)</option>
+                                    <option value="anthropic">Anthropic — /v1/messages</option>
+                                    <option value="gemini">Gemini — /v1beta/generateContent</option>
+                                    <option value="gemini-openai">Gemini OpenAI — /v1beta/openai/chat/completions</option>
+                                </select>
+                                <p class="form-hint">Controls which API path is appended when forwarding requests to this endpoint.</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Key Rotation</label>
+                                <select id="keyRotationInput" class="form-select">
+                                    <option value="sticky">Sticky — use the first healthy key until it fails</option>
+                                    <option value="roundrobin">Round-robin — cycle across all healthy keys</option>
+                                </select>
+                                <p class="form-hint">How this endpoint picks among its keys. On a 400/401/402/429 the request hops to the next healthy key automatically.</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Key Health</label>
+                                <select id="keyHealthInput" class="form-select">
+                                    <option value="true">On — bench a key on 400/401/402/429</option>
+                                    <option value="false">Off — never bench keys, just hop and return</option>
+                                </select>
+                                <p class="form-hint">When on, a 400/401/402 marks a key invalid and a 429 times it out for the configured window. Turn off for RPM/TPM endpoints whose limits clear quickly, so a good key is never parked for hours. Requests still hop across keys either way.</p>
+                            </div>
+                        </div>
                     </div>
+
                     <div class="modal-footer">
                         <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                         <button class="btn btn-primary" id="modalSubmit" onclick="submitEndpoint()">Add Endpoint</button>
@@ -759,6 +851,32 @@
                     </div>
                 </div>
             </div>
+
+            <div id="keysModal" class="modal-overlay">
+                <div class="modal" style="max-width: 760px;">
+                    <div class="modal-header">
+                        <span class="modal-title" id="keysModalTitle">Key Health</span>
+                        <button class="modal-close" onclick="closeKeysModal()">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px;flex-wrap:wrap;">
+                            <p class="form-hint" style="margin:0;">Per-key health and usage. Codes 400/401/402 disable a key until reset; 429 times it out temporarily.</p>
+                            <div style="display:flex;gap:8px;flex-shrink:0;">
+                                <button class="btn btn-secondary btn-sm" onclick="resetAllKeys(false)"><i class="fa-solid fa-rotate-left"></i> Re-enable all</button>
+                                <button class="btn btn-secondary btn-sm" onclick="resetAllKeys(true)"><i class="fa-solid fa-eraser"></i> Reset stats</button>
+                            </div>
+                        </div>
+                        <div id="keysList" class="key-states-list">
+                            <div class="loading" style="padding:40px;"><div class="loading-spinner"></div><span>Loading keys...</span></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="closeKeysModal()">Close</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
 
@@ -768,6 +886,7 @@
             let endpoints = [];
             let editingEndpoint = null;
             let deletingEndpoint = null;
+            let keysModalEndpoint = null; // endpoint index currently shown in the keys modal
             // pendingTokens holds the current token list being edited in the modal
             // Masked tokens (with ****) represent existing server-side tokens the user hasn't replaced.
             let pendingTokens = [];
@@ -828,7 +947,6 @@
                 list.innerHTML = endpoints.map((endpoint) => {
                     const tokens = endpoint.tokens || [endpoint.token];
                     const tokenCount = tokens.length;
-                    const tokenPreview = `<span style="color:var(--gray-400);font-size:11px;">${tokenCount} key${tokenCount !== 1 ? 's' : ''}</span>`;
                     const displayName = escapeHtml(endpoint.name || `Endpoint ${endpoint.index}`);
                     const fmt = endpoint.apiFormat || 'openai';
                     const fmtLabels = {
@@ -839,6 +957,17 @@
                     };
                     const fmtLabel = fmtLabels[fmt] || fmt;
                     const fmtBadge = `<span class="api-format-badge ${escapeHtml(fmt)}"><i class="fa-solid fa-plug"></i>${escapeHtml(fmtLabel)}</span>`;
+
+                    const rotation = endpoint.keyRotation || 'sticky';
+                    const rotationLabel = rotation === 'roundrobin' ? 'Round-robin' : 'Sticky';
+                    const rotationIcon = rotation === 'roundrobin' ? 'fa-arrows-rotate' : 'fa-thumbtack';
+                    const rotationBadge = `<span class="gen-badge"><i class="fa-solid ${rotationIcon}"></i>${rotationLabel}</span>`;
+
+                    // keyHealth defaults to on when unset (null). Only badge it when explicitly off.
+                    const healthOff = endpoint.keyHealth === false;
+                    const healthBadge = healthOff
+                        ? `<span class="gen-badge" style="background:rgba(220,38,38,0.1);color:#dc2626;"><i class="fa-solid fa-heart-crack"></i>Health off</span>`
+                        : '';
 
                     const genDefaults = endpoint.generationDefaults || {};
                     const genBadges = [];
@@ -855,7 +984,12 @@
                     if (caching?.enabled) {
                         genBadges.push(`<span class="gen-badge" style="background:rgba(217,119,6,0.1);color:#d97706;"><i class="fa-solid fa-bolt"></i>Cache=${caching.depth}</span>`);
                     }
-                    const genBadgesHtml = genBadges.length > 0 ? `<div style="margin-top:4px;">${genBadges.join('')}</div>` : '';
+                    if (Object.keys(endpoint.headers).length !== 0) {
+                        genBadges.push(`<span class="gen-badge"><i class="fa-solid fa-code"></i>${Object.keys(endpoint.headers).length} custom header${Object.keys(endpoint.headers).length !== 1 ? 's' : ''}`);
+                    }
+
+                    const allBadges = [rotationBadge, healthBadge, ...genBadges].filter(Boolean);
+                    const genBadgesHtml = `<div style="margin-top:4px;">${allBadges.join('')}</div>`;
 
                     return `
                         <div class="model-item">
@@ -863,15 +997,18 @@
                                 <div class="model-icon">
                                     <i class="fa-solid fa-server"></i>
                                 </div>
-                                <div>
-                                    <div class="model-name">${displayName} <span style="font-size:11px;color:var(--gray-400);font-weight:400;margin-left:6px;">v${endpoint.index}</span> ${fmtBadge}</div>
-                                    <div class="model-mapping">${escapeHtml(endpoint.url)}</div>
-                                    <div class="model-mapping" style="margin-top:4px;">${tokenPreview}</div>
-                                    ${genBadgesHtml}
-                                    ${Object.keys(endpoint.headers || {}).length > 0 ? `<div class="model-mapping" style="color: var(--gray-400); font-size: 11px; margin-top:2px;"><i class="fa-solid fa-code" style="margin-right: 4px;"></i>${Object.keys(endpoint.headers).length} custom header${Object.keys(endpoint.headers).length !== 1 ? 's' : ''}</div>` : ''}
+                                <div style="flex-direction: row; display: flex;">
+                                    <div>
+                                      <div class="model-name">${displayName} ${fmtBadge} ${allBadges.join('')}</div>
+                                      <div class="model-mapping">${escapeHtml(endpoint.url)}</div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="model-actions">
+                                <button class="btn btn-secondary btn-sm" onclick="openKeysModal(${endpoint.index})">
+                                    <i class="fa-solid fa-key"></i>
+                                    ${tokenCount} Keys
+                                </button>
                                 <button class="btn btn-secondary btn-sm" onclick="openEditModal(${endpoint.index})">
                                     <i class="fa-solid fa-pen"></i>
                                     Edit
@@ -921,6 +1058,22 @@
                 renderTokenPills();
             }
 
+            // Mask a raw token the same way the server does (first4 + **** + last4),
+            // so a freshly typed key can be matched against existing masked pills.
+            function maskTokenLikeServer(tok) {
+                return tok.length > 8
+                    ? tok.substring(0, 4) + '****' + tok.substring(tok.length - 4)
+                    : '****';
+            }
+
+            // A raw value is a duplicate if it exactly matches a pending token, or if
+            // it masks to the same form as an existing masked (server-side) token.
+            function isDuplicateToken(val, list = pendingTokens) {
+                if (list.includes(val)) return true;
+                const masked = maskTokenLikeServer(val);
+                return list.some((t) => t.includes('****') && t === masked);
+            }
+
             function addTokenFromInput() {
                 const input = document.getElementById('tokenInput');
                 const val = input.value.trim();
@@ -929,10 +1082,38 @@
                     showToast('Cannot add a masked token placeholder', 'error');
                     return;
                 }
+                if (isDuplicateToken(val)) {
+                    showToast('That token is already added', 'error');
+                    return;
+                }
                 pendingTokens = [...pendingTokens, val];
                 input.value = '';
                 pendingDeleteConfirm.clear();
                 renderTokenPills();
+            }
+
+            function importBulkTokens() {
+                const textarea = document.getElementById('bulkTokenInput');
+                const lines = textarea.value.split('\n');
+                const running = [...pendingTokens];
+                const toAdd = [];
+                let skipped = 0;
+                for (const line of lines) {
+                    const val = line.trim();
+                    if (!val) continue;
+                    if (val.includes('****') || isDuplicateToken(val, running)) { skipped++; continue; }
+                    running.push(val);
+                    toAdd.push(val);
+                }
+                if (toAdd.length === 0) {
+                    showToast(skipped > 0 ? 'No new tokens to import' : 'Nothing to import', 'error');
+                    return;
+                }
+                pendingTokens = [...pendingTokens, ...toAdd];
+                textarea.value = '';
+                pendingDeleteConfirm.clear();
+                renderTokenPills();
+                showToast(`Imported ${toAdd.length} token${toAdd.length !== 1 ? 's' : ''}${skipped > 0 ? ` (${skipped} skipped)` : ''}`, 'success');
             }
 
             function removeToken(idx) {
@@ -956,6 +1137,7 @@
                 document.getElementById('nameInput').value = '';
                 document.getElementById('urlInput').value = '';
                 document.getElementById('tokenInput').value = '';
+                document.getElementById('bulkTokenInput').value = '';
                 document.getElementById('tokenInput').placeholder = 'Paste a token and press Add';
                 document.getElementById('tokenHint').textContent = 'Add one or more tokens. Requests will be round-robined across all tokens.';
                 document.getElementById('headersInput').value = '';
@@ -974,6 +1156,8 @@
                 }
 
                 document.getElementById('apiFormatInput').value = defaults?.defaultEndpointApiFormat || 'openai';
+                document.getElementById('keyRotationInput').value = defaults?.defaultEndpointKeyRotation || 'sticky';
+                document.getElementById('keyHealthInput').value = (defaults?.defaultEndpointKeyHealth === false) ? 'false' : 'true';
                 if (defaults) {
                     setGenerationDefaults({
                         temperature: { enabled: defaults.defaultEndpointTemperatureEnabled, value: defaults.defaultEndpointTemperature },
@@ -1007,10 +1191,13 @@
                 document.getElementById('nameInput').value = endpoint.name || '';
                 document.getElementById('urlInput').value = endpoint.url;
                 document.getElementById('tokenInput').value = '';
+                document.getElementById('bulkTokenInput').value = '';
                 document.getElementById('tokenInput').placeholder = 'Add a new token (optional)';
                 const headersObj = endpoint.headers || {};
                 document.getElementById('headersInput').value = Object.keys(headersObj).length > 0 ? JSON.stringify(headersObj, null, 2) : '';
                 document.getElementById('apiFormatInput').value = endpoint.apiFormat || 'openai';
+                document.getElementById('keyRotationInput').value = endpoint.keyRotation || 'sticky';
+                document.getElementById('keyHealthInput').value = endpoint.keyHealth === false ? 'false' : 'true';
                 setGenerationDefaults(endpoint.generationDefaults || {});
                 setPromptCaching(endpoint.promptCaching || { enabled: false, depth: 2 });
                 renderTokenPills();
@@ -1038,6 +1225,132 @@
                 deletingEndpoint = null;
             }
 
+            // --- Key health modal ---
+
+            function openKeysModal(index) {
+                keysModalEndpoint = index;
+                const endpoint = endpoints.find(e => e.index === index);
+                const name = endpoint && endpoint.name ? endpoint.name : `Endpoint ${index}`;
+                document.getElementById('keysModalTitle').textContent = `Key Health — ${name}`;
+                document.getElementById('keysList').innerHTML =
+                    '<div class="loading" style="padding:40px;"><div class="loading-spinner"></div><span>Loading keys...</span></div>';
+                document.getElementById('keysModal').classList.add('active');
+                loadKeyStates(index);
+            }
+
+            function closeKeysModal() {
+                document.getElementById('keysModal').classList.remove('active');
+                keysModalEndpoint = null;
+            }
+
+            async function loadKeyStates(index) {
+                try {
+                    const res = await fetch(`/api/endpoints/${index}/keys`);
+                    if (!res.ok) {
+                        const data = await res.json().catch(() => ({}));
+                        throw new Error(data.error || `Failed to load keys (HTTP ${res.status})`);
+                    }
+                    const data = await res.json();
+                    renderKeyStates(data.keys || []);
+                } catch (error) {
+                    document.getElementById('keysList').innerHTML =
+                        `<div class="empty-state" style="padding:32px;"><p>${escapeHtml(error.message)}</p></div>`;
+                }
+            }
+
+            function renderKeyStates(keys) {
+                const list = document.getElementById('keysList');
+                if (keys.length === 0) {
+                    list.innerHTML = '<div class="empty-state" style="padding:32px;"><p>No keys configured for this endpoint.</p></div>';
+                    return;
+                }
+
+                list.innerHTML = keys.map((k) => {
+                    const status = k.status || 'active';
+                    const statusLabels = { active: 'Active', invalid: 'Invalid', timeout: 'Timed out', disabled: 'Disabled' };
+                    const statusIcons = { active: 'fa-circle-check', invalid: 'fa-circle-xmark', timeout: 'fa-clock', disabled: 'fa-ban' };
+                    let statusText = statusLabels[status] || status;
+                    if (status === 'timeout' && k.disabledUntil) {
+                        const mins = Math.max(0, Math.round((k.disabledUntil - Date.now()) / 60000));
+                        statusText = `Timed out (${mins}m left)`;
+                    }
+                    const statusPill = `<span class="key-status-pill ${escapeHtml(status)}"><i class="fa-solid ${statusIcons[status] || 'fa-circle'}"></i>${escapeHtml(statusText)}</span>`;
+
+                    const total = k.totalRequests || 0;
+                    const failed = k.failedRequests || 0;
+                    const rate = total > 0 ? Math.round((failed / total) * 100) : 0;
+                    const stats = [
+                        `<span class="gen-badge"><i class="fa-solid fa-paper-plane"></i>${total} req</span>`,
+                        `<span class="gen-badge"><i class="fa-solid fa-circle-exclamation"></i>${failed} fail (${rate}%)</span>`,
+                    ];
+                    const codeCounts = k.codeCounts || {};
+                    for (const code of Object.keys(codeCounts).sort()) {
+                        stats.push(`<span class="gen-badge" style="background:rgba(217,119,6,0.1);color:#d97706;">${escapeHtml(code)}×${codeCounts[code]}</span>`);
+                    }
+
+                    const canReset = status !== 'active';
+                    const hash = escapeHtml(k.tokenHash || '');
+                    const toggleBtn = canReset
+                        ? `<button class="btn btn-secondary btn-sm" onclick="resetKey('${hash}')" title="Re-enable this key"><i class="fa-solid fa-rotate-left"></i></button>`
+                        : `<button class="btn btn-secondary btn-sm" onclick="disableKey('${hash}')" title="Disable this key"><i class="fa-solid fa-ban"></i></button>`;
+                    return `
+                        <div class="key-state-item">
+                            <div class="key-state-main">
+                                <div style="display:flex;align-items:center;gap:10px;">
+                                    <span class="key-state-code">${escapeHtml(k.maskedKey || 'unknown')}</span>
+                                    ${statusPill}
+                                </div>
+                                <div class="key-state-stats">${stats.join('')}</div>
+                            </div>
+                            <div class="key-state-actions">
+                                ${toggleBtn}
+                                <button class="btn btn-secondary btn-sm" onclick="resetKeyStats('${hash}')" title="Reset stats for this key"><i class="fa-solid fa-eraser"></i></button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            async function resetKey(tokenHash) {
+                if (keysModalEndpoint === null) return;
+                await postKeyAction(`/api/endpoints/${keysModalEndpoint}/keys/reset`, { tokenHash }, 'Key re-enabled');
+            }
+
+            async function disableKey(tokenHash) {
+                if (keysModalEndpoint === null) return;
+                await postKeyAction(`/api/endpoints/${keysModalEndpoint}/keys/disable`, { tokenHash }, 'Key disabled');
+            }
+
+            async function resetKeyStats(tokenHash) {
+                if (keysModalEndpoint === null) return;
+                await postKeyAction(`/api/endpoints/${keysModalEndpoint}/keys/reset-stats`, { tokenHash }, 'Stats reset');
+            }
+
+            async function resetAllKeys(stats) {
+                if (keysModalEndpoint === null) return;
+                const path = stats ? 'reset-stats' : 'reset';
+                const msg = stats ? 'All stats reset' : 'All keys re-enabled';
+                await postKeyAction(`/api/endpoints/${keysModalEndpoint}/keys/${path}`, { all: true }, msg);
+            }
+
+            async function postKeyAction(url, body, successMsg) {
+                try {
+                    const res = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    });
+                    if (!res.ok) {
+                        const data = await res.json().catch(() => ({}));
+                        throw new Error(data.error || `Request failed (HTTP ${res.status})`);
+                    }
+                    showToast(successMsg, 'success');
+                    if (keysModalEndpoint !== null) loadKeyStates(keysModalEndpoint);
+                } catch (error) {
+                    showToast(error.message, 'error');
+                }
+            }
+
             // --- Submit ---
 
             async function submitEndpoint() {
@@ -1045,14 +1358,26 @@
                 const url = document.getElementById('urlInput').value.trim();
                 const headersRaw = document.getElementById('headersInput').value.trim();
                 const apiFormat = document.getElementById('apiFormatInput').value;
+                const keyRotation = document.getElementById('keyRotationInput').value;
+                const keyHealth = document.getElementById('keyHealthInput').value === 'true';
                 const generationDefaults = collectGenerationDefaults();
                 const promptCaching = collectPromptCaching();
 
                 // Flush any unsaved text in the token input field
                 const pendingInput = document.getElementById('tokenInput').value.trim();
                 let finalTokens = [...pendingTokens];
-                if (pendingInput && !pendingInput.includes('****')) {
+                if (pendingInput && !pendingInput.includes('****') && !isDuplicateToken(pendingInput, finalTokens)) {
                     finalTokens = [...finalTokens, pendingInput];
+                }
+
+                // Flush any unsaved lines left in the bulk import textarea
+                const bulkRaw = document.getElementById('bulkTokenInput').value;
+                if (bulkRaw.trim()) {
+                    for (const line of bulkRaw.split('\n')) {
+                        const val = line.trim();
+                        if (!val || val.includes('****') || isDuplicateToken(val, finalTokens)) continue;
+                        finalTokens.push(val);
+                    }
                 }
 
                 if (!url) {
@@ -1097,7 +1422,7 @@
                         // server will replace only if new tokens are provided.
                         // We send the full array; server uses non-masked ones as replacements,
                         // masked ones signal "keep existing" only when ALL tokens are masked.
-                        const payload = { index: editingEndpoint, name, url, tokens: finalTokens, headers, apiFormat, generationDefaults, promptCaching };
+                        const payload = { index: editingEndpoint, name, url, tokens: finalTokens, headers, apiFormat, keyRotation, keyHealth, generationDefaults, promptCaching };
 
                         const response = await fetch('/api/endpoints', {
                             method: 'PUT',
@@ -1115,7 +1440,7 @@
                         const response = await fetch('/api/endpoints', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ name, url, tokens: finalTokens, headers, apiFormat, generationDefaults, promptCaching }),
+                            body: JSON.stringify({ name, url, tokens: finalTokens, headers, apiFormat, keyRotation, keyHealth, generationDefaults, promptCaching }),
                         });
 
                         if (!response.ok) {
@@ -1241,6 +1566,7 @@
                 const enabled = document.getElementById('promptCachingEnabled').checked;
                 const input = document.getElementById('promptCachingDepth');
                 input.disabled = !enabled;
+                input.classList.toggle('active', enabled);
                 if (enabled) input.focus();
             });
 
@@ -1248,6 +1574,7 @@
                 document.getElementById('promptCachingEnabled').checked = false;
                 document.getElementById('promptCachingDepth').value = '';
                 document.getElementById('promptCachingDepth').disabled = true;
+                document.getElementById('promptCachingDepth').classList.remove('active');
             }
 
             function setPromptCaching(caching) {
@@ -1256,6 +1583,7 @@
                 document.getElementById('promptCachingEnabled').checked = enabled;
                 document.getElementById('promptCachingDepth').value = (entry.depth !== null && entry.depth !== undefined) ? entry.depth : '';
                 document.getElementById('promptCachingDepth').disabled = !enabled;
+                document.getElementById('promptCachingDepth').classList.toggle('active', enabled);
             }
 
             function collectPromptCaching() {

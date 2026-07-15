@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import Config from "../config/index.js";
 import settingsManager from "../services/settingsManager.js";
+import keyStateManager from "../services/keyStateManager.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -241,39 +242,118 @@ export function getFullUrl(baseUrl, apiFormat, modelName, isStreaming = false) {
   }
 }
 
-export function getEndpointForModel(modelName) {
+/**
+ * Resolves a model name to its endpoint WITHOUT selecting a token or advancing
+ * any round-robin state. Side-effect free — safe to call for metadata reads
+ * (prompt-caching depth, generation defaults) without consuming a key slot.
+ * Returns null when the model has no configured endpoint.
+ */
+export function getEndpointMeta(modelName) {
   const actualModelName = resolveModelName(modelName);
   const match = actualModelName.match(/-v(\d+)$/);
+  if (!match) return null;
 
-  if (match) {
-    const version = match[1];
-    const endpointKey = `v${version}`;
+  const version = match[1];
+  const endpointKey = `v${version}`;
+  const endpoint = Config.ENDPOINTS[endpointKey];
+  if (!endpoint) return null;
 
-    if (Config.ENDPOINTS[endpointKey]) {
-      const endpoint = Config.ENDPOINTS[endpointKey];
-      const actualModel = actualModelName.replace(
-        new RegExp(`-v${version}$`),
-        "",
-      );
-      // Use round-robin token selection when multiple keys are configured
-      const token = Config.getNextToken(endpointKey);
-      // Normalize: keep prefix before /v1 but strip /v1 and everything after
-      const normalizedUrl = normalizeEndpointUrl(endpoint.url);
-      return {
-        url: normalizedUrl,
-        token,
-        actualModel,
-        endpointKey,
-        endpointName: endpoint.name || endpointKey,
-        customHeaders: endpoint.headers || {},
-        apiFormat: endpoint.apiFormat || 'openai',
-        generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
-        promptCaching: endpoint.promptCaching !== undefined ? endpoint.promptCaching : null,
-      };
-    }
+  const actualModel = actualModelName.replace(new RegExp(`-v${version}$`), "");
+  const normalizedUrl = normalizeEndpointUrl(endpoint.url);
+
+  return {
+    url: normalizedUrl,
+    actualModel,
+    endpointKey,
+    endpointName: endpoint.name || endpointKey,
+    customHeaders: endpoint.headers || {},
+    apiFormat: endpoint.apiFormat || "openai",
+    generationDefaults:
+      endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
+    promptCaching:
+      endpoint.promptCaching !== undefined ? endpoint.promptCaching : null,
+    keyRotation: endpoint.keyRotation ?? null,
+    // Whether an actionable error benches the key (invalid/timeout). Absent =>
+    // fall back to the global default at the point of use.
+    keyHealth: endpoint.keyHealth ?? null,
+  };
+}
+
+/**
+ * Resolves the effective key-health flag for an endpoint: the per-endpoint
+ * keyHealth if set, otherwise the global default. Returns a boolean.
+ */
+export function resolveKeyHealth(endpointKeyHealth) {
+  if (endpointKeyHealth === true || endpointKeyHealth === false) {
+    return endpointKeyHealth;
+  }
+  return settingsManager.get("defaultEndpointKeyHealth") !== false;
+}
+
+/**
+ * Resolves the effective rotation mode for an endpoint: the per-endpoint
+ * keyRotation if set, otherwise the global default.
+ */
+function resolveRotationMode(endpointKeyRotation) {
+  const mode = endpointKeyRotation ?? settingsManager.get("defaultEndpointKeyRotation");
+  return mode === "roundrobin" ? "roundrobin" : "sticky";
+}
+
+/**
+ * Resolves a model to its endpoint AND selects a usable upstream key.
+ *
+ * Only keys that are usable (active, or a timeout whose cooldown has elapsed)
+ * participate in selection. `invalid` keys are excluded until manually
+ * re-enabled. Keys whose hash is in `excludeHashes` (already tried this request)
+ * are skipped so a single request never retries the same key.
+ *
+ * Rotation mode:
+ *   - sticky (default): use the first usable key (lowest index) until it errors.
+ *   - roundrobin: rotate across usable keys.
+ *
+ * Returns null when the model has no endpoint. When an endpoint exists but no
+ * usable key remains, returns the meta with `token: null` and
+ * `tokenExhausted: true` so the caller can surface the 404.
+ *
+ * @param {string} modelName
+ * @param {{ excludeHashes?: Set<string> }} [opts]
+ */
+export function getEndpointForModel(modelName, opts = {}) {
+  const meta = getEndpointMeta(modelName);
+  if (!meta) return null;
+
+  const excludeHashes = opts.excludeHashes || new Set();
+  const endpoint = Config.ENDPOINTS[meta.endpointKey];
+  const allTokens = endpoint.tokens || [];
+
+  // Diagnostic callers (admin model list / test ping) want a token even for a
+  // key that's currently invalid/timed-out, and must not advance rotation.
+  if (opts.ignoreState) {
+    const token = allTokens[0] ?? endpoint.token ?? null;
+    return {
+      ...meta,
+      token,
+      tokenHash: token ? keyStateManager.hashToken(meta.endpointKey, token) : null,
+      tokenExhausted: token == null,
+    };
   }
 
-  return null;
+  const usable = keyStateManager.getUsableTokens(meta.endpointKey, allTokens, {
+    excludeHashes,
+  });
+
+  if (usable.length === 0) {
+    return { ...meta, token: null, tokenHash: null, tokenExhausted: true };
+  }
+
+  const mode = resolveRotationMode(meta.keyRotation);
+  let chosen = usable[0];
+  return {
+    ...meta,
+    token: chosen.token,
+    tokenHash: chosen.tokenHash,
+    tokenExhausted: false,
+  };
 }
 
 /**

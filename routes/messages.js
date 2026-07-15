@@ -3,6 +3,8 @@ import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 import { verifyApiKey } from "../middleware/auth.js";
 import apiKeyManager from "../services/apiKeyManager.js";
+import settingsManager from "../services/settingsManager.js";
+import keyStateManager, { ACTIONABLE_CODES } from "../services/keyStateManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
 import { logRequestStart, logRequestEnd, logError } from "../utils/logging.js";
 import {
@@ -11,6 +13,7 @@ import {
   getFullUrl,
   estimateTokens,
   isClaudeModel,
+  resolveKeyHealth,
 } from "../utils/helpers.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import {
@@ -308,91 +311,134 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
   let upstreamResponseBody = null;
 
   try {
-    endpointInfo = getEndpointForModel(modelName);
-    if (!endpointInfo) {
-      const error = new Error("Can't find the model you're looking for.");
-      error.name = "EndpointResolutionError";
-      error.statusCode = 404;
+    let response = null;
+    let apiFormat = null;
+
+    // Smart key selection with single-request retry across usable keys.
+    // Only 400/401/402/429 trigger a hop; any other status/error is terminal.
+    const triedHashes = new Set();
+    const maxAttempts =
+      1 + Math.max(0, parseInt(settingsManager.get("keyHopAttempts"), 10) || 0);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      endpointInfo = getEndpointForModel(modelName, { excludeHashes: triedHashes });
+      if (!endpointInfo) {
+        const error = new Error("Can't find the model you're looking for.");
+        error.name = "EndpointResolutionError";
+        error.statusCode = 404;
+        throw error;
+      }
+      if (endpointInfo.tokenExhausted || !endpointInfo.token) {
+        const error = new Error("No token left in the chamber.");
+        error.name = "TokenExhaustedError";
+        error.statusCode = 404;
+        throw error;
+      }
+
+      const {
+        url: backendUrl,
+        token: backendToken,
+        actualModel,
+        customHeaders,
+        endpointKey,
+        tokenHash,
+      } = endpointInfo;
+      apiFormat = endpointInfo.apiFormat;
+
+      if (apiFormat === "anthropic") {
+        // Backend is native Anthropic — forward the request mostly as-is
+        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
+        data = {
+          ...anthropicReq,
+          model: actualModel,
+          stream: false,
+        };
+        delete data.stream;
+
+        const extraHeaders = getExtraHeaders(apiFormat);
+        headers = {
+          ...customHeaders,
+          ...extraHeaders,
+          "Content-Type": "application/json",
+          "x-api-key": backendToken,
+        };
+      } else {
+        // Backend is OpenAI/Gemini — convert Anthropic → OpenAI, then use adapters
+        const adapter = getAdapter(apiFormat);
+        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
+
+        const openaiReq = {
+          model: actualModel,
+          messages: openaiMessages,
+          max_tokens: anthropicReq.max_tokens,
+          temperature: anthropicReq.temperature,
+          top_p: anthropicReq.top_p,
+          tools: anthropicToolsToOpenAI(anthropicReq.tools),
+          stream: false,
+        };
+        Object.keys(openaiReq).forEach((k) => {
+          if (openaiReq[k] === undefined || openaiReq[k] === null) delete openaiReq[k];
+        });
+
+        data = adapter.transformRequest(openaiReq, actualModel);
+
+        const extraHeaders = getExtraHeaders(apiFormat);
+        headers = {
+          ...customHeaders,
+          ...extraHeaders,
+          "Content-Type": "application/json",
+        };
+
+        if (apiFormat === "gemini") {
+          // handled in URL
+        } else {
+          headers["Authorization"] = `Bearer ${backendToken}`;
+        }
+      }
+
+      const requestUrl = apiFormat === "gemini" ? `${fullUrl}?key=${backendToken}` : fullUrl;
+
+      const resp = await axios({
+        method: "post",
+        url: requestUrl,
+        headers,
+        data,
+        timeout: 180000,
+        validateStatus: () => true,
+      });
+
+      if (resp.status >= 200 && resp.status < 300) {
+        keyStateManager.recordSuccess(endpointKey, backendToken);
+        response = resp;
+        upstreamResponseBody = resp.data;
+        break;
+      }
+
+      // Non-2xx. Only actionable codes update key state and may trigger a hop.
+      // sideline benches the key only when key health is on for this endpoint.
+      const canRetry = attempt < maxAttempts - 1;
+      const sideline = resolveKeyHealth(endpointInfo.keyHealth);
+      if (ACTIONABLE_CODES.has(resp.status) && canRetry) {
+        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
+        triedHashes.add(tokenHash);
+        continue;
+      }
+      if (ACTIONABLE_CODES.has(resp.status)) {
+        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
+      }
+
+      upstreamResponseBody = resp.data;
+      const error = new Error(`Error ${resp.status}: ${getUpstreamErrorMessage(resp.data)}`);
+      error.name = "UpstreamHttpError";
+      error.statusCode = resp.status;
+      error.responseBody = resp.data;
       throw error;
     }
 
-    const {
-      url: backendUrl,
-      token: backendToken,
-      actualModel,
-      customHeaders,
-      apiFormat,
-    } = endpointInfo;
-
-    if (apiFormat === "anthropic") {
-      // Backend is native Anthropic — forward the request mostly as-is
-      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
-      data = {
-        ...anthropicReq,
-        model: actualModel,
-        stream: false,
-      };
-      delete data.stream;
-
-      const extraHeaders = getExtraHeaders(apiFormat);
-      headers = {
-        ...customHeaders,
-        ...extraHeaders,
-        "Content-Type": "application/json",
-        "x-api-key": backendToken,
-      };
-    } else {
-      // Backend is OpenAI/Gemini — convert Anthropic → OpenAI, then use adapters
-      const adapter = getAdapter(apiFormat);
-      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
-
-      const openaiReq = {
-        model: actualModel,
-        messages: openaiMessages,
-        max_tokens: anthropicReq.max_tokens,
-        temperature: anthropicReq.temperature,
-        top_p: anthropicReq.top_p,
-        tools: anthropicToolsToOpenAI(anthropicReq.tools),
-        stream: false,
-      };
-      Object.keys(openaiReq).forEach((k) => {
-        if (openaiReq[k] === undefined || openaiReq[k] === null) delete openaiReq[k];
-      });
-
-      data = adapter.transformRequest(openaiReq, actualModel);
-
-      const extraHeaders = getExtraHeaders(apiFormat);
-      headers = {
-        ...customHeaders,
-        ...extraHeaders,
-        "Content-Type": "application/json",
-      };
-
-      if (apiFormat === "gemini") {
-        // handled in URL
-      } else {
-        headers["Authorization"] = `Bearer ${backendToken}`;
-      }
-    }
-
-    const requestUrl = apiFormat === "gemini" ? `${fullUrl}?key=${endpointInfo.token}` : fullUrl;
-
-    const response = await axios({
-      method: "post",
-      url: requestUrl,
-      headers,
-      data,
-      timeout: 180000,
-      validateStatus: () => true,
-    });
-
-    upstreamResponseBody = response.data;
-
-    if (response.status < 200 || response.status >= 300) {
-      const error = new Error(`Error ${response.status}: ${getUpstreamErrorMessage(response.data)}`);
-      error.name = "UpstreamHttpError";
-      error.statusCode = response.status;
-      error.responseBody = response.data;
+    if (!response) {
+      const error = new Error("No token left in the chamber.");
+      error.name = "TokenExhaustedError";
+      error.statusCode = 404;
       throw error;
     }
 
@@ -467,98 +513,141 @@ async function streamMessages(req, res, requestId, anthropicReq, modelName, apiK
   res.setHeader("X-Accel-Buffering", "no");
 
   try {
-    endpointInfo = getEndpointForModel(modelName);
-    if (!endpointInfo) {
-      const error = new Error("Can't find the model you're looking for.");
-      error.name = "EndpointResolutionError";
-      error.statusCode = 404;
-      throw error;
-    }
+    let response = null;
+    let apiFormat = null;
 
-    const {
-      url: backendUrl,
-      token: backendToken,
-      actualModel,
-      customHeaders,
-      apiFormat,
-    } = endpointInfo;
+    // Smart key selection with single-request retry across usable keys.
+    // Only 400/401/402/429 trigger a hop; any other status/error is terminal.
+    const triedHashes = new Set();
+    const maxAttempts =
+      1 + Math.max(0, parseInt(settingsManager.get("keyHopAttempts"), 10) || 0);
 
-    let data;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      endpointInfo = getEndpointForModel(modelName, { excludeHashes: triedHashes });
+      if (!endpointInfo) {
+        const error = new Error("Can't find the model you're looking for.");
+        error.name = "EndpointResolutionError";
+        error.statusCode = 404;
+        throw error;
+      }
+      if (endpointInfo.tokenExhausted || !endpointInfo.token) {
+        const error = new Error("No token left in the chamber.");
+        error.name = "TokenExhaustedError";
+        error.statusCode = 404;
+        throw error;
+      }
 
-    if (apiFormat === "anthropic") {
-      // Native Anthropic backend — forward as-is with stream: true
-      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
-      data = {
-        ...anthropicReq,
-        model: actualModel,
-        stream: true,
-      };
+      const {
+        url: backendUrl,
+        token: backendToken,
+        actualModel,
+        customHeaders,
+        endpointKey,
+        tokenHash,
+      } = endpointInfo;
+      apiFormat = endpointInfo.apiFormat;
 
-      const extraHeaders = getExtraHeaders(apiFormat);
-      headers = {
-        ...customHeaders,
-        ...extraHeaders,
-        "Content-Type": "application/json",
-        "x-api-key": backendToken,
-      };
-    } else {
-      // Non-Anthropic backend — convert to OpenAI format, stream, then re-wrap as Anthropic SSE
-      const adapter = getAdapter(apiFormat);
-      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true);
+      let data;
 
-      const openaiReq = {
-        model: actualModel,
-        messages: openaiMessages,
-        max_tokens: anthropicReq.max_tokens,
-        temperature: anthropicReq.temperature,
-        top_p: anthropicReq.top_p,
-        tools: anthropicToolsToOpenAI(anthropicReq.tools),
-        stream: true,
-      };
-      Object.keys(openaiReq).forEach((k) => {
-        if (openaiReq[k] === undefined || openaiReq[k] === null) delete openaiReq[k];
+      if (apiFormat === "anthropic") {
+        // Native Anthropic backend — forward as-is with stream: true
+        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
+        data = {
+          ...anthropicReq,
+          model: actualModel,
+          stream: true,
+        };
+
+        const extraHeaders = getExtraHeaders(apiFormat);
+        headers = {
+          ...customHeaders,
+          ...extraHeaders,
+          "Content-Type": "application/json",
+          "x-api-key": backendToken,
+        };
+      } else {
+        // Non-Anthropic backend — convert to OpenAI format, stream, then re-wrap as Anthropic SSE
+        const adapter = getAdapter(apiFormat);
+        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true);
+
+        const openaiReq = {
+          model: actualModel,
+          messages: openaiMessages,
+          max_tokens: anthropicReq.max_tokens,
+          temperature: anthropicReq.temperature,
+          top_p: anthropicReq.top_p,
+          tools: anthropicToolsToOpenAI(anthropicReq.tools),
+          stream: true,
+        };
+        Object.keys(openaiReq).forEach((k) => {
+          if (openaiReq[k] === undefined || openaiReq[k] === null) delete openaiReq[k];
+        });
+
+        data = adapter.transformStreamRequest(openaiReq, actualModel);
+
+        const extraHeaders = getExtraHeaders(apiFormat);
+        headers = {
+          ...customHeaders,
+          ...extraHeaders,
+          "Content-Type": "application/json",
+        };
+
+        if (apiFormat === "gemini") {
+          // handled in URL
+        } else {
+          headers["Authorization"] = `Bearer ${backendToken}`;
+        }
+      }
+
+      const requestUrl = apiFormat === "gemini"
+        ? `${fullUrl}?alt=sse&key=${backendToken}`
+        : fullUrl;
+
+      const resp = await axios({
+        method: "post",
+        url: requestUrl,
+        headers,
+        data,
+        responseType: "stream",
+        timeout: 180000,
+        validateStatus: () => true,
       });
 
-      data = adapter.transformStreamRequest(openaiReq, actualModel);
-
-      const extraHeaders = getExtraHeaders(apiFormat);
-      headers = {
-        ...customHeaders,
-        ...extraHeaders,
-        "Content-Type": "application/json",
-      };
-
-      if (apiFormat === "gemini") {
-        // handled in URL
-      } else {
-        headers["Authorization"] = `Bearer ${backendToken}`;
+      if (resp.status >= 200 && resp.status < 300) {
+        keyStateManager.recordSuccess(endpointKey, backendToken);
+        response = resp;
+        break;
       }
+
+      // Non-2xx. Only actionable codes update key state and may trigger a hop.
+      // sideline benches the key only when key health is on for this endpoint.
+      const canRetry = attempt < maxAttempts - 1;
+      if (ACTIONABLE_CODES.has(resp.status)) {
+        const sideline = resolveKeyHealth(endpointInfo.keyHealth);
+        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
+        triedHashes.add(tokenHash);
+        if (canRetry) {
+          resp.data?.destroy?.();
+          continue;
+        }
+      }
+
+      const responseBody = await readUpstreamErrorBody(resp.data);
+      const error = new Error(`Error ${resp.status}: ${getUpstreamErrorMessage(responseBody)}`);
+      error.name = "UpstreamHttpError";
+      error.statusCode = resp.status;
+
+      persistUpstreamError({ requestId, modelName, endpointInfo, requestHeaders: headers, upstreamUrl: fullUrl, error, statusCode: resp.status, responseBody });
+      logRequestEnd(requestId, false, 0, 0, error.message);
+      sendAnthropicStreamError(res, error, resp.status);
+      return;
     }
 
-    const requestUrl = apiFormat === "gemini"
-      ? `${fullUrl}?alt=sse&key=${endpointInfo.token}`
-      : fullUrl;
-
-    const response = await axios({
-      method: "post",
-      url: requestUrl,
-      headers,
-      data,
-      responseType: "stream",
-      timeout: 180000,
-      validateStatus: () => true,
-    });
-
-    if (response.status < 200 || response.status >= 300) {
-      const responseBody = await readUpstreamErrorBody(response.data);
-      const error = new Error(`Error ${response.status}: ${getUpstreamErrorMessage(responseBody)}`);
-      error.name = "UpstreamHttpError";
-      error.statusCode = response.status;
-
-      persistUpstreamError({ requestId, modelName, endpointInfo, requestHeaders: headers, upstreamUrl: fullUrl, error, statusCode: response.status, responseBody });
-      logRequestEnd(requestId, false, 0, 0, error.message);
-      sendAnthropicStreamError(res, error, response.status);
-      return;
+    if (!response) {
+      const error = new Error("No token left in the chamber.");
+      error.name = "TokenExhaustedError";
+      error.statusCode = 404;
+      throw error;
     }
 
     if (apiFormat === "anthropic") {

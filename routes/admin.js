@@ -7,6 +7,7 @@ import { adminRateLimit } from "../middleware/rateLimiter.js";
 import settingsManager from "../services/settingsManager.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
+import keyStateManager from "../services/keyStateManager.js";
 import Config from "../config/index.js";
 import { loadModelsFromFile, normalizeEndpointUrl, getEndpointForModel, getFullUrl, maskKey } from "../utils/helpers.js";
 import axios from "axios";
@@ -274,7 +275,8 @@ router.get("/api/errors", verifySession, (req, res) => {
     if (
       (req.query.model !== undefined && typeof req.query.model !== "string") ||
       (req.query.endpoint !== undefined &&
-        typeof req.query.endpoint !== "string")
+        typeof req.query.endpoint !== "string") ||
+      (req.query.key !== undefined && typeof req.query.key !== "string")
     ) {
       return res.status(400).json({ error: "Invalid filter value" });
     }
@@ -284,6 +286,7 @@ router.get("/api/errors", verifySession, (req, res) => {
       offset,
       model: req.query.model?.trim() || null,
       endpoint: req.query.endpoint?.trim() || null,
+      key: req.query.key?.trim() || null,
       statusCode,
     };
     const errors = logManager.getErrorLogs(filters);
@@ -609,7 +612,7 @@ router.post("/api/models/test", verifySession, async (req, res) => {
     const { name } = req.body;
     if (!name) return res.status(400).json({ ok: false, error: "Model name required" });
 
-    const endpointInfo = getEndpointForModel(name);
+    const endpointInfo = getEndpointForModel(name, { ignoreState: true });
     if (!endpointInfo) {
       return res.status(404).json({ ok: false, error: `No endpoint configured for model '${name}'` });
     }
@@ -703,6 +706,8 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
         apiFormat: endpoint.apiFormat || 'openai',
         generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
         promptCaching: endpoint.promptCaching !== undefined ? endpoint.promptCaching : null,
+        keyRotation: endpoint.keyRotation ?? null,
+        keyHealth: endpoint.keyHealth ?? null,
       });
     }
 
@@ -797,6 +802,18 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       promptCaching = settingsManager.getDefaultPromptCaching();
     }
 
+    // Seed key rotation from the client value, else the global default.
+    let keyRotation = validateKeyRotation(req.body.keyRotation);
+    if (keyRotation === null) {
+      keyRotation = validateKeyRotation(settingsManager.get("defaultEndpointKeyRotation")) || "sticky";
+    }
+
+    // Seed key health from the client value, else the global default.
+    let keyHealth = validateKeyHealth(req.body.keyHealth);
+    if (keyHealth === null) {
+      keyHealth = settingsManager.get("defaultEndpointKeyHealth") !== false;
+    }
+
     data[endpointKey] = {
       name: name || `Endpoint ${newIndex}`,
       url: normalizedUrl,
@@ -805,6 +822,8 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       apiFormat,
       generationDefaults,
       promptCaching,
+      keyRotation,
+      keyHealth,
     };
 
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
@@ -844,6 +863,19 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     let promptCaching = undefined;
     if (req.body.promptCaching !== undefined) {
       promptCaching = validatePromptCaching(req.body.promptCaching);
+    }
+
+    // Validate optional key rotation if provided (undefined = keep existing)
+    let keyRotation = undefined;
+    if (req.body.keyRotation !== undefined) {
+      keyRotation = validateKeyRotation(req.body.keyRotation) || "sticky";
+    }
+
+    // Validate optional key health if provided (undefined = keep existing)
+    let keyHealth = undefined;
+    if (req.body.keyHealth !== undefined) {
+      const parsed = validateKeyHealth(req.body.keyHealth);
+      keyHealth = parsed === null ? true : parsed;
     }
 
     // Validate index is a plain positive integer to prevent RegExp injection
@@ -955,6 +987,12 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     if (promptCaching !== undefined) {
       data[endpointKey].promptCaching = promptCaching;
     }
+    if (keyRotation !== undefined) {
+      data[endpointKey].keyRotation = keyRotation;
+    }
+    if (keyHealth !== undefined) {
+      data[endpointKey].keyHealth = keyHealth;
+    }
 
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
     Config.loadEndpoints();
@@ -1009,7 +1047,7 @@ router.get("/api/endpoints/:version/models", verifySession, async (req, res) => 
       return res.status(400).json({ error: "Invalid endpoint version" });
     }
 
-    const endpointInfo = getEndpointForModel(`proxy-${version}`);
+    const endpointInfo = getEndpointForModel(`proxy-${version}`, { ignoreState: true });
     if (!endpointInfo) {
       return res.status(404).json({ error: `Endpoint ${version} not found` });
     }
@@ -1087,6 +1125,128 @@ router.get("/api/endpoints/:version/models", verifySession, async (req, res) => 
   }
 });
 
+// Read the raw tokens for a validated endpoint version from endpoints.json.
+// Helper for the key-state routes — the raw tokens never leave the server;
+// they're only used to compute hashes/masks. Returns null if not found.
+function readEndpointTokens(version) {
+  const endpointsPath = path.join(__dirname, "../endpoints.json");
+  if (!fs.existsSync(endpointsPath)) return null;
+  const data = JSON.parse(fs.readFileSync(endpointsPath, "utf-8"));
+  const endpoint = data[`v${version}`];
+  if (!endpoint) return null;
+  return endpoint.tokens || [];
+}
+
+// GET /api/endpoints/:version/keys — per-key health + usage for the admin modal.
+// Returns masked/hashed data only, never raw tokens.
+router.get("/api/endpoints/:version/keys", verifySession, (req, res) => {
+  try {
+    const version = req.params.version;
+    if (!/^\d+$/.test(version)) {
+      return res.status(400).json({ error: "Invalid endpoint version" });
+    }
+
+    const tokens = readEndpointTokens(version);
+    if (tokens === null) {
+      return res.status(404).json({ error: `Endpoint v${version} not found` });
+    }
+
+    const keys = keyStateManager.getStatesForEndpoint(`v${version}`, tokens);
+    res.json({ keys });
+  } catch (error) {
+    console.error("Error loading key states:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /api/endpoints/:version/keys/reset — re-enable a key (invalid/timeout →
+// active), or all keys when { all: true }. Body: { tokenHash } | { all: true }.
+router.post("/api/endpoints/:version/keys/reset", verifySession, (req, res) => {
+  try {
+    const version = req.params.version;
+    if (!/^\d+$/.test(version)) {
+      return res.status(400).json({ error: "Invalid endpoint version" });
+    }
+    if (readEndpointTokens(version) === null) {
+      return res.status(404).json({ error: `Endpoint v${version} not found` });
+    }
+
+    const all = req.body.all === true;
+    const tokenHash = typeof req.body.tokenHash === "string" ? req.body.tokenHash : null;
+    if (!all && !tokenHash) {
+      return res.status(400).json({ error: "tokenHash or all:true required" });
+    }
+
+    const changes = keyStateManager.resetKey(`v${version}`, { tokenHash, all });
+    res.json({ message: "Key state reset", changes });
+  } catch (error) {
+    console.error("Error resetting key state:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /api/endpoints/:version/keys/disable — manually disable a key so it is
+// skipped during rotation until re-enabled. Body: { tokenHash }. The raw token
+// is resolved server-side from the tokenHash and never leaves the server.
+router.post("/api/endpoints/:version/keys/disable", verifySession, (req, res) => {
+  try {
+    const version = req.params.version;
+    if (!/^\d+$/.test(version)) {
+      return res.status(400).json({ error: "Invalid endpoint version" });
+    }
+
+    const tokens = readEndpointTokens(version);
+    if (tokens === null) {
+      return res.status(404).json({ error: `Endpoint v${version} not found` });
+    }
+
+    const tokenHash = typeof req.body.tokenHash === "string" ? req.body.tokenHash : null;
+    if (!tokenHash) {
+      return res.status(400).json({ error: "tokenHash required" });
+    }
+
+    const endpointKey = `v${version}`;
+    const token = tokens.find(
+      (t) => keyStateManager.hashToken(endpointKey, t) === tokenHash,
+    );
+    if (!token) {
+      return res.status(404).json({ error: "Key not found for this endpoint" });
+    }
+
+    keyStateManager.disableKey(endpointKey, token);
+    res.json({ message: "Key disabled" });
+  } catch (error) {
+    console.error("Error disabling key:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /api/endpoints/:version/keys/reset-stats — zero request/failure counters
+// for a key, or all keys when { all: true }. Body: { tokenHash } | { all: true }.
+router.post("/api/endpoints/:version/keys/reset-stats", verifySession, (req, res) => {
+  try {
+    const version = req.params.version;
+    if (!/^\d+$/.test(version)) {
+      return res.status(400).json({ error: "Invalid endpoint version" });
+    }
+    if (readEndpointTokens(version) === null) {
+      return res.status(404).json({ error: `Endpoint v${version} not found` });
+    }
+
+    const all = req.body.all === true;
+    const tokenHash = typeof req.body.tokenHash === "string" ? req.body.tokenHash : null;
+    if (!all && !tokenHash) {
+      return res.status(400).json({ error: "tokenHash or all:true required" });
+    }
+
+    keyStateManager.resetStats(`v${version}`, { tokenHash, all });
+    res.json({ message: "Key stats reset" });
+  } catch (error) {
+    console.error("Error resetting key stats:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 /*
     POST for reloading and refreshing everything
 */
@@ -1124,6 +1284,20 @@ router.put("/api/settings", verifySession, (req, res) => {
     }
     if (updates.maxContextSizeDefault !== undefined && (!Number.isInteger(updates.maxContextSizeDefault) || updates.maxContextSizeDefault < 0)) {
       return res.status(400).json({ error: "Max context size default must be an integer >= 0" });
+    }
+
+    // Validate smart key management settings if present
+    if (updates.keyHopAttempts !== undefined && (!Number.isInteger(updates.keyHopAttempts) || updates.keyHopAttempts < 0)) {
+      return res.status(400).json({ error: "Key hop attempts must be an integer >= 0" });
+    }
+    if (updates.keyTimeoutHours !== undefined && (!Number.isInteger(updates.keyTimeoutHours) || updates.keyTimeoutHours < 1)) {
+      return res.status(400).json({ error: "Key timeout hours must be an integer >= 1" });
+    }
+    if (updates.defaultEndpointKeyRotation !== undefined && !["sticky", "roundrobin"].includes(updates.defaultEndpointKeyRotation)) {
+      return res.status(400).json({ error: "Default key rotation must be 'sticky' or 'roundrobin'" });
+    }
+    if (updates.defaultEndpointKeyHealth !== undefined && typeof updates.defaultEndpointKeyHealth !== "boolean") {
+      return res.status(400).json({ error: "Default key health must be a boolean" });
     }
 
     settingsManager.update(updates);
@@ -1398,6 +1572,22 @@ function validatePromptCaching(input) {
   }
 
   return { enabled, depth };
+}
+
+// Validate a keyRotation value. Returns "sticky" | "roundrobin", or null when
+// the input is absent/invalid so the endpoint falls back to the global default.
+function validateKeyRotation(input) {
+  if (input === "sticky" || input === "roundrobin") return input;
+  return null;
+}
+
+// Validate a keyHealth value. Returns true | false when a real boolean is given,
+// or null when absent/invalid so the endpoint falls back to the global default.
+// keyHealth on = actionable errors (400/401/402/429) bench the key; off = errors
+// are counted but the key stays usable (the request still hops on its own).
+function validateKeyHealth(input) {
+  if (input === true || input === false) return input;
+  return null;
 }
 
 export default router;

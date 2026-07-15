@@ -30,6 +30,20 @@ class SettingsManager {
       defaultEndpointPromptCachingEnabled: false,
       defaultEndpointPromptCachingDepth: 2,
 
+      // Smart key management
+      // How many extra key hops a single request may make when a key returns an
+      // actionable code (400/401/402/429). 0 = no hop, 1 = retry once, N = up to N hops.
+      keyHopAttempts: 1,
+      // How long a 429'd key stays timed out before auto-recovering (hours).
+      keyTimeoutHours: 24,
+      // Default rotation mode seeded onto new endpoints: "sticky" | "roundrobin".
+      defaultEndpointKeyRotation: "sticky",
+      // Default key-health mode seeded onto new endpoints.
+      // true  = an actionable error (400/401/402/429) sidelines the key (invalid/timeout).
+      // false = keys are never sidelined; requests still hop on an error but the key
+      //         stays usable. Suited to RPM/TPM endpoints where a limit clears quickly.
+      defaultEndpointKeyHealth: true,
+
       // Default endpoint creation settings (only affect new endpoints)
       defaultEndpointApiFormat: "openai",
       defaultEndpointTemperatureEnabled: true,

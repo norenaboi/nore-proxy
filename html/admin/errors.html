@@ -39,7 +39,7 @@
 
             .filters {
                 display: grid;
-                grid-template-columns: repeat(3, minmax(160px, 220px));
+                grid-template-columns: repeat(4, minmax(160px, 220px));
                 gap: 12px;
                 flex: 1;
             }
@@ -628,6 +628,12 @@
                             <option value="">All statuses</option>
                         </select>
                     </div>
+                    <div class="filter-field">
+                        <label for="keyFilter">API key</label>
+                        <select id="keyFilter">
+                            <option value="">All keys</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="toolbar-actions">
                     <button class="btn btn-primary" onclick="applyFilters()">
@@ -792,6 +798,7 @@
             const modelFilter = document.getElementById("modelFilter");
             const endpointFilter = document.getElementById("endpointFilter");
             const statusFilter = document.getElementById("statusFilter");
+            const keyFilter = document.getElementById("keyFilter");
             const detailBackdrop = document.getElementById("detailBackdrop");
 
             async function apiFetch(url, options = {}) {
@@ -822,19 +829,23 @@
                     model: modelFilter.value,
                     endpoint: endpointFilter.value,
                     status: statusFilter.value,
+                    key: keyFilter.value,
                 };
                 const data = await apiFetch("/api/errors/filters");
 
                 modelFilter.length = 1;
                 endpointFilter.length = 1;
                 statusFilter.length = 1;
+                keyFilter.length = 1;
                 appendOptions(modelFilter, data.models || []);
                 appendOptions(endpointFilter, data.endpoints || []);
                 appendOptions(statusFilter, data.statuses || [], (value) => `HTTP ${value}`);
+                appendOptions(keyFilter, data.keys || []);
 
                 modelFilter.value = current.model;
                 endpointFilter.value = current.endpoint;
                 statusFilter.value = current.status;
+                keyFilter.value = current.key;
             }
 
             function buildListUrl() {
@@ -845,6 +856,7 @@
                 if (modelFilter.value) params.set("model", modelFilter.value);
                 if (endpointFilter.value) params.set("endpoint", endpointFilter.value);
                 if (statusFilter.value) params.set("status", statusFilter.value);
+                if (keyFilter.value) params.set("key", keyFilter.value);
                 return `/api/errors?${params.toString()}`;
             }
 
@@ -1091,7 +1103,28 @@
                 }
             });
 
-            Promise.all([loadFilters(), loadErrors()]).catch((error) => {
+            function setKeyFilter(maskedKey) {
+                if (!maskedKey) return;
+                const exists = Array.from(keyFilter.options).some(
+                    (option) => option.value === maskedKey,
+                );
+                if (!exists) {
+                    appendOptions(keyFilter, [maskedKey]);
+                }
+                keyFilter.value = maskedKey;
+            }
+
+            async function init() {
+                const deepLinkKey = new URLSearchParams(window.location.search).get("key");
+                await loadFilters();
+                if (deepLinkKey) {
+                    setKeyFilter(deepLinkKey);
+                    state.offset = 0;
+                }
+                await loadErrors();
+            }
+
+            init().catch((error) => {
                 console.error("Error initializing stored errors page:", error);
             });
         </script>

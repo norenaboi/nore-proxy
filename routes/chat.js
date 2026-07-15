@@ -3,16 +3,22 @@ import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 import { verifyApiKey } from "../middleware/auth.js";
 import apiKeyManager from "../services/apiKeyManager.js";
+import settingsManager from "../services/settingsManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
 import { logRequestStart, logRequestEnd, logError } from "../utils/logging.js";
 import {
   MODEL_REGISTRY,
   getEndpointForModel,
+  getEndpointMeta,
   getFullUrl,
   estimateTokens,
   isClaudeModel,
   applyClaudePromptCaching,
+  resolveKeyHealth,
 } from "../utils/helpers.js";
+import keyStateManager, {
+  ACTIONABLE_CODES,
+} from "../services/keyStateManager.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import {
   buildUpstreamErrorContext,
@@ -102,9 +108,10 @@ router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
   if (openaiReq.cache_depth !== undefined) {
     cacheDepth = parseInt(openaiReq.cache_depth, 10);
   } else {
-    const endpointInfo = getEndpointForModel(modelName);
-    if (endpointInfo?.promptCaching?.enabled === true && isClaudeModel(endpointInfo.actualModel)) {
-      cacheDepth = endpointInfo.promptCaching.depth;
+    // Metadata read only — must NOT select a key or advance rotation.
+    const endpointMeta = getEndpointMeta(modelName);
+    if (endpointMeta?.promptCaching?.enabled === true && isClaudeModel(endpointMeta.actualModel)) {
+      cacheDepth = endpointMeta.promptCaching.depth;
     }
   }
   delete openaiReq.cache_depth;
@@ -123,9 +130,10 @@ router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
 
   // Apply per-endpoint generation defaults before adapter transformation.
   // Client-provided values always win; defaults only fill missing fields.
-  const endpointInfo = getEndpointForModel(modelName);
-  if (endpointInfo?.generationDefaults) {
-    const defaults = endpointInfo.generationDefaults;
+  // Metadata read only — must NOT select a key or advance rotation.
+  const endpointMeta = getEndpointMeta(modelName);
+  if (endpointMeta?.generationDefaults) {
+    const defaults = endpointMeta.generationDefaults;
     for (const [param, config] of Object.entries(defaults)) {
       if (config.enabled && config.value !== undefined && config.value !== null) {
         if (openaiReq[param] === undefined || openaiReq[param] === null) {
@@ -213,83 +221,121 @@ async function streamFromBackend(
   let streamSettled = false;
 
   try {
-    endpointInfo = getEndpointForModel(modelName);
-    if (!endpointInfo) {
-      const error = new Error("Can't find the model you're looking for.");
-      error.name = "EndpointResolutionError";
-      error.statusCode = 404;
-      throw error;
-    }
-
-    const {
-      url: backendUrl,
-      token: backendToken,
-      actualModel,
-      customHeaders,
-      apiFormat,
-    } = endpointInfo;
-    adapter = getAdapter(apiFormat);
-    fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true);
-    let messages = openaiReq.messages || [];
     let streamUsage = null;
+    let response = null;
 
-    // Apply Claude prompt caching if the target model is Claude and caching is enabled
-    // (only meaningful for OpenAI-compat and Anthropic formats)
-    if (isClaudeModel(actualModel) && cacheDepth !== -1) {
-      messages = applyClaudePromptCaching(messages, cacheDepth);
-      console.log(
-        `Prompt caching applied (depth=${cacheDepth}): ${
-          messages.filter((m) => {
-            const content = m.content;
-            if (Array.isArray(content))
-              return content.some((b) => b.cache_control);
-            return false;
-          }).length
-        } message(s) marked for caching`,
-      );
-    }
+    // Smart key selection with single-request retry across usable keys.
+    // Only 400/401/402/429 trigger a hop; any other status/error is terminal.
+    const triedHashes = new Set();
+    const maxAttempts =
+      1 + Math.max(0, parseInt(settingsManager.get("keyHopAttempts"), 10) || 0);
 
-    // Build the request body using the adapter
-    const reqForAdapter = { ...openaiReq, messages };
-    data = adapter.transformStreamRequest(reqForAdapter, actualModel);
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      endpointInfo = getEndpointForModel(modelName, { excludeHashes: triedHashes });
+      if (!endpointInfo) {
+        const error = new Error("Can't find the model you're looking for.");
+        error.name = "EndpointResolutionError";
+        error.statusCode = 404;
+        throw error;
+      }
+      if (endpointInfo.tokenExhausted || !endpointInfo.token) {
+        const error = new Error("No token left in the chamber.");
+        error.name = "TokenExhaustedError";
+        error.statusCode = 404;
+        throw error;
+      }
 
-    // Build headers: custom + adapter-specific (e.g. anthropic-version) + auth
-    const extraHeaders = getExtraHeaders(apiFormat);
-    headers = {
-      ...customHeaders,
-      ...extraHeaders,
-      "Content-Type": "application/json",
-    };
+      const {
+        url: backendUrl,
+        token: backendToken,
+        actualModel,
+        customHeaders,
+        apiFormat,
+        endpointKey,
+        tokenHash,
+      } = endpointInfo;
+      adapter = getAdapter(apiFormat);
+      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true);
+      let messages = openaiReq.messages || [];
 
-    // Auth depends on format: gemini uses ?key=, anthropic uses x-api-key, openai uses Bearer
-    if (apiFormat === "gemini") {
-      // Auth is in the URL query param, no auth header needed
-    } else if (apiFormat === "anthropic") {
-      headers["x-api-key"] = backendToken;
-    } else {
-      headers["Authorization"] = `Bearer ${backendToken}`;
-    }
+      // Apply Claude prompt caching if the target model is Claude and caching is enabled
+      // (only meaningful for OpenAI-compat and Anthropic formats)
+      if (isClaudeModel(actualModel) && cacheDepth !== -1) {
+        messages = applyClaudePromptCaching(messages, cacheDepth);
+        console.log(
+          `Prompt caching applied (depth=${cacheDepth}): ${
+            messages.filter((m) => {
+              const content = m.content;
+              if (Array.isArray(content))
+                return content.some((b) => b.cache_control);
+              return false;
+            }).length
+          } message(s) marked for caching`,
+        );
+      }
 
-    const requestUrl = apiFormat === "gemini"
-      ? `${fullUrl}?alt=sse&key=${backendToken}`
-      : fullUrl;
+      // Build the request body using the adapter
+      const reqForAdapter = { ...openaiReq, messages };
+      data = adapter.transformStreamRequest(reqForAdapter, actualModel);
 
-    const response = await axios({
-      method: "post",
-      url: requestUrl,
-      headers,
-      data,
-      responseType: "stream",
-      timeout: 180000,
-      validateStatus: () => true,
-    });
+      // Build headers: custom + adapter-specific (e.g. anthropic-version) + auth
+      const extraHeaders = getExtraHeaders(apiFormat);
+      headers = {
+        ...customHeaders,
+        ...extraHeaders,
+        "Content-Type": "application/json",
+      };
 
-    if (response.status < 200 || response.status >= 300) {
-      const responseBody = await readUpstreamErrorBody(response.data);
+      // Auth depends on format: gemini uses ?key=, anthropic uses x-api-key, openai uses Bearer
+      if (apiFormat === "gemini") {
+        // Auth is in the URL query param, no auth header needed
+      } else if (apiFormat === "anthropic") {
+        headers["x-api-key"] = backendToken;
+      } else {
+        headers["Authorization"] = `Bearer ${backendToken}`;
+      }
+
+      const requestUrl = apiFormat === "gemini"
+        ? `${fullUrl}?alt=sse&key=${backendToken}`
+        : fullUrl;
+
+      const resp = await axios({
+        method: "post",
+        url: requestUrl,
+        headers,
+        data,
+        responseType: "stream",
+        timeout: 180000,
+        validateStatus: () => true,
+      });
+
+      if (resp.status >= 200 && resp.status < 300) {
+        keyStateManager.recordSuccess(endpointKey, backendToken);
+        response = resp;
+        break;
+      }
+
+      // Non-2xx. Only actionable codes update key state and may trigger a hop.
+      // sideline benches the key (invalid/timeout) only when key health is on
+      // for this endpoint; when off, the failure is counted but the key stays
+      // usable and the request just hops to the next one.
+      const canRetry = attempt < maxAttempts - 1;
+      if (ACTIONABLE_CODES.has(resp.status)) {
+        const sideline = resolveKeyHealth(endpointInfo.keyHealth);
+        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
+        triedHashes.add(tokenHash);
+        if (canRetry) {
+          resp.data?.destroy?.();
+          continue;
+        }
+      }
+
+      // Terminal failure: non-actionable status, or actionable but out of hops.
+      const responseBody = await readUpstreamErrorBody(resp.data);
       const upstreamMessage = getUpstreamErrorMessage(responseBody);
-      const error = new Error(`Error ${response.status}: ${upstreamMessage}`);
+      const error = new Error(`Error ${resp.status}: ${upstreamMessage}`);
       error.name = "UpstreamHttpError";
-      error.statusCode = response.status;
+      error.statusCode = resp.status;
 
       persistUpstreamError({
         requestId,
@@ -298,12 +344,19 @@ async function streamFromBackend(
         requestHeaders: headers,
         upstreamUrl: fullUrl,
         error,
-        statusCode: response.status,
+        statusCode: resp.status,
         responseBody,
       });
       logRequestEnd(requestId, false, 0, 0, error.message);
-      sendStreamError(res, requestId, modelName, error, response.status);
+      sendStreamError(res, requestId, modelName, error, resp.status);
       return;
+    }
+
+    if (!response) {
+      const error = new Error("No token left in the chamber.");
+      error.name = "TokenExhaustedError";
+      error.statusCode = 404;
+      throw error;
     }
 
     let buffer = "";
@@ -490,81 +543,125 @@ async function makeBackendRequest(
   let upstreamResponseBody = null;
 
   try {
-    endpointInfo = getEndpointForModel(modelName);
-    if (!endpointInfo) {
-      const error = new Error("Can't find the model you're looking for.");
-      error.name = "EndpointResolutionError";
-      error.statusCode = 404;
+    let adapter = null;
+    let response = null;
+
+    // Smart key selection with single-request retry across usable keys.
+    // Only 400/401/402/429 trigger a hop; any other status/error is terminal.
+    const triedHashes = new Set();
+    const maxAttempts =
+      1 + Math.max(0, parseInt(settingsManager.get("keyHopAttempts"), 10) || 0);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      endpointInfo = getEndpointForModel(modelName, { excludeHashes: triedHashes });
+      if (!endpointInfo) {
+        const error = new Error("Can't find the model you're looking for.");
+        error.name = "EndpointResolutionError";
+        error.statusCode = 404;
+        throw error;
+      }
+      if (endpointInfo.tokenExhausted || !endpointInfo.token) {
+        const error = new Error("No token left in the chamber.");
+        error.name = "TokenExhaustedError";
+        error.statusCode = 404;
+        throw error;
+      }
+
+      const {
+        url: backendUrl,
+        token: backendToken,
+        actualModel,
+        customHeaders,
+        apiFormat,
+        endpointKey,
+        tokenHash,
+      } = endpointInfo;
+      adapter = getAdapter(apiFormat);
+      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
+      let messages = openaiReq.messages || [];
+
+      // Apply Claude prompt caching if the target model is Claude and caching is enabled
+      if (isClaudeModel(actualModel) && cacheDepth !== -1) {
+        messages = applyClaudePromptCaching(messages, cacheDepth);
+        console.log(
+          `Prompt caching applied (depth=${cacheDepth}): ${
+            messages.filter((m) => {
+              const content = m.content;
+              if (Array.isArray(content))
+                return content.some((b) => b.cache_control);
+              return false;
+            }).length
+          } message(s) marked for caching`,
+        );
+      }
+
+      // Build the request body using the adapter
+      const reqForAdapter = { ...openaiReq, messages };
+      data = adapter.transformRequest(reqForAdapter, actualModel);
+
+      // Build headers: custom + adapter-specific + auth
+      const extraHeaders = getExtraHeaders(apiFormat);
+      headers = {
+        ...customHeaders,
+        ...extraHeaders,
+        "Content-Type": "application/json",
+      };
+
+      if (apiFormat === "gemini") {
+        // Auth is in the URL query param
+      } else if (apiFormat === "anthropic") {
+        headers["x-api-key"] = backendToken;
+      } else {
+        headers["Authorization"] = `Bearer ${backendToken}`;
+      }
+
+      const requestUrl = apiFormat === "gemini" ? `${fullUrl}?key=${backendToken}` : fullUrl;
+
+      const resp = await axios({
+        method: "post",
+        url: requestUrl,
+        headers,
+        data,
+        timeout: 180000,
+        validateStatus: () => true,
+      });
+
+      if (resp.status >= 200 && resp.status < 300) {
+        keyStateManager.recordSuccess(endpointKey, backendToken);
+        response = resp;
+        upstreamResponseBody = resp.data;
+        break;
+      }
+
+      // Non-2xx. Only actionable codes update key state and may trigger a hop.
+      // sideline benches the key only when key health is on for this endpoint.
+      const canRetry = attempt < maxAttempts - 1;
+      const sideline = resolveKeyHealth(endpointInfo.keyHealth);
+      if (ACTIONABLE_CODES.has(resp.status) && canRetry) {
+        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
+        triedHashes.add(tokenHash);
+        continue;
+      }
+      if (ACTIONABLE_CODES.has(resp.status)) {
+        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
+      }
+
+      // Terminal failure: non-actionable status, or actionable but out of hops.
+      upstreamResponseBody = resp.data;
+      console.error(`BACKEND [ID: ${requestId}]:`, resp.data);
+      const error = new Error(
+        `Error ${resp.status}: ${getUpstreamErrorMessage(resp.data)}`,
+      );
+      error.name = "UpstreamHttpError";
+      error.statusCode = resp.status;
+      error.responseBody = resp.data;
       throw error;
     }
 
-    const {
-      url: backendUrl,
-      token: backendToken,
-      actualModel,
-      customHeaders,
-      apiFormat,
-    } = endpointInfo;
-    const adapter = getAdapter(apiFormat);
-    fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
-    let messages = openaiReq.messages || [];
-
-    // Apply Claude prompt caching if the target model is Claude and caching is enabled
-    if (isClaudeModel(actualModel) && cacheDepth !== -1) {
-      messages = applyClaudePromptCaching(messages, cacheDepth);
-      console.log(
-        `Prompt caching applied (depth=${cacheDepth}): ${
-          messages.filter((m) => {
-            const content = m.content;
-            if (Array.isArray(content))
-              return content.some((b) => b.cache_control);
-            return false;
-          }).length
-        } message(s) marked for caching`,
-      );
-    }
-
-    // Build the request body using the adapter
-    const reqForAdapter = { ...openaiReq, messages };
-    data = adapter.transformRequest(reqForAdapter, actualModel);
-
-    // Build headers: custom + adapter-specific + auth
-    const extraHeaders = getExtraHeaders(apiFormat);
-    headers = {
-      ...customHeaders,
-      ...extraHeaders,
-      "Content-Type": "application/json",
-    };
-
-    if (apiFormat === "gemini") {
-      // Auth is in the URL query param
-    } else if (apiFormat === "anthropic") {
-      headers["x-api-key"] = backendToken;
-    } else {
-      headers["Authorization"] = `Bearer ${backendToken}`;
-    }
-
-    const requestUrl = apiFormat === "gemini" ? `${fullUrl}?key=${backendToken}` : fullUrl;
-
-    const response = await axios({
-      method: "post",
-      url: requestUrl,
-      headers,
-      data,
-      timeout: 180000,
-      validateStatus: () => true,
-    });
-
-    upstreamResponseBody = response.data;
-
-    if (response.status < 200 || response.status >= 300) {
-      console.error(`BACKEND [ID: ${requestId}]:`, response.data);
-      const error = new Error(
-        `Error ${response.status}: ${getUpstreamErrorMessage(response.data)}`,
-      );
-      error.name = "UpstreamHttpError";
-      error.statusCode = response.status;
-      error.responseBody = response.data;
+    if (!response) {
+      const error = new Error("No token left in the chamber.");
+      error.name = "TokenExhaustedError";
+      error.statusCode = 404;
       throw error;
     }
 

@@ -201,7 +201,7 @@
 
         .model-meta {
             display: flex;
-            flex-direction: column;
+            flex-direction: row;
             gap: 6px;
             flex: 1;
             min-width: 0;
@@ -239,6 +239,8 @@
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
+            margin-left: auto;
+            margin-right: 10px;
         }
 
         .pricing-chip {
@@ -526,18 +528,6 @@
             color: var(--gray-800);
         }
 
-        .endpoint-group-header .endpoint-version-tag {
-            display: inline-flex;
-            align-items: center;
-            padding: 2px 8px;
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 600;
-            font-family: 'Courier New', monospace;
-            background: var(--primary-alpha-012);
-            color: var(--primary-dark);
-        }
-
         .endpoint-group-header .endpoint-count {
             margin-left: auto;
             font-size: 12px;
@@ -752,7 +742,7 @@
                                 <input type="text" id="backendInput" class="form-input" placeholder="or type the actual model name" style="margin-top:8px;">
                             </div>
                             <div>
-                                <label class="form-label">Endpoint Version</label>
+                                <label class="form-label">Endpoint</label>
                                 <select id="versionSelect" class="form-select">
                                     <option value="">— select an endpoint —</option>
                                 </select>
@@ -931,7 +921,7 @@
             list.innerHTML = sortedVersions.map(ver => {
                 const groupModels = groups[ver];
                 const ep = endpoints[ver];
-                const epName = ep ? ep.name : (ver === noVersionKey ? 'Unknown Endpoint' : ver);
+                const epName = ep ? ep.name : 'Unknown Endpoint';
                 const verLabel = ver !== noVersionKey ? ver : '';
 
                 const modelsHtml = groupModels.map(model => {
@@ -982,7 +972,6 @@
                         <div class="endpoint-group-header">
                             <div class="endpoint-icon"><i class="fa-solid fa-hexagon-nodes"></i></div>
                             <span class="endpoint-name">${escapeHtml(epName)}</span>
-                            ${verLabel ? `<span class="endpoint-version-tag">${escapeHtml(verLabel)}</span>` : ''}
                             <span class="endpoint-count">${groupModels.length} model${groupModels.length !== 1 ? 's' : ''}</span>
                         </div>
                         <div class="endpoint-group-divider"></div>
@@ -1001,10 +990,10 @@
                 return numA - numB;
             });
 
-            select.innerHTML = '<option value="">— select an endpoint —</option>' +
+            select.innerHTML = '<option value="">Select an endpoint</option>' +
                 versions.map(ver => {
                     const ep = endpoints[ver];
-                    const label = ep ? `${ep.name || ver} (${ver})` : ver;
+                    const label = ep ? `${ep.name}` : ver;
                     return `<option value="${escapeHtml(ver)}" ${ver === selectedVersion ? 'selected' : ''}>${escapeHtml(label)}</option>`;
                 }).join('');
         }
@@ -1012,10 +1001,10 @@
         function populateBackendSelect(selectedBackend = '') {
             const select = document.getElementById('backendSelect');
             if (availableModels.length === 0) {
-                select.innerHTML = '<option value="">— select an endpoint first —</option>';
+                select.innerHTML = '<option value="">Please select an endpoint first</option>';
                 return;
             }
-            select.innerHTML = '<option value="">— select a model from /v1/models —</option>' +
+            select.innerHTML = '<option value="">Select a model</option>' +
                 availableModels.map(name => `<option value="${escapeHtml(name)}" ${name === selectedBackend ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
         }
 
@@ -1024,7 +1013,7 @@
                 const res = await fetch(`/api/endpoints/${version}/models`);
                 if (!res.ok) {
                     const data = await res.json().catch(() => ({}));
-                    throw new Error(data.error || `Failed to fetch models for ${version}`);
+                    throw new Error(data.error || `Failed to fetch models from the endpoint`);
                 }
                 const data = await res.json();
                 availableModels = (data.models || [])

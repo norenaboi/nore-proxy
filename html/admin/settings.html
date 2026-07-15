@@ -410,6 +410,19 @@
                 </div>
             </div>
 
+            <!-- Key Failover -->
+            <div class="card">
+                <div class="card-header">
+                    <i class="fa-solid fa-shuffle"></i>
+                    <h2>Key Failover</h2>
+                    <span class="card-subtitle">Automatic key hopping</span>
+                </div>
+                <div class="card-body" id="keyFailoverBody">
+                    <div class="loading-row"></div>
+                    <div class="loading-row" style="width: 60%"></div>
+                </div>
+            </div>
+
             <!-- Endpoint Defaults -->
             <div class="card">
                 <div class="card-header">
@@ -456,7 +469,47 @@
             function renderSettings(s) {
                 settings = { ...s };
                 renderKeyDefaults(s);
+                renderKeyFailover(s);
                 renderEndpointDefaults(s);
+            }
+
+            function renderKeyFailover(s) {
+                const body = document.getElementById("keyFailoverBody");
+                body.innerHTML = `
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Key Hop Attempts</div>
+                        <div class="setting-description">
+                            When an upstream key returns an actionable error (400/401/402/429), how many
+                            extra keys a single request may try before giving up. 0 disables hopping.
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="number-input-wrapper">
+                            <input type="number" class="number-input" id="keyHopAttempts"
+                                   min="0" step="1" placeholder="1"
+                                   value="${s.keyHopAttempts}">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Key Timeout Hours</div>
+                        <div class="setting-description">
+                            How long a rate-limited (429) key stays timed out before it auto-recovers.
+                            Keys hit with 400/401/402 are disabled until reset manually.
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="number-input-wrapper">
+                            <input type="number" class="number-input" id="keyTimeoutHours"
+                                   min="1" step="1" placeholder="24"
+                                   value="${s.keyTimeoutHours}">
+                        </div>
+                    </div>
+                </div>
+                `;
             }
 
             function renderKeyDefaults(s) {
@@ -528,6 +581,40 @@
                             <option value="anthropic" ${s.defaultEndpointApiFormat === 'anthropic' ? 'selected' : ''}>Anthropic — /v1/messages</option>
                             <option value="gemini" ${s.defaultEndpointApiFormat === 'gemini' ? 'selected' : ''}>Gemini — /v1beta/generateContent</option>
                             <option value="gemini-openai" ${s.defaultEndpointApiFormat === 'gemini-openai' ? 'selected' : ''}>Gemini OpenAI — /v1beta/openai/chat/completions</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Default Key Rotation</div>
+                        <div class="setting-description">
+                            Rotation mode seeded onto new endpoints. Sticky reuses one key until it
+                            fails; round-robin cycles through healthy keys per request.
+                        </div>
+                    </div>
+                    <div class="setting-control" style="min-width:180px;">
+                        <select id="defaultEndpointKeyRotation" class="form-select">
+                            <option value="sticky" ${s.defaultEndpointKeyRotation === 'sticky' ? 'selected' : ''}>Sticky</option>
+                            <option value="roundrobin" ${s.defaultEndpointKeyRotation === 'roundrobin' ? 'selected' : ''}>Round-robin</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <div class="setting-label">Default Key Health</div>
+                        <div class="setting-description">
+                            Seeded onto new endpoints. On benches a key on a 400/401/402 (invalid) or
+                            429 (timeout for the configured window). Off never benches a key — requests
+                            still hop to the next one, but a momentarily rate-limited key is not parked.
+                            Turn off for RPM/TPM endpoints whose limits clear in seconds.
+                        </div>
+                    </div>
+                    <div class="setting-control" style="min-width:180px;">
+                        <select id="defaultEndpointKeyHealth" class="form-select">
+                            <option value="true" ${s.defaultEndpointKeyHealth !== false ? 'selected' : ''}>On</option>
+                            <option value="false" ${s.defaultEndpointKeyHealth === false ? 'selected' : ''}>Off</option>
                         </select>
                     </div>
                 </div>
@@ -683,6 +770,21 @@
                     return;
                 }
 
+                const keyHopAttempts = parseInt(document.getElementById("keyHopAttempts").value, 10);
+                const keyTimeoutHours = parseInt(document.getElementById("keyTimeoutHours").value, 10);
+
+                if (isNaN(keyHopAttempts) || keyHopAttempts < 0) {
+                    showToast("Key hop attempts must be 0 or higher", "error");
+                    return;
+                }
+                if (isNaN(keyTimeoutHours) || keyTimeoutHours < 1) {
+                    showToast("Key timeout hours must be at least 1", "error");
+                    return;
+                }
+
+                const keyRotation = document.getElementById("defaultEndpointKeyRotation").value;
+                const keyHealth = document.getElementById("defaultEndpointKeyHealth").value === "true";
+
                 const apiFormat = document.getElementById("defaultEndpointApiFormat").value;
                 const tempEnabled = document.getElementById("defaultEndpointTemperatureEnabled").checked;
                 const temp = parseFloat(document.getElementById("defaultEndpointTemperature").value);
@@ -724,6 +826,10 @@
                             rpdDefault,
                             rpmDefault,
                             maxContextSizeDefault,
+                            keyHopAttempts,
+                            keyTimeoutHours,
+                            defaultEndpointKeyRotation: keyRotation,
+                            defaultEndpointKeyHealth: keyHealth,
                             defaultEndpointApiFormat: apiFormat,
                             defaultEndpointTemperatureEnabled: tempEnabled,
                             defaultEndpointTemperature: temp,

@@ -438,6 +438,12 @@ export class LogManager {
       clauses.push("endpoint_name = @endpoint");
       params.endpoint = filters.endpoint;
     }
+    // Filter by upstream key: matched against the stored masked form
+    // (maskKey(token)), never a raw secret.
+    if (filters.key) {
+      clauses.push("masked_api_key = @key");
+      params.key = filters.key;
+    }
     if (
       filters.statusCode !== undefined &&
       filters.statusCode !== null &&
@@ -498,6 +504,7 @@ export class LogManager {
       models: readValues("model"),
       endpoints: readValues("endpoint_name"),
       statuses: readValues("status_code"),
+      keys: readValues("masked_api_key"),
     };
   }
 
