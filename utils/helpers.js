@@ -351,6 +351,14 @@ export function getEndpointForModel(modelName, opts = {}) {
 
   const mode = resolveRotationMode(meta.keyRotation);
   let chosen = usable[0];
+  if (mode === "roundrobin") {
+    const rotatedToken = Config.rotateUsableToken(
+      meta.endpointKey,
+      usable.map(({ token }) => token),
+    );
+    chosen = usable.find(({ token }) => token === rotatedToken) || chosen;
+  }
+
   return {
     ...meta,
     token: chosen.token,

@@ -437,6 +437,21 @@
             background: var(--card-bg);
         }
 
+        .backend-select-row {
+            display: flex;
+            align-items: stretch;
+            gap: 8px;
+        }
+
+        .backend-select-row .form-select {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .backend-select-row .btn {
+            flex-shrink: 0;
+        }
+
         .form-section-label {
             font-size: 11px;
             font-weight: 600;
@@ -736,9 +751,14 @@
                             </div>
                             <div>
                                 <label class="form-label">Backend Model</label>
-                                <select id="backendSelect" class="form-select">
-                                    <option value="">— select a model from /v1/models —</option>
-                                </select>
+                                <div class="backend-select-row">
+                                    <select id="backendSelect" class="form-select">
+                                        <option value="">— select an endpoint first —</option>
+                                    </select>
+                                    <button type="button" class="btn btn-secondary" id="fetchModelsButton" onclick="fetchModelsManually(this)" title="Fetch models from the selected endpoint">
+                                        <i class="fa-solid fa-rotate"></i> Fetch
+                                    </button>
+                                </div>
                                 <input type="text" id="backendInput" class="form-input" placeholder="or type the actual model name" style="margin-top:8px;">
                             </div>
                             <div>
@@ -812,7 +832,8 @@
         let editingModel = null;
         let deletingModel = null;
         const modelTestResults = new Map(); // model name -> { ok, latency_ms, error }
-        let availableModels = []; // models from the selected endpoint's /v1/models
+        let availableModels = []; // models manually fetched from the selected endpoint's /v1/models
+        let upstreamModelsFetched = false;
 
         // Logout
         async function logout() {
@@ -829,16 +850,11 @@
                     document.getElementById('backendInput').value = e.target.value;
                 }
             });
-            // When endpoint version changes, fetch that endpoint's /v1/models
-            document.getElementById('versionSelect').addEventListener('change', async (e) => {
-                const version = e.target.value;
-                if (version) {
-                    await fetchUpstreamModels(version);
-                    populateBackendSelect();
-                } else {
-                    availableModels = [];
-                    populateBackendSelect();
-                }
+            // Changing endpoints clears any list fetched for the previous endpoint.
+            document.getElementById('versionSelect').addEventListener('change', () => {
+                availableModels = [];
+                upstreamModelsFetched = false;
+                populateBackendSelect();
             });
         });
 
@@ -1000,8 +1016,17 @@
 
         function populateBackendSelect(selectedBackend = '') {
             const select = document.getElementById('backendSelect');
-            if (availableModels.length === 0) {
+            const version = document.getElementById('versionSelect').value;
+            if (!version) {
                 select.innerHTML = '<option value="">Please select an endpoint first</option>';
+                return;
+            }
+            if (!upstreamModelsFetched) {
+                select.innerHTML = '<option value="">Click Fetch to load models</option>';
+                return;
+            }
+            if (availableModels.length === 0) {
+                select.innerHTML = '<option value="">No models returned by endpoint</option>';
                 return;
             }
             select.innerHTML = '<option value="">Select a model</option>' +
@@ -1009,20 +1034,46 @@
         }
 
         async function fetchUpstreamModels(version) {
+            const res = await fetch(`/api/endpoints/${version}/models`);
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || `Failed to fetch models from the endpoint`);
+            }
+            const data = await res.json();
+            availableModels = (data.models || [])
+                .filter(m => typeof m === 'string' && m.length > 0)
+                .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+            upstreamModelsFetched = true;
+        }
+
+        async function fetchModelsManually(button) {
+            const version = document.getElementById('versionSelect').value;
+            if (!version) {
+                showToast('Please select an endpoint first', 'error');
+                return;
+            }
+
+            const currentBackend = document.getElementById('backendInput').value.trim();
+            const endpointSelect = document.getElementById('versionSelect');
+            const originalContent = button.innerHTML;
+            button.disabled = true;
+            endpointSelect.disabled = true;
+            button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Fetching';
+
             try {
-                const res = await fetch(`/api/endpoints/${version}/models`);
-                if (!res.ok) {
-                    const data = await res.json().catch(() => ({}));
-                    throw new Error(data.error || `Failed to fetch models from the endpoint`);
-                }
-                const data = await res.json();
-                availableModels = (data.models || [])
-                    .filter(m => typeof m === 'string' && m.length > 0)
-                    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+                await fetchUpstreamModels(version);
+                populateBackendSelect(currentBackend);
+                showToast(`Fetched ${availableModels.length} model${availableModels.length !== 1 ? 's' : ''}`, 'success');
             } catch (error) {
                 console.error('fetchUpstreamModels error:', error);
                 availableModels = [];
+                upstreamModelsFetched = false;
+                populateBackendSelect();
                 showToast(error.message, 'error');
+            } finally {
+                button.disabled = false;
+                endpointSelect.disabled = false;
+                button.innerHTML = originalContent;
             }
         }
 
@@ -1033,8 +1084,9 @@
             document.getElementById('nameInput').value = '';
             document.getElementById('backendInput').value = '';
             availableModels = [];
-            populateBackendSelect();
+            upstreamModelsFetched = false;
             populateVersionSelect();
+            populateBackendSelect();
             document.getElementById('pricingInputInput').value = '';
             document.getElementById('pricingOutputInput').value = '';
             document.getElementById('pricingCacheWriteInput').value = '';
@@ -1042,7 +1094,7 @@
             document.getElementById('modelModal').classList.add('active');
         }
 
-        async function openEditModal(modelName) {
+        function openEditModal(modelName) {
             // Find the model object by name
             const model = models.find(m => m.name === modelName);
             if (!model) {
@@ -1058,14 +1110,10 @@
             document.getElementById('backendInput').value = model.backend || '';
             populateVersionSelect(model.version || '');
 
-            // If the model has a version, fetch that endpoint's models and then select the backend
-            if (model.version) {
-                await fetchUpstreamModels(model.version);
-                populateBackendSelect(model.backend || '');
-            } else {
-                availableModels = [];
-                populateBackendSelect();
-            }
+            // Upstream model discovery is manual; editing never contacts the endpoint.
+            availableModels = [];
+            upstreamModelsFetched = false;
+            populateBackendSelect();
 
             document.getElementById('pricingInputInput').value = model.pricing?.input || '';
             document.getElementById('pricingOutputInput').value = model.pricing?.output || '';
