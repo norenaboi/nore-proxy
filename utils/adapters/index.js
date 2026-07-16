@@ -10,7 +10,12 @@
  *   isStreamEnd(payload) -> bool
  *
  * Some adapters also export:
- *   getExtraHeaders() -> object  (extra headers to merge, e.g. anthropic-version)
+ *   getExtraHeaders(ctx?) -> object  (extra headers to merge, e.g. anthropic-version
+ *     or the Codex marker/ID headers; ctx = { requestId, isStreaming })
+ *
+ * Codex-style adapters accept an optional per-request ctx as a third argument
+ * to transformRequest/transformStreamRequest ({ requestId, isStreaming }).
+ * Adapters that ignore the extra argument continue to work unchanged.
  *
  * Usage in chat.js:
  *   import { getAdapter, ADAPTERS } from "../utils/adapters/index.js";
@@ -22,6 +27,7 @@ import * as openaiAdapter from "./openai.js";
 import * as geminiAdapter from "./gemini.js";
 import * as anthropicAdapter from "./anthropic.js";
 import * as openaiResponsesAdapter from "./openai-responses.js";
+import * as openaiCodexAdapter from "./openai-codex.js";
 
 const ADAPTERS = {
   openai: openaiAdapter,
@@ -31,6 +37,8 @@ const ADAPTERS = {
   'gemini-openai': openaiAdapter,
   // OpenAI Responses API (/v1/responses)
   'openai-responses': openaiResponsesAdapter,
+  // OpenAI Codex — /v1/responses with Codex-required envelope + headers
+  'openai-codex': openaiCodexAdapter,
 };
 
 /**
@@ -52,13 +60,16 @@ export function getAdapter(apiFormat) {
 }
 
 /**
- * Get extra headers that the adapter needs (e.g. anthropic-version).
+ * Get extra headers that the adapter needs (e.g. anthropic-version, or the
+ * Codex marker/ID headers). The optional `ctx` carries per-request data such
+ * as { requestId, isStreaming }; adapters that ignore extra arguments keep
+ * working unchanged.
  * Returns an empty object if the adapter has no getExtraHeaders export.
  */
-export function getExtraHeaders(apiFormat) {
+export function getExtraHeaders(apiFormat, ctx) {
   const adapter = getAdapter(apiFormat);
   if (typeof adapter.getExtraHeaders === "function") {
-    return adapter.getExtraHeaders();
+    return adapter.getExtraHeaders(ctx);
   }
   return {};
 }

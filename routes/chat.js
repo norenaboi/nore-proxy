@@ -282,12 +282,15 @@ async function streamFromBackend(
         );
       }
 
-      // Build the request body using the adapter
+      // Build the request body using the adapter. Codex-style adapters read
+      // per-request context ({ requestId, isStreaming }) for the cache key and
+      // ID headers; adapters that ignore the extra arg are unaffected.
+      const adapterCtx = { requestId, isStreaming: true };
       const reqForAdapter = { ...openaiReq, messages };
-      data = adapter.transformStreamRequest(reqForAdapter, actualModel);
+      data = adapter.transformStreamRequest(reqForAdapter, actualModel, adapterCtx);
 
       // Build headers: custom + adapter-specific (e.g. anthropic-version) + auth
-      const extraHeaders = getExtraHeaders(apiFormat);
+      const extraHeaders = getExtraHeaders(apiFormat, adapterCtx);
       headers = {
         ...customHeaders,
         ...extraHeaders,
@@ -603,12 +606,15 @@ async function makeBackendRequest(
         );
       }
 
-      // Build the request body using the adapter
+      // Build the request body using the adapter. Codex-style adapters read
+      // per-request context ({ requestId, isStreaming }) for the cache key and
+      // ID headers; adapters that ignore the extra arg are unaffected.
+      const adapterCtx = { requestId, isStreaming: false };
       const reqForAdapter = { ...openaiReq, messages };
-      data = adapter.transformRequest(reqForAdapter, actualModel);
+      data = adapter.transformRequest(reqForAdapter, actualModel, adapterCtx);
 
       // Build headers: custom + adapter-specific + auth
-      const extraHeaders = getExtraHeaders(apiFormat);
+      const extraHeaders = getExtraHeaders(apiFormat, adapterCtx);
       headers = {
         ...customHeaders,
         ...extraHeaders,

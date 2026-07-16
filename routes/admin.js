@@ -10,6 +10,7 @@ import logManager from "../services/logManager.js";
 import keyStateManager from "../services/keyStateManager.js";
 import Config from "../config/index.js";
 import { loadModelsFromFile, normalizeEndpointUrl, getEndpointForModel, getFullUrl, maskKey } from "../utils/helpers.js";
+import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import axios from "axios";
 import { calculateCost } from "../utils/logging.js";
 import crypto from "crypto";
@@ -624,8 +625,19 @@ router.post("/api/models/test", verifySession, async (req, res) => {
 
     // Gemini uses a different auth + body shape
     const isGemini = apiFormat === 'gemini';
+    // Stable identifier for this ping so the Codex cache key and ID headers
+    // stay internally consistent for the single test request.
+    const testRequestId = `models-test-${crypto.randomUUID()}`;
+    // Codex needs its marker/ID headers on the ping; other formats are left
+    // exactly as before. These merge before auth/content-type so they can never
+    // override the bearer token or content type.
+    const codexHeaders =
+      apiFormat === 'openai-codex'
+        ? getExtraHeaders(apiFormat, { requestId: testRequestId, isStreaming: false })
+        : {};
     const requestHeaders = {
       ...customHeaders,
+      ...codexHeaders,
       "Content-Type": "application/json",
       ...(isGemini ? {} : { Authorization: `Bearer ${backendToken}` }),
     };
@@ -636,6 +648,16 @@ router.post("/api/models/test", verifySession, async (req, res) => {
     } else if (apiFormat === 'anthropic') {
       // Anthropic requires max_tokens — keep it but don't send temperature/top_p
       requestBody = { model: actualModel, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false };
+    } else if (apiFormat === 'openai-codex') {
+      // Codex requires an array-shaped input, populated `include`, and a
+      // non-empty prompt_cache_key. Build via the adapter so the ping matches
+      // the enforced envelope rather than hand-rolling it here.
+      const pingReq = { model: actualModel, messages: [{ role: "user", content: "ping" }] };
+      requestBody = getAdapter(apiFormat).transformRequest(pingReq, actualModel, {
+        requestId: testRequestId,
+        isStreaming: false,
+      });
+      requestBody.stream = false;
     } else if (apiFormat === 'openai-responses') {
       // Responses API uses input instead of messages; don't persist the ping
       requestBody = { model: actualModel, input: "ping", store: false, stream: false };
@@ -742,7 +764,7 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "URL and at least one token are required" });
 
     // Validate and capture apiFormat from request, falling back to admin panel default
-    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai', 'openai-responses'];
+    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai', 'openai-responses', 'openai-codex'];
     const apiFormat =
       (req.body.apiFormat !== undefined ? req.body.apiFormat : settingsManager.get("defaultEndpointApiFormat")) || 'openai';
     if (!VALID_FORMATS.includes(apiFormat)) {
@@ -847,7 +869,7 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "Index and URL are required" });
 
     // Validate and capture apiFormat (undefined means keep existing)
-    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai', 'openai-responses'];
+    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai', 'openai-responses', 'openai-codex'];
     let apiFormat = undefined;
     if (req.body.apiFormat !== undefined) {
       apiFormat = req.body.apiFormat;
