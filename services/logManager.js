@@ -426,6 +426,30 @@ export class LogManager {
     return rows.map((row) => JSON.parse(row.data));
   }
 
+  renameModel(oldName, newName) {
+    const rename = this.db.transaction(() => {
+      const requestData = this.db
+        .prepare(
+          "UPDATE request_logs SET data = json_set(data, '$.model', ?) WHERE model = ?",
+        )
+        .run(newName, oldName);
+      const requestLogs = this.db
+        .prepare("UPDATE request_logs SET model = ? WHERE model = ?")
+        .run(newName, oldName);
+      const errorLogs = this.db
+        .prepare("UPDATE error_logs SET model = ? WHERE model = ?")
+        .run(newName, oldName);
+
+      return {
+        requestLogs: requestLogs.changes,
+        requestData: requestData.changes,
+        errorLogs: errorLogs.changes,
+      };
+    });
+
+    return rename();
+  }
+
   buildErrorWhere(filters = {}) {
     const clauses = [];
     const params = {};

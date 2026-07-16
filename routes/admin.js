@@ -513,6 +513,9 @@ router.put("/api/models", verifySession, async (req, res) => {
     if (!oldName) {
       return res.status(400).json({ error: "Old model name required" });
     }
+    if (!name) {
+      return res.status(400).json({ error: "Model name required" });
+    }
 
     const jsonPath = path.join(__dirname, "../models.json");
     if (!fs.existsSync(jsonPath)) {
@@ -526,12 +529,12 @@ router.put("/api/models", verifySession, async (req, res) => {
       return res.status(404).json({ error: "Model not found" });
     }
 
-    // If name changed, delete old and create new
-    if (oldName !== name) {
-      delete data.models[oldName];
+    const nameChanged = oldName !== name;
+    if (nameChanged && data.models[name]) {
+      return res.status(400).json({ error: "Model already exists" });
     }
 
-    data.models[name] = {
+    const updatedModel = {
       backend: backend || name,
       version: version || "",
       pricing: pricing || {
@@ -542,7 +545,19 @@ router.put("/api/models", verifySession, async (req, res) => {
       },
     };
 
+    if (nameChanged) {
+      delete data.models[oldName];
+    }
+    data.models[name] = updatedModel;
+
     fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
+    try {
+      if (nameChanged) logManager.renameModel(oldName, name);
+    } catch (error) {
+      fs.writeFileSync(jsonPath, content);
+      throw error;
+    }
+
     loadModelsFromFile();
     res.json({ message: "Model updated" });
   } catch (error) {
@@ -1052,11 +1067,37 @@ router.delete("/api/endpoints", verifySession, async (req, res) => {
       return res.status(404).json({ error: "Endpoint not found" });
     }
 
-    delete data[endpointKey];
+    const modelsPath = path.join(__dirname, "../models.json");
+    let modelsContent = null;
+    let modelsData = { models: {} };
+    if (fs.existsSync(modelsPath)) {
+      modelsContent = fs.readFileSync(modelsPath, "utf-8");
+      modelsData = JSON.parse(modelsContent);
+      modelsData.models ||= {};
+    }
 
+    let deletedModels = 0;
+    for (const [modelName, modelConfig] of Object.entries(modelsData.models)) {
+      if (modelConfig?.version === endpointKey) {
+        delete modelsData.models[modelName];
+        deletedModels += 1;
+      }
+    }
+
+    delete data[endpointKey];
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
+    try {
+      if (modelsContent !== null && deletedModels > 0) {
+        fs.writeFileSync(modelsPath, JSON.stringify(modelsData, null, 2));
+      }
+    } catch (error) {
+      fs.writeFileSync(endpointsPath, content);
+      throw error;
+    }
+
     Config.loadEndpoints();
-    res.json({ message: "Endpoint deleted" });
+    if (modelsContent !== null && deletedModels > 0) loadModelsFromFile();
+    res.json({ message: "Endpoint deleted", deletedModels });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
