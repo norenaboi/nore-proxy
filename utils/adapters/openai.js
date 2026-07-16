@@ -40,6 +40,7 @@ function buildOpenAIBody(openaiReq, actualModel, stream) {
     max_tokens: openaiReq.max_tokens,
     temperature: openaiReq.temperature,
     top_p: openaiReq.top_p,
+    reasoning_effort: openaiReq.reasoning_effort,
     tools: openaiReq.tools,
     tool_choice: openaiReq.tool_choice,
   };
@@ -65,8 +66,15 @@ export function parseStreamChunk(rawChunk, ctx) {
   const choice = choices[0];
   const delta = choice.delta || {};
 
+  const deltaReasoning =
+    (typeof delta.reasoning_content === "string" && delta.reasoning_content) ||
+    (typeof delta.reasoning === "string" && delta.reasoning) ||
+    (typeof delta.thinking === "string" && delta.thinking) ||
+    null;
+
   return {
     deltaContent: delta.content || null,
+    deltaReasoning,
     toolCalls: delta.tool_calls || null,
     finishReason: choice.finish_reason || null,
     usage: rawChunk.usage || null,
@@ -83,11 +91,22 @@ export function buildStreamChunk(rawChunk, ctx) {
     object: "chat.completion.chunk",
     created: rawChunk.created || ctx.streamCreated,
     model: ctx.modelName,
-    choices: (rawChunk.choices || []).map((choice, index) => ({
-      index: choice.index !== undefined ? choice.index : index,
-      delta: choice.delta || {},
-      finish_reason: choice.finish_reason || null,
-    })),
+    choices: (rawChunk.choices || []).map((choice, index) => {
+      const delta = { ...(choice.delta || {}) };
+      if (!delta.reasoning_content) {
+        const reasoning =
+          (typeof delta.reasoning === "string" && delta.reasoning) ||
+          (typeof delta.thinking === "string" && delta.thinking) ||
+          null;
+        if (reasoning) delta.reasoning_content = reasoning;
+      }
+
+      return {
+        index: choice.index !== undefined ? choice.index : index,
+        delta,
+        finish_reason: choice.finish_reason || null,
+      };
+    }),
     ...(rawChunk.usage ? { usage: rawChunk.usage } : {}),
   };
 }

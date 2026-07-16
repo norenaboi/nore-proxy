@@ -16,6 +16,7 @@ import {
   resolveKeyHealth,
 } from "../utils/helpers.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
+import { openAIResponseToAnthropic } from "../utils/responseFormats.js";
 import {
   buildUpstreamErrorContext,
   getUpstreamErrorMessage,
@@ -122,55 +123,6 @@ function anthropicToolsToOpenAI(tools) {
       parameters: t.input_schema || {},
     },
   }));
-}
-
-function openAIResponseToAnthropic(openaiData, modelName, requestId) {
-  const choice = openaiData.choices?.[0];
-  const message = choice?.message || {};
-  const contentBlocks = [];
-
-  if (message.content) {
-    contentBlocks.push({ type: "text", text: message.content });
-  }
-
-  if (message.tool_calls) {
-    for (const tc of message.tool_calls) {
-      contentBlocks.push({
-        type: "tool_use",
-        id: tc.id || `toolu_${uuidv4().replace(/-/g, "").slice(0, 20)}`,
-        name: tc.function?.name || "",
-        input: safeParseJSON(tc.function?.arguments || "{}"),
-      });
-    }
-  }
-
-  if (contentBlocks.length === 0) {
-    contentBlocks.push({ type: "text", text: "" });
-  }
-
-  const usage = openaiData.usage || {};
-  let stopReason = "end_turn";
-  if (choice?.finish_reason === "length") stopReason = "max_tokens";
-  else if (choice?.finish_reason === "tool_calls") stopReason = "tool_use";
-  else if (choice?.finish_reason === "stop") stopReason = "end_turn";
-
-  return {
-    id: openaiData.id || `msg_${requestId}`,
-    type: "message",
-    role: "assistant",
-    model: modelName,
-    content: contentBlocks,
-    stop_reason: stopReason,
-    stop_sequence: null,
-    usage: {
-      input_tokens: usage.prompt_tokens || 0,
-      output_tokens: usage.completion_tokens || 0,
-    },
-  };
-}
-
-function safeParseJSON(str) {
-  try { return JSON.parse(str); } catch { return {}; }
 }
 
 // Anthropic tool_result content may be a string or an array of blocks.
@@ -739,10 +691,13 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
   const adapter = getAdapter(apiFormat);
   let buffer = "";
   let accumulatedContent = "";
+  let accumulatedReasoning = "";
   let streamUsage = null;
   let sentMessageStart = false;
   let terminated = false;
   let nextBlockIndex = 0;
+  let thinkingBlockOpen = false;
+  let thinkingBlockIndex = -1;
   let textBlockOpen = false;
   let textBlockIndex = -1;
   const toolBlocks = new Map(); // OpenAI tool_call index -> { index, id, name }
@@ -774,10 +729,32 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
     });
   }
 
+  function closeThinkingBlock() {
+    if (!thinkingBlockOpen) return;
+    writeAnthropicEvent(res, "content_block_stop", {
+      type: "content_block_stop",
+      index: thinkingBlockIndex,
+    });
+    thinkingBlockOpen = false;
+    thinkingBlockIndex = -1;
+  }
+
+  function ensureThinkingBlockStart() {
+    if (thinkingBlockOpen) return;
+    thinkingBlockIndex = nextBlockIndex++;
+    thinkingBlockOpen = true;
+    writeAnthropicEvent(res, "content_block_start", {
+      type: "content_block_start",
+      index: thinkingBlockIndex,
+      content_block: { type: "thinking", thinking: "" },
+    });
+  }
+
   // Open a text content block on demand. Only used for text deltas so a
   // tool_use block is never masked by an empty text block (issue 6).
   function ensureTextBlockStart() {
     if (textBlockOpen) return;
+    closeThinkingBlock();
     textBlockIndex = nextBlockIndex++;
     textBlockOpen = true;
     writeAnthropicEvent(res, "content_block_start", {
@@ -787,8 +764,9 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
     });
   }
 
-  // Close any currently-open content block (text or tool_use).
+  // Close any currently-open content block (thinking, text, or tool_use).
   function closeOpenBlocks() {
+    closeThinkingBlock();
     if (textBlockOpen) {
       writeAnthropicEvent(res, "content_block_stop", {
         type: "content_block_stop",
@@ -818,7 +796,10 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
     writeAnthropicEvent(res, "message_delta", {
       type: "message_delta",
       delta: { stop_reason: stopReason, stop_sequence: null },
-      usage: { output_tokens: streamUsage?.completion_tokens ?? estimateTokens(accumulatedContent) },
+      usage: {
+        output_tokens: streamUsage?.completion_tokens ??
+          (estimateTokens(accumulatedContent) + estimateTokens(accumulatedReasoning)),
+      },
     });
     writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
   }
@@ -852,6 +833,26 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
 
         ensureMessageStart();
 
+        if (
+          parsed.deltaReasoning &&
+          !textBlockOpen &&
+          toolBlocks.size === 0
+        ) {
+          // Anthropic content blocks cannot overlap. Reasoning normally
+          // precedes answer text; if an upstream emits more reasoning after a
+          // later block has opened, do not open another thinking block.
+          ensureThinkingBlockStart();
+          accumulatedReasoning += parsed.deltaReasoning;
+          writeAnthropicEvent(res, "content_block_delta", {
+            type: "content_block_delta",
+            index: thinkingBlockIndex,
+            delta: {
+              type: "thinking_delta",
+              thinking: parsed.deltaReasoning,
+            },
+          });
+        }
+
         if (parsed.deltaContent) {
           ensureTextBlockStart();
           accumulatedContent += parsed.deltaContent;
@@ -874,6 +875,7 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
             // Open a new tool_use block the first time we see this index, or
             // when an id arrives for it. Close any open text block first.
             if (!block && tc.id) {
+              closeThinkingBlock();
               if (textBlockOpen) {
                 writeAnthropicEvent(res, "content_block_stop", {
                   type: "content_block_stop",
@@ -934,7 +936,8 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
     setSettled(true);
 
     const inputTokens = streamUsage?.prompt_tokens ?? estimateTokens(openaiMessages);
-    const outputTokens = streamUsage?.completion_tokens ?? estimateTokens(accumulatedContent);
+    const outputTokens = streamUsage?.completion_tokens ??
+      (estimateTokens(accumulatedContent) + estimateTokens(accumulatedReasoning));
     const cacheWriteTokens = streamUsage?.prompt_tokens_details?.cache_creation_input_tokens
       ?? streamUsage?.prompt_tokens_details?.cache_write_tokens ?? 0;
     const cacheReadTokens = streamUsage?.prompt_tokens_details?.cached_tokens

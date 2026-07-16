@@ -165,6 +165,10 @@ export function parseResponseData(rawData) {
     .filter(b => b.type === "text")
     .map(b => b.text)
     .join("");
+  const reasoning = contentBlocks
+    .filter(b => b.type === "thinking")
+    .map(b => b.thinking || "")
+    .join("");
 
   // Extract tool calls
   const toolUseBlocks = contentBlocks.filter(b => b.type === "tool_use");
@@ -183,6 +187,7 @@ export function parseResponseData(rawData) {
   const finishReason = mapFinishReason(rawData.stop_reason);
 
   const message = { role: "assistant", content: text };
+  if (reasoning) message.reasoning_content = reasoning;
   if (toolCalls) message.tool_calls = toolCalls;
 
   const openaiResponse = {
@@ -257,6 +262,16 @@ export function parseStreamChunk(rawChunk, ctx) {
       if (delta?.type === "text_delta") {
         return {
           deltaContent: delta.text || null,
+          deltaReasoning: null,
+          finishReason: null,
+          usage: null,
+          toolCalls: null,
+        };
+      }
+      if (delta?.type === "thinking_delta") {
+        return {
+          deltaContent: null,
+          deltaReasoning: delta.thinking || null,
           finishReason: null,
           usage: null,
           toolCalls: null,
@@ -334,12 +349,19 @@ export function buildStreamChunk(rawChunk, ctx) {
   if (!parsed) return null;
 
   // Skip chunks with no useful content
-  if (!parsed.deltaContent && !parsed.finishReason && !parsed.usage && !parsed.toolCalls) {
+  if (
+    !parsed.deltaContent &&
+    !parsed.deltaReasoning &&
+    !parsed.finishReason &&
+    !parsed.usage &&
+    !parsed.toolCalls
+  ) {
     return null;
   }
 
   const delta = {};
   if (parsed.deltaContent) delta.content = parsed.deltaContent;
+  if (parsed.deltaReasoning) delta.reasoning_content = parsed.deltaReasoning;
   if (parsed.toolCalls) delta.tool_calls = parsed.toolCalls;
 
   const choice = {
