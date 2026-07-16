@@ -353,16 +353,47 @@ export function parseStreamChunk(rawChunk, ctx) {
     }
 
     case "response.failed": {
-      const message =
-        rawChunk.response?.error?.message || "Responses API stream failed";
+      const upstreamError = rawChunk.response?.error || {};
+      const message = upstreamError.message || "Responses API stream failed";
       const error = new Error(message);
       error.name = "UpstreamStreamError";
+      // The Responses API surfaces failures mid-stream (after a 200) as a typed
+      // event whose reason lives in error.code as a string (e.g.
+      // "rate_limit_exceeded"). Recover an HTTP status so callers can log it and
+      // sideline the key just like an HTTP-level failure.
+      error.code = upstreamError.code ?? null;
+      error.statusCode = responsesErrorStatus(upstreamError.code);
       throw error;
     }
 
     default:
       // Lifecycle noise (response.created, content_part events, done markers)
       return null;
+  }
+}
+
+/**
+ * Map a Responses API error `code` string to the HTTP status the proxy uses for
+ * key health. Only the actionable codes (401/402/403/429) need exact mapping;
+ * anything else falls back to 500 so it is logged but never sidelines a key.
+ */
+function responsesErrorStatus(code) {
+  switch (code) {
+    case "rate_limit_exceeded":
+    case "tokens_exceeded":
+    case "requests_exceeded":
+      return 429;
+    case "insufficient_quota":
+    case "billing_hard_limit_reached":
+      return 402;
+    case "invalid_api_key":
+    case "authentication_error":
+      return 401;
+    case "permission_denied":
+    case "access_terminated":
+      return 403;
+    default:
+      return 500;
   }
 }
 

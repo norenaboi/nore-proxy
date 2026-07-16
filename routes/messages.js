@@ -240,6 +240,17 @@ function persistUpstreamError({
   );
 }
 
+// Records a mid-stream failure against the active key. The upstream already
+// returned 200 and then failed partway (e.g. Responses API `response.failed`),
+// so this is the only place the failure's status is seen. Sidelines the key for
+// actionable codes when key health is on, mirroring the HTTP-status path.
+function recordMidStreamFailure(endpointInfo, error) {
+  const status = Number(error?.statusCode);
+  if (!endpointInfo?.token || !ACTIONABLE_CODES.has(status)) return;
+  const sideline = resolveKeyHealth(endpointInfo.keyHealth);
+  keyStateManager.recordFailure(endpointInfo.endpointKey, endpointInfo.token, status, { sideline });
+}
+
 // --- Route: POST /v1/messages ---
 
 router.post("/v1/messages", verifyApiKey, async (req, res) => {
@@ -904,9 +915,14 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
       } catch (error) {
         if (getSettled()) return;
         setSettled(true);
-        persistUpstreamError({ requestId, modelName, endpointInfo, requestHeaders: headers, upstreamUrl: fullUrl, error, responseBody: chunkData });
+        // A mid-stream failure (e.g. Responses API `response.failed`) carries its
+        // own statusCode. Record it against the key so an actionable code still
+        // sidelines even though the upstream returned 200 before failing.
+        recordMidStreamFailure(endpointInfo, error);
+        const statusCode = error.statusCode ?? 500;
+        persistUpstreamError({ requestId, modelName, endpointInfo, requestHeaders: headers, upstreamUrl: fullUrl, error, statusCode, responseBody: chunkData });
         logRequestEnd(requestId, false, 0, 0, error.message);
-        sendAnthropicStreamError(res, error, 500);
+        sendAnthropicStreamError(res, error, statusCode);
         stream.destroy();
         return;
       }

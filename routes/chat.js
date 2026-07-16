@@ -57,6 +57,17 @@ function persistUpstreamError({
   );
 }
 
+// Records a mid-stream failure against the active key. The upstream already
+// returned 200 and then failed partway (e.g. Responses API `response.failed`),
+// so this is the only place the failure's status is seen. Sidelines the key for
+// actionable codes when key health is on, mirroring the HTTP-status path.
+function recordMidStreamFailure(endpointInfo, error) {
+  const status = Number(error?.statusCode);
+  if (!endpointInfo?.token || !ACTIONABLE_CODES.has(status)) return;
+  const sideline = resolveKeyHealth(endpointInfo.keyHealth);
+  keyStateManager.recordFailure(endpointInfo.endpointKey, endpointInfo.token, status, { sideline });
+}
+
 function sendStreamError(res, requestId, modelName, error, statusCode = 500) {
   if (res.writableEnded) return;
 
@@ -413,6 +424,11 @@ async function streamFromBackend(
             streamSettled = true;
             error.name = error.name || "StreamAdapterError";
 
+            // A mid-stream failure carries its own statusCode; record it so an
+            // actionable code still sidelines the key even though the upstream
+            // returned 200 before failing.
+            recordMidStreamFailure(endpointInfo, error);
+            const statusCode = error.statusCode ?? 500;
             persistUpstreamError({
               requestId,
               modelName,
@@ -420,10 +436,11 @@ async function streamFromBackend(
               requestHeaders: headers,
               upstreamUrl: fullUrl,
               error,
+              statusCode,
               responseBody: chunkData,
             });
             logRequestEnd(requestId, false, 0, 0, error.message);
-            sendStreamError(res, requestId, modelName, error, 500);
+            sendStreamError(res, requestId, modelName, error, statusCode);
             response.data.destroy();
             return;
           }
