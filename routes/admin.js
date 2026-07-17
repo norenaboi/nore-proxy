@@ -92,6 +92,7 @@ function computeCostsFromLogs(logs) {
       log.output_tokens || 0,
       log.cache_write_tokens || 0,
       log.cache_read_tokens || 0,
+      log.token_accounting_version ?? null,
     );
     totalCost += costs.totalCost;
     totalInputCost += costs.inputCost;
@@ -166,6 +167,15 @@ router.get("/api/logs", verifySession, async (req, res) => {
     .filter((log) => log.type === "request_end" && log.status === "success")
     .map((log) => {
       const apiKey = log.api_key || "Unknown";
+      const model = log.model || "Unknown";
+      const costs = calculateCost(
+        model,
+        log.input_tokens,
+        log.output_tokens,
+        log.cache_write_tokens,
+        log.cache_read_tokens,
+        log.token_accounting_version ?? null,
+      );
       return {
         timestamp: log.timestamp || 0,
         request_id: log.request_id || "",
@@ -173,13 +183,16 @@ router.get("/api/logs", verifySession, async (req, res) => {
           log.key_name ||
           (apiKey !== "Unknown" ? apiKeyManager.getKeyName(apiKey) : "Unknown"),
         api_key: apiKey.length > 5 ? apiKey.substring(0, 5) + "..." : apiKey,
-        model: log.model || "Unknown",
+        model,
         input_tokens: log.input_tokens || 0,
         output_tokens: log.output_tokens || 0,
         cache_write_tokens: log.cache_write_tokens || 0,
         cache_read_tokens: log.cache_read_tokens || 0,
+        token_accounting_version:
+          log.token_accounting_version ?? null,
         total_tokens: (log.input_tokens || 0) + (log.output_tokens || 0),
         duration: log.duration || 0,
+        cost: costs.totalCost,
       };
     })
     .sort((a, b) => b.timestamp - a.timestamp)
@@ -1484,16 +1497,27 @@ router.get("/api/users/:apiKey", verifySession, async (req, res) => {
 
     const userLogs = allUserLogs
       .filter((log) => log.type === "request_end" && log.status === "success")
-      .map((log) => ({
-        timestamp: log.timestamp || 0,
-        model: log.model || "Unknown",
-        input_tokens: log.input_tokens || 0,
-        output_tokens: log.output_tokens || 0,
-        cache_write_tokens: log.cache_write_tokens || 0,
-        cache_read_tokens: log.cache_read_tokens || 0,
-        total_tokens: (log.input_tokens || 0) + (log.output_tokens || 0),
-        duration: log.duration || 0,
-      }))
+      .map((log) => {
+        const model = log.model || "Unknown";
+        const costs = calculateCost(
+          model,
+          log.input_tokens,
+          log.output_tokens,
+          log.cache_write_tokens,
+          log.cache_read_tokens,
+        );
+        return {
+          timestamp: log.timestamp || 0,
+          model,
+          input_tokens: log.input_tokens || 0,
+          output_tokens: log.output_tokens || 0,
+          cache_write_tokens: log.cache_write_tokens || 0,
+          cache_read_tokens: log.cache_read_tokens || 0,
+          total_tokens: (log.input_tokens || 0) + (log.output_tokens || 0),
+          duration: log.duration || 0,
+          cost: costs.totalCost,
+        };
+      })
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, 50);
 
@@ -1536,40 +1560,66 @@ router.get("/api/users/:apiKey", verifySession, async (req, res) => {
 // Get model usage statistics from database
 router.get("/api/model-usage", verifySession, async (req, res) => {
   try {
-    // Query all request_end logs from database
-    const query = `
-      SELECT
-        model,
-        COUNT(*) as request_count,
-        SUM(CASE WHEN json_extract(data, '$.status') = 'success' THEN 1 ELSE 0 END) as success_count,
-        SUM(CASE WHEN json_extract(data, '$.status') = 'failed' THEN 1 ELSE 0 END) as error_count,
-        SUM(CAST(json_extract(data, '$.input_tokens') AS INTEGER)) as total_input_tokens,
-        SUM(CAST(json_extract(data, '$.output_tokens') AS INTEGER)) as total_output_tokens,
-        SUM(CAST(json_extract(data, '$.cache_write_tokens') AS INTEGER)) as total_cache_write_tokens,
-        SUM(CAST(json_extract(data, '$.cache_read_tokens') AS INTEGER)) as total_cache_read_tokens
-      FROM request_logs
-      WHERE type = 'request_end' AND model IS NOT NULL
-      GROUP BY model
-      ORDER BY total_input_tokens + total_output_tokens DESC
-    `;
+    const rows = logManager.db
+      .prepare(
+        "SELECT data FROM request_logs WHERE type = 'request_end' AND model IS NOT NULL",
+      )
+      .all();
+    const modelsByName = new Map();
 
-    const rows = logManager.db.prepare(query).all();
+    for (const row of rows) {
+      const log = JSON.parse(row.data);
+      if (!log.model) continue;
 
-    const models = rows.map((row) => ({
-      model: row.model,
-      requests: row.request_count || 0,
-      success_count: row.success_count || 0,
-      errors: row.error_count || 0,
-      input_tokens: row.total_input_tokens || 0,
-      output_tokens: row.total_output_tokens || 0,
-      cache_write_tokens: row.total_cache_write_tokens || 0,
-      cache_read_tokens: row.total_cache_read_tokens || 0,
-      total_tokens:
-        (row.total_input_tokens || 0) +
-        (row.total_output_tokens || 0) +
-        (row.total_cache_write_tokens || 0) +
-        (row.total_cache_read_tokens || 0),
-    }));
+      const model = modelsByName.get(log.model) || {
+        model: log.model,
+        requests: 0,
+        success_count: 0,
+        errors: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_write_tokens: 0,
+        cache_read_tokens: 0,
+        cost: 0,
+      };
+
+      model.requests += 1;
+      if (log.status === "success") {
+        const inputTokens = log.input_tokens || 0;
+        const outputTokens = log.output_tokens || 0;
+        const cacheWriteTokens = log.cache_write_tokens || 0;
+        const cacheReadTokens = log.cache_read_tokens || 0;
+
+        model.success_count += 1;
+        model.input_tokens += inputTokens;
+        model.output_tokens += outputTokens;
+        model.cache_write_tokens += cacheWriteTokens;
+        model.cache_read_tokens += cacheReadTokens;
+        model.cost += calculateCost(
+          log.model,
+          inputTokens,
+          outputTokens,
+          cacheWriteTokens,
+          cacheReadTokens,
+          log.token_accounting_version ?? null,
+        ).totalCost;
+      } else if (log.status === "failed") {
+        model.errors += 1;
+      }
+
+      modelsByName.set(log.model, model);
+    }
+
+    const models = Array.from(modelsByName.values())
+      .map((model) => ({
+        ...model,
+        total_tokens:
+          model.input_tokens +
+          model.output_tokens +
+          model.cache_write_tokens +
+          model.cache_read_tokens,
+      }))
+      .sort((a, b) => b.total_tokens - a.total_tokens);
 
     // Calculate totals
     const totals = models.reduce(

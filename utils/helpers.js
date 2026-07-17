@@ -5,6 +5,7 @@ import Config from "../config/index.js";
 import settingsManager from "../services/settingsManager.js";
 import keyStateManager from "../services/keyStateManager.js";
 import { normalizeEndpointUrl } from "./endpointPolicies.js";
+import { addModelPricing } from "./pricing.js";
 
 export {
   normalizeEndpointUrl,
@@ -19,6 +20,17 @@ const __dirname = path.dirname(__filename);
 export let MODEL_ALIASES = {};
 export let MODEL_REGISTRY = {};
 export let MODEL_PRICING = {};
+
+const ZERO_MODEL_PRICING = Object.freeze({
+  input: 0,
+  output: 0,
+  cache_write: 0,
+  cache_read: 0,
+});
+
+export function getModelPricing(modelName) {
+  return MODEL_PRICING[modelName] || ZERO_MODEL_PRICING;
+}
 
 export function maskKey(key) {
   if (!key || key.length <= 8) return key ? "****" : key;
@@ -48,6 +60,9 @@ export function loadModelsFromFile() {
     for (const [displayName, modelConfig] of Object.entries(
       data.models || {},
     )) {
+      // Keep pricing available for historical logs even when a model is disabled.
+      addModelPricing(MODEL_PRICING, displayName, modelConfig);
+
       // Skip disabled models — they won't appear in the registry or be routable
       if (modelConfig.disabled === true) continue;
 
@@ -63,14 +78,6 @@ export function loadModelsFromFile() {
         version,
       };
 
-      if (modelConfig.pricing) {
-        MODEL_PRICING[displayName] = {
-          input: modelConfig.pricing.input ?? 0,
-          output: modelConfig.pricing.output ?? 0,
-          cache_write: modelConfig.pricing.cache_write ?? 0,
-          cache_read: modelConfig.pricing.cache_read ?? 0,
-        };
-      }
     }
   } catch (error) {
     console.error("Error loading models:", error);

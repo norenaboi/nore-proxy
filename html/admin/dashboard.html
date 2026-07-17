@@ -628,11 +628,8 @@
             </div>
         </main>
 
-        <script src="pricing-utils.js"></script>
         <script>
             async function loadDashboard() {
-                // Fetch model pricing from API
-                await fetchModelPricing();
                 try {
                     const response = await fetch("/api/logs");
 
@@ -740,14 +737,7 @@
                                 const timeStr = date.toLocaleTimeString();
                                 const dateStr = date.toLocaleDateString();
 
-                                const logCosts = calculateCost(
-                                    log.model,
-                                    log.input_tokens,
-                                    log.output_tokens,
-                                    log.cache_write_tokens || 0,
-                                    log.cache_read_tokens || 0,
-                                );
-                                const logTotalCost = logCosts.totalCost;
+                                const logTotalCost = log.cost || 0;
 
                                 return `
                             <tr>

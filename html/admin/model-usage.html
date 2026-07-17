@@ -393,7 +393,6 @@
             </div>
         </main>
 
-        <script src="pricing-utils.js"></script>
         <script>
             let modelsData = [];
             let sortColumn = "total_tokens";
@@ -406,29 +405,15 @@
 
             async function loadModelUsage() {
                 try {
-                    // Fetch model pricing data first
-                    await fetchModelPricing();
-
                     const response = await fetch("/api/model-usage");
                     const data = await response.json();
 
-                    // Calculate cost for each model
-                    modelsData = data.models.map((model) => {
-                        const costResult = calculateCost(
-                            model.model,
-                            model.input_tokens,
-                            model.output_tokens,
-                            model.cache_write_tokens,
-                            model.cache_read_tokens,
-                        );
-                        return {
-                            ...model,
-                            cost: costResult.totalCost,
-                            cache_tokens:
-                                model.cache_write_tokens +
-                                model.cache_read_tokens,
-                        };
-                    });
+                    modelsData = data.models.map((model) => ({
+                        ...model,
+                        cost: model.cost || 0,
+                        cache_tokens:
+                            model.cache_write_tokens + model.cache_read_tokens,
+                    }));
 
                     sortAndRenderTable();
 

@@ -10,6 +10,7 @@ import {
   logRequestStart,
   logRequestEnd,
   logError,
+  normalizeBillingTokens,
 } from "../utils/logging.js";
 import {
   MODEL_REGISTRY,
@@ -427,6 +428,11 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
       usage = {
         prompt_tokens: rawData.usage?.input_tokens || 0,
         completion_tokens: rawData.usage?.output_tokens || 0,
+        prompt_tokens_details: {
+          cache_creation_input_tokens:
+            rawData.usage?.cache_creation_input_tokens || 0,
+          cached_tokens: rawData.usage?.cache_read_input_tokens || 0,
+        },
       };
     } else {
       // Convert OpenAI response → Anthropic format
@@ -444,7 +450,25 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
     const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens
       ?? usage.prompt_tokens_details?.cache_read_tokens ?? 0;
 
-    logRequestEnd(requestId, true, inputTokens, outputTokens, null, contentText, apiKey, cacheWriteTokens, cacheReadTokens);
+    const billingTokens = normalizeBillingTokens({
+      inputTokens,
+      outputTokens,
+      cacheWriteTokens,
+      cacheReadTokens,
+      inputIncludesCache: apiFormat !== "anthropic",
+    });
+    logRequestEnd(
+      requestId,
+      true,
+      billingTokens.inputTokens,
+      billingTokens.outputTokens,
+      null,
+      contentText,
+      apiKey,
+      billingTokens.cacheWriteTokens,
+      billingTokens.cacheReadTokens,
+      billingTokens.tokenAccountingVersion,
+    );
 
     return anthropicResponse;
   } catch (error) {
@@ -675,8 +699,26 @@ function streamAnthropicPassthrough(res, stream, requestId, modelName, apiKey, o
     const outputTokens = usage?.output_tokens ?? estimateTokens(accumulatedContent);
     const cacheWriteTokens = usage?.cache_creation_input_tokens ?? 0;
     const cacheReadTokens = usage?.cache_read_input_tokens ?? 0;
+    const billingTokens = normalizeBillingTokens({
+      inputTokens,
+      outputTokens,
+      cacheWriteTokens,
+      cacheReadTokens,
+      inputIncludesCache: false,
+    });
 
-    logRequestEnd(requestId, true, inputTokens, outputTokens, null, accumulatedContent, apiKey, cacheWriteTokens, cacheReadTokens);
+    logRequestEnd(
+      requestId,
+      true,
+      billingTokens.inputTokens,
+      billingTokens.outputTokens,
+      null,
+      accumulatedContent,
+      apiKey,
+      billingTokens.cacheWriteTokens,
+      billingTokens.cacheReadTokens,
+      billingTokens.tokenAccountingVersion,
+    );
 
     if (!res.writableEnded) {
       res.end();
@@ -955,8 +997,26 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
       ?? streamUsage?.prompt_tokens_details?.cache_write_tokens ?? 0;
     const cacheReadTokens = streamUsage?.prompt_tokens_details?.cached_tokens
       ?? streamUsage?.prompt_tokens_details?.cache_read_tokens ?? 0;
+    const billingTokens = normalizeBillingTokens({
+      inputTokens,
+      outputTokens,
+      cacheWriteTokens,
+      cacheReadTokens,
+      inputIncludesCache: apiFormat !== "anthropic",
+    });
 
-    logRequestEnd(requestId, true, inputTokens, outputTokens, null, accumulatedContent, apiKey, cacheWriteTokens, cacheReadTokens);
+    logRequestEnd(
+      requestId,
+      true,
+      billingTokens.inputTokens,
+      billingTokens.outputTokens,
+      null,
+      accumulatedContent,
+      apiKey,
+      billingTokens.cacheWriteTokens,
+      billingTokens.cacheReadTokens,
+      billingTokens.tokenAccountingVersion,
+    );
 
     if (!res.writableEnded) {
       res.end();

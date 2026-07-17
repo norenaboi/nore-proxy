@@ -125,10 +125,12 @@ export function parseResponseData(rawData) {
     usage: {
       prompt_tokens: usage.prompt_tokens ?? 0,
       completion_tokens: usage.completion_tokens ?? 0,
-      cache_write_tokens:
-        usage.prompt_tokens_details?.cache_creation_input_tokens ?? 0,
-      cache_read_tokens:
-        usage.prompt_tokens_details?.cached_tokens ?? 0,
+      prompt_tokens_details: {
+        cache_creation_input_tokens:
+          usage.prompt_tokens_details?.cache_creation_input_tokens ?? 0,
+        cached_tokens:
+          usage.prompt_tokens_details?.cached_tokens ?? 0,
+      },
     },
     // Return the raw response as-is — it's already OpenAI compatible.
     response: rawData,

@@ -5,7 +5,12 @@ import { verifyApiKey } from "../middleware/auth.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import settingsManager from "../services/settingsManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
-import { logRequestStart, logRequestEnd, logError } from "../utils/logging.js";
+import {
+  logRequestStart,
+  logRequestEnd,
+  logError,
+  normalizeBillingTokens,
+} from "../utils/logging.js";
 import {
   MODEL_REGISTRY,
   getEndpointForModel,
@@ -470,16 +475,24 @@ async function streamFromBackend(
         streamUsage?.prompt_tokens_details?.cached_tokens
         ?? streamUsage?.prompt_tokens_details?.cache_read_tokens
         ?? 0;
+      const billingTokens = normalizeBillingTokens({
+        inputTokens,
+        outputTokens,
+        cacheWriteTokens,
+        cacheReadTokens,
+        inputIncludesCache: endpointInfo?.apiFormat !== "anthropic",
+      });
       logRequestEnd(
         requestId,
         true,
-        inputTokens,
-        outputTokens,
+        billingTokens.inputTokens,
+        billingTokens.outputTokens,
         null,
         accumulatedContent,
         apiKey,
-        cacheWriteTokens,
-        cacheReadTokens,
+        billingTokens.cacheWriteTokens,
+        billingTokens.cacheReadTokens,
+        billingTokens.tokenAccountingVersion,
       );
       // Always send [DONE] to close the stream for the client
       if (!res.writableEnded) {
@@ -688,16 +701,24 @@ async function makeBackendRequest(
       ?? usage.prompt_tokens_details?.cache_read_tokens
       ?? 0;
 
+    const billingTokens = normalizeBillingTokens({
+      inputTokens,
+      outputTokens,
+      cacheWriteTokens,
+      cacheReadTokens,
+      inputIncludesCache: endpointInfo?.apiFormat !== "anthropic",
+    });
     logRequestEnd(
       requestId,
       true,
-      inputTokens,
-      outputTokens,
+      billingTokens.inputTokens,
+      billingTokens.outputTokens,
       null,
       content,
       apiKey,
-      cacheWriteTokens,
-      cacheReadTokens,
+      billingTokens.cacheWriteTokens,
+      billingTokens.cacheReadTokens,
+      billingTokens.tokenAccountingVersion,
     );
 
     // Return the OpenAI-compatible response object

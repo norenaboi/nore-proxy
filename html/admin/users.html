@@ -449,7 +449,6 @@
             <div id="userDetail" class="user-detail"></div>
         </main>
 
-        <script src="pricing-utils.js"></script>
         <script>
             let allUsers = [];
             let currentUser = null;
@@ -461,7 +460,6 @@
 
             async function loadUsers() {
                 try {
-                    await fetchModelPricing();
                     const response = await fetch("/api/users");
                     const data = await response.json();
 
@@ -658,18 +656,7 @@
                                         const dateStr =
                                             date.toLocaleDateString();
 
-                                        const reqCosts = calculateCost(
-                                            req.model || "unknown",
-                                            req.input_tokens,
-                                            req.output_tokens,
-                                            req.cache_write_tokens || 0,
-                                            req.cache_read_tokens || 0,
-                                        );
-                                        const reqTotalCost =
-                                            reqCosts.inputCost +
-                                            reqCosts.outputCost +
-                                            reqCosts.cacheWriteCost +
-                                            reqCosts.cacheReadCost;
+                                        const reqTotalCost = req.cost || 0;
 
                                         return `
                                         <tr>

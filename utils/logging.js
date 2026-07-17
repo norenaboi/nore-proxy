@@ -1,10 +1,12 @@
 import logManager from "../services/logManager.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import realtimeStats from "../services/realtimeStats.js";
-import { MODEL_PRICING, maskKey } from "./helpers.js";
+import { getModelPricing, maskKey } from "./helpers.js";
+import { calculateModelCost } from "./pricing.js";
 import { sanitizeHeadersForLogging } from "./errorLogging.js";
 
 export { sanitizeHeadersForLogging } from "./errorLogging.js";
+export { normalizeBillingTokens, TOKEN_ACCOUNTING_VERSION } from "./pricing.js";
 
 // Cost calculation function based on model type
 export function calculateCost(
@@ -13,53 +15,16 @@ export function calculateCost(
   outputTokens,
   cacheWriteTokens,
   cacheReadTokens,
+  tokenAccountingVersion = null,
 ) {
-  let inputRate, outputRate, cacheWriteRate, cacheReadRate;
-
-  // Try to get pricing from MODEL_PRICING first
-  if (MODEL_PRICING[model]) {
-    inputRate = MODEL_PRICING[model].input / 1_000_000;
-    outputRate = MODEL_PRICING[model].output / 1_000_000;
-    cacheWriteRate = MODEL_PRICING[model].cache_write / 1_000_000;
-    cacheReadRate = MODEL_PRICING[model].cache_read / 1_000_000;
-  } else {
-    // Fallback to pattern matching for backward compatibility
-    const modelLower = (model || "").toLowerCase();
-
-    if (modelLower.includes("sonnet")) {
-      inputRate = 3 / 1_000_000;
-      outputRate = 15 / 1_000_000;
-      cacheWriteRate = 3.75 / 1_000_000;
-      cacheReadRate = 0.3 / 1_000_000;
-    } else if (modelLower.includes("opus")) {
-      inputRate = 5 / 1_000_000;
-      outputRate = 25 / 1_000_000;
-      cacheWriteRate = 6.25 / 1_000_000;
-      cacheReadRate = 0.5 / 1_000_000;
-    } else {
-      // Default pricing
-      inputRate = 1 / 1_000_000;
-      outputRate = 1 / 1_000_000;
-      cacheWriteRate = 1 / 1_000_000;
-      cacheReadRate = 1 / 1_000_000;
-    }
-  }
-
-  // Calculate normal input tokens (excluding cache write and cache read tokens)
-  const normalInputTokens = inputTokens - cacheWriteTokens - cacheReadTokens;
-
-  const inputCost = normalInputTokens * inputRate;
-  const outputCost = outputTokens * outputRate;
-  const cacheWriteCost = cacheWriteTokens * cacheWriteRate;
-  const cacheReadCost = cacheReadTokens * cacheReadRate;
-
-  return {
-    inputCost,
-    outputCost,
-    cacheWriteCost,
-    cacheReadCost,
-    totalCost: inputCost + outputCost + cacheWriteCost + cacheReadCost,
-  };
+  return calculateModelCost(
+    getModelPricing(model),
+    inputTokens,
+    outputTokens,
+    cacheWriteTokens,
+    cacheReadTokens,
+    tokenAccountingVersion,
+  );
 }
 
 export function logRequestStart(
@@ -103,6 +68,7 @@ export function logRequestEnd(
   apiKey = null,
   cacheWriteTokens = 0,
   cacheReadTokens = 0,
+  tokenAccountingVersion = null,
 ) {
   if (!realtimeStats.activeRequests.has(requestId)) {
     return;
@@ -153,6 +119,9 @@ export function logRequestEnd(
     output_tokens: outputTokens,
     cache_write_tokens: cacheWriteTokens,
     cache_read_tokens: cacheReadTokens,
+    ...(tokenAccountingVersion !== null
+      ? { token_accounting_version: tokenAccountingVersion }
+      : {}),
     error,
     params: req.params || {},
     key_name: apiKeyManager.getKeyName(resolvedKey),

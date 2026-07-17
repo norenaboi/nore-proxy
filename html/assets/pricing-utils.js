@@ -55,21 +55,32 @@ function calculateCost(
   outputTokens,
   cacheWriteTokens,
   cacheReadTokens,
+  tokenAccountingVersion = null,
 ) {
   const pricing = getModelPricing(model);
+  const normalizeTokens = (value) => {
+    const count = Number(value);
+    return Number.isFinite(count) ? Math.max(0, count) : 0;
+  };
+  const input = normalizeTokens(inputTokens);
+  const output = normalizeTokens(outputTokens);
+  const cacheWrite = normalizeTokens(cacheWriteTokens);
+  const cacheRead = normalizeTokens(cacheReadTokens);
 
   const inputRate = pricing.input / 1_000_000;
   const outputRate = pricing.output / 1_000_000;
   const cacheWriteRate = pricing.cache_write / 1_000_000;
   const cacheReadRate = pricing.cache_read / 1_000_000;
 
-  // Calculate normal input tokens (excluding cache write and cache read tokens)
-  const normalInputTokens = inputTokens - cacheWriteTokens - cacheReadTokens;
+  const normalInputTokens =
+    tokenAccountingVersion === 2
+      ? input
+      : Math.max(0, input - cacheWrite - cacheRead);
 
   const inputCost = normalInputTokens * inputRate;
-  const outputCost = outputTokens * outputRate;
-  const cacheWriteCost = cacheWriteTokens * cacheWriteRate;
-  const cacheReadCost = cacheReadTokens * cacheReadRate;
+  const outputCost = output * outputRate;
+  const cacheWriteCost = cacheWrite * cacheWriteRate;
+  const cacheReadCost = cacheRead * cacheReadRate;
 
   return {
     inputCost,
