@@ -4,6 +4,13 @@ import { fileURLToPath } from "url";
 import Config from "../config/index.js";
 import settingsManager from "../services/settingsManager.js";
 import keyStateManager from "../services/keyStateManager.js";
+import { normalizeEndpointUrl } from "./endpointPolicies.js";
+
+export {
+  normalizeEndpointUrl,
+  getFullUrl,
+  applyGenerationPolicy,
+} from "./endpointPolicies.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -198,55 +205,6 @@ export function estimateTokens(input) {
 }
 
 /**
- * Normalizes an endpoint base URL:
- * - Strips /v1 and anything after it, but keeps any path prefix before /v1.
- * - Example: https://api.example.com/generate/v1/chat/completions -> https://api.example.com/generate
- * - Example: https://api.example.com/v1 -> https://api.example.com
- * - Example: https://api.example.com -> https://api.example.com (unchanged)
- */
-export function normalizeEndpointUrl(rawUrl) {
-  // Remove trailing slash first
-  let url = rawUrl.replace(/\/$/, '');
-  // Strip /v1 and everything after it (handles /v1, /v1/, /v1/anything)
-  // But keep any prefix path segment before /v1 (e.g. /generate)
-  url = url.replace(/\/v1(\/.*)?$/, '');
-  return url;
-}
-
-/**
- * Builds the full backend URL by appending the correct path for the given apiFormat.
- * @param {string} baseUrl - normalized base URL (no trailing /v1)
- * @param {string} apiFormat - one of: 'openai', 'anthropic', 'gemini', 'gemini-openai', 'openai-responses', 'openai-codex'
- * @param {string} modelName - the actual model name (used by gemini to build the path)
- * @param {boolean} isStreaming - when true, returns the streaming endpoint for formats that need a different URL (gemini)
- * @returns {string} full URL with path appended
- */
-export function getFullUrl(baseUrl, apiFormat, modelName, isStreaming = false) {
-  switch (apiFormat) {
-    case 'anthropic':
-      return `${baseUrl}/v1/messages`;
-
-    case 'gemini':
-      // Gemini uses a separate streaming endpoint with SSE output
-      return isStreaming
-        ? `${baseUrl}/v1beta/models/${modelName}:streamGenerateContent`
-        : `${baseUrl}/v1beta/models/${modelName}:generateContent`;
-
-    case 'gemini-openai':
-      // Gemini's OpenAI-compatible endpoint — same body/response shape as OpenAI
-      return `${baseUrl}/v1beta/openai/chat/completions`;
-
-    case 'openai-responses':
-    case 'openai-codex':
-      return `${baseUrl}/v1/responses`;
-
-    case 'openai':
-    default:
-      return `${baseUrl}/v1/chat/completions`;
-  }
-}
-
-/**
  * Resolves a model name to its endpoint WITHOUT selecting a token or advancing
  * any round-robin state. Side-effect free — safe to call for metadata reads
  * (prompt-caching depth, generation defaults) without consuming a key slot.
@@ -263,7 +221,8 @@ export function getEndpointMeta(modelName) {
   if (!endpoint) return null;
 
   const actualModel = actualModelName.replace(new RegExp(`-v${version}$`), "");
-  const normalizedUrl = normalizeEndpointUrl(endpoint.url);
+  const appendApiSuffix = endpoint.appendApiSuffix !== false;
+  const normalizedUrl = normalizeEndpointUrl(endpoint.url, appendApiSuffix);
 
   return {
     url: normalizedUrl,
@@ -272,6 +231,7 @@ export function getEndpointMeta(modelName) {
     endpointName: endpoint.name || endpointKey,
     customHeaders: endpoint.headers || {},
     apiFormat: endpoint.apiFormat || "openai",
+    appendApiSuffix,
     generationDefaults:
       endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
     promptCaching:

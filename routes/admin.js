@@ -634,7 +634,7 @@ router.post("/api/models/test", verifySession, async (req, res) => {
     }
 
     const { url: backendUrl, token: backendToken, actualModel, customHeaders, apiFormat } = endpointInfo;
-    const fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
+    const fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, false, endpointInfo.appendApiSuffix);
 
     const start = Date.now();
 
@@ -744,6 +744,7 @@ router.get("/api/endpoints", verifySession, async (req, res) => {
         tokens: maskedTokens,
         headers: endpoint.headers || {},
         apiFormat: endpoint.apiFormat || 'openai',
+        appendApiSuffix: endpoint.appendApiSuffix !== false,
         generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
         promptCaching: endpoint.promptCaching !== undefined ? endpoint.promptCaching : null,
         keyRotation: endpoint.keyRotation ?? null,
@@ -779,9 +780,11 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "URL and at least one token are required" });
 
     // Validate and capture apiFormat from request, falling back to admin panel default
-    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai', 'openai-responses', 'openai-codex'];
+    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'openai-responses', 'openai-codex'];
     const apiFormat =
-      (req.body.apiFormat !== undefined ? req.body.apiFormat : settingsManager.get("defaultEndpointApiFormat")) || 'openai';
+      (req.body.apiFormat !== undefined
+        ? req.body.apiFormat
+        : settingsManager.get("defaultEndpointApiFormat")) || "openai";
     if (!VALID_FORMATS.includes(apiFormat)) {
       return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${VALID_FORMATS.join(', ')}` });
     }
@@ -828,9 +831,13 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
 
     const newIndex = maxIndex + 1;
     const endpointKey = `v${newIndex}`;
-    const normalizedUrl = normalizeEndpointUrl(url);
+    if (req.body.appendApiSuffix !== undefined && typeof req.body.appendApiSuffix !== "boolean") {
+      return res.status(400).json({ error: "appendApiSuffix must be a boolean" });
+    }
+    const appendApiSuffix = req.body.appendApiSuffix !== false;
+    const normalizedUrl = normalizeEndpointUrl(url, appendApiSuffix);
 
-    // Resolve generation defaults from admin panel settings when client provides none
+    // Resolve generation policy from admin panel defaults when client provides none
     let generationDefaults = validateGenerationDefaults(req.body.generationDefaults);
     if (!req.body.generationDefaults || typeof req.body.generationDefaults !== "object" || Array.isArray(req.body.generationDefaults)) {
       generationDefaults = settingsManager.getDefaultGenerationDefaults();
@@ -860,6 +867,7 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       tokens,
       headers: headersObj,
       apiFormat,
+      appendApiSuffix,
       generationDefaults,
       promptCaching,
       keyRotation,
@@ -884,13 +892,22 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "Index and URL are required" });
 
     // Validate and capture apiFormat (undefined means keep existing)
-    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'gemini-openai', 'openai-responses', 'openai-codex'];
+    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'openai-responses', 'openai-codex'];
     let apiFormat = undefined;
     if (req.body.apiFormat !== undefined) {
       apiFormat = req.body.apiFormat;
       if (!VALID_FORMATS.includes(apiFormat)) {
         return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${VALID_FORMATS.join(', ')}` });
       }
+    }
+
+    // Validate optional suffix behavior if provided (undefined = keep existing)
+    let appendApiSuffix = undefined;
+    if (req.body.appendApiSuffix !== undefined) {
+      if (typeof req.body.appendApiSuffix !== "boolean") {
+        return res.status(400).json({ error: "appendApiSuffix must be a boolean" });
+      }
+      appendApiSuffix = req.body.appendApiSuffix;
     }
 
     // Validate optional generation defaults if provided
@@ -1011,7 +1028,11 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
     if (name !== undefined) {
       data[endpointKey].name = name || `Endpoint ${index}`;
     }
-    data[endpointKey].url = normalizeEndpointUrl(url);
+    const effectiveAppendApiSuffix = appendApiSuffix ?? (data[endpointKey].appendApiSuffix !== false);
+    data[endpointKey].url = normalizeEndpointUrl(url, effectiveAppendApiSuffix);
+    if (appendApiSuffix !== undefined) {
+      data[endpointKey].appendApiSuffix = appendApiSuffix;
+    }
     if (resolvedTokens !== null) {
       data[endpointKey].tokens = resolvedTokens;
     }
@@ -1364,6 +1385,12 @@ router.put("/api/settings", verifySession, (req, res) => {
     }
     if (updates.defaultEndpointKeyHealth !== undefined && typeof updates.defaultEndpointKeyHealth !== "boolean") {
       return res.status(400).json({ error: "Default key health must be a boolean" });
+    }
+    if (
+      updates.defaultEndpointApiFormat !== undefined &&
+      !["openai", "anthropic", "gemini", "openai-responses", "openai-codex"].includes(updates.defaultEndpointApiFormat)
+    ) {
+      return res.status(400).json({ error: "Invalid default endpoint API format" });
     }
 
     settingsManager.update(updates);

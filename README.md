@@ -6,12 +6,12 @@ A unified OpenAI API proxy server
 
 - **Unified API gateway**: `/v1/chat/completions` (OpenAI format) and `/v1/messages` (Anthropic format), both routing to multiple upstream backends.
 - **Claude Code support**: `/v1/messages` accepts the Anthropic Messages API natively and translates to any upstream backend.
-- **Multi-provider backends**: OpenAI, Anthropic, Gemini, Gemini-OpenAI, OpenAI-Responses, and OpenAI-Codex adapters with streaming normalization.
+- **Multi-provider backends**: OpenAI, Anthropic, Gemini, OpenAI-Responses, and OpenAI-Codex adapters with streaming normalization.
 - **Reasoning support**: preserve reasoning and thinking content across all backend adapters.
-- **Endpoint management**: JSON-backed endpoint config with auto-reload, URL normalization, custom headers, and per-endpoint API format selection.
+- **Endpoint management**: JSON-backed endpoint config with auto-reload, custom headers, and per-endpoint API format selection.
 - **Key rotation**: round-robin or sticky rotation across multiple keys per endpoint.
 - **Key health tracking**: failing keys are sidelined automatically and requests hop to the next healthy key.
-- **Per-endpoint generation defaults**: fallback `temperature`, `top_p`, and `max_tokens` values, with client values taking priority.
+- **Per-endpoint generation policies**: strip, pass through, or override client `temperature`, `top_p`, and `max_tokens` values.
 - **Prompt caching for Claude**: optional Claude cache breakpoints with cache-read and cache-write token accounting.
 - **Model registry**: map display names to upstream models, group by endpoint in the admin UI, and fetch model lists on demand.
 - **Cost tracking**: calculate input, output, cache-read, and cache-write costs using per-model pricing.

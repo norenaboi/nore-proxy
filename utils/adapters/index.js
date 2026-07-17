@@ -33,8 +33,6 @@ const ADAPTERS = {
   openai: openaiAdapter,
   gemini: geminiAdapter,
   anthropic: anthropicAdapter,
-  // Gemini OpenAI-compatible endpoint uses the same passthrough as OpenAI
-  'gemini-openai': openaiAdapter,
   // OpenAI Responses API (/v1/responses)
   'openai-responses': openaiResponsesAdapter,
   // OpenAI Codex — /v1/responses with Codex-required envelope + headers

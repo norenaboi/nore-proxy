@@ -6,13 +6,19 @@ import apiKeyManager from "../services/apiKeyManager.js";
 import settingsManager from "../services/settingsManager.js";
 import keyStateManager, { ACTIONABLE_CODES } from "../services/keyStateManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
-import { logRequestStart, logRequestEnd, logError } from "../utils/logging.js";
+import {
+  logRequestStart,
+  logRequestEnd,
+  logError,
+} from "../utils/logging.js";
 import {
   MODEL_REGISTRY,
   getEndpointForModel,
   getFullUrl,
   estimateTokens,
   isClaudeModel,
+  applyGenerationPolicy,
+  getEndpointMeta,
   resolveKeyHealth,
 } from "../utils/helpers.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
@@ -234,6 +240,13 @@ router.post("/v1/messages", verifyApiKey, async (req, res) => {
     });
   }
 
+  // Apply the same endpoint generation policy used by the OpenAI route before
+  // logging or forwarding either the native or converted request.
+  const endpointMeta = getEndpointMeta(modelName);
+  if (endpointMeta?.generationDefaults) {
+    applyGenerationPolicy(anthropicReq, endpointMeta.generationDefaults);
+  }
+
   // Log request start
   const requestParams = {
     temperature: anthropicReq.temperature,
@@ -307,7 +320,7 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
 
       if (apiFormat === "anthropic") {
         // Backend is native Anthropic — forward the request mostly as-is
-        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
+        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, false, endpointInfo.appendApiSuffix);
         data = {
           ...anthropicReq,
           model: actualModel,
@@ -325,7 +338,7 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
       } else {
         // Backend is OpenAI/Gemini — convert Anthropic → OpenAI, then use adapters
         const adapter = getAdapter(apiFormat);
-        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
+        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, false, endpointInfo.appendApiSuffix);
 
         const openaiReq = {
           model: actualModel,
@@ -505,7 +518,7 @@ async function streamMessages(req, res, requestId, anthropicReq, modelName, apiK
 
       if (apiFormat === "anthropic") {
         // Native Anthropic backend — forward as-is with stream: true
-        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
+        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, false, endpointInfo.appendApiSuffix);
         data = {
           ...anthropicReq,
           model: actualModel,
@@ -522,7 +535,7 @@ async function streamMessages(req, res, requestId, anthropicReq, modelName, apiK
       } else {
         // Non-Anthropic backend — convert to OpenAI format, stream, then re-wrap as Anthropic SSE
         const adapter = getAdapter(apiFormat);
-        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true);
+        fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true, endpointInfo.appendApiSuffix);
 
         const openaiReq = {
           model: actualModel,

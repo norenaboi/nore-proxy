@@ -577,10 +577,9 @@
                     </div>
                     <div class="setting-control" style="min-width:180px;">
                         <select id="defaultEndpointApiFormat" class="form-select">
-                            <option value="openai" ${s.defaultEndpointApiFormat === 'openai' ? 'selected' : ''}>OpenAI — /v1/chat/completions</option>
+                            <option value="openai" ${!s.defaultEndpointApiFormat || s.defaultEndpointApiFormat === 'openai' ? 'selected' : ''}>OpenAI — /v1/chat/completions</option>
                             <option value="anthropic" ${s.defaultEndpointApiFormat === 'anthropic' ? 'selected' : ''}>Anthropic — /v1/messages</option>
                             <option value="gemini" ${s.defaultEndpointApiFormat === 'gemini' ? 'selected' : ''}>Gemini — /v1beta/generateContent</option>
-                            <option value="gemini-openai" ${s.defaultEndpointApiFormat === 'gemini-openai' ? 'selected' : ''}>Gemini OpenAI — /v1beta/openai/chat/completions</option>
                             <option value="openai-responses" ${s.defaultEndpointApiFormat === 'openai-responses' ? 'selected' : ''}>OpenAI Responses — /v1/responses</option>
                             <option value="openai-codex" ${s.defaultEndpointApiFormat === 'openai-codex' ? 'selected' : ''}>OpenAI Codex — /v1/responses</option>
                         </select>
@@ -625,7 +624,7 @@
                     <div class="setting-info">
                         <div class="setting-label">Default Temperature</div>
                         <div class="setting-description">
-                            When enabled, new endpoints start with this temperature value.
+                            Seeds new endpoints: blank passes the client value through; a value overrides it.
                         </div>
                     </div>
                     <div class="setting-control">
@@ -639,7 +638,7 @@
                             </label>
                             <input type="number" class="number-input" id="defaultEndpointTemperature"
                                    step="0.1" min="0" max="2" placeholder="1"
-                                   value="${s.defaultEndpointTemperature}"
+                                   value="${s.defaultEndpointTemperature ?? ''}"
                                    ${s.defaultEndpointTemperatureEnabled ? "" : "disabled"}>
                         </div>
                     </div>
@@ -649,7 +648,7 @@
                     <div class="setting-info">
                         <div class="setting-label">Default Top P</div>
                         <div class="setting-description">
-                            When enabled, new endpoints start with this top_p value.
+                            Seeds new endpoints: blank passes the client value through; a value overrides it.
                         </div>
                     </div>
                     <div class="setting-control">
@@ -663,7 +662,7 @@
                             </label>
                             <input type="number" class="number-input" id="defaultEndpointTopP"
                                    step="0.05" min="0" max="1" placeholder="1"
-                                   value="${s.defaultEndpointTopP}"
+                                   value="${s.defaultEndpointTopP ?? ''}"
                                    ${s.defaultEndpointTopPEnabled ? "" : "disabled"}>
                         </div>
                     </div>
@@ -673,7 +672,7 @@
                     <div class="setting-info">
                         <div class="setting-label">Default Max Tokens</div>
                         <div class="setting-description">
-                            When enabled, new endpoints start with this max_tokens value.
+                            Seeds new endpoints: blank passes the client value through; a value overrides it.
                         </div>
                     </div>
                     <div class="setting-control">
@@ -687,7 +686,7 @@
                             </label>
                             <input type="number" class="number-input" id="defaultEndpointMaxTokens"
                                    step="1" min="1" placeholder="4096"
-                                   value="${s.defaultEndpointMaxTokens}"
+                                   value="${s.defaultEndpointMaxTokens ?? ''}"
                                    ${s.defaultEndpointMaxTokensEnabled ? "" : "disabled"}>
                         </div>
                     </div>
@@ -789,23 +788,26 @@
 
                 const apiFormat = document.getElementById("defaultEndpointApiFormat").value;
                 const tempEnabled = document.getElementById("defaultEndpointTemperatureEnabled").checked;
-                const temp = parseFloat(document.getElementById("defaultEndpointTemperature").value);
+                const tempRaw = document.getElementById("defaultEndpointTemperature").value.trim();
+                const temp = tempRaw === "" ? null : parseFloat(tempRaw);
                 const topPEnabled = document.getElementById("defaultEndpointTopPEnabled").checked;
-                const topP = parseFloat(document.getElementById("defaultEndpointTopP").value);
+                const topPRaw = document.getElementById("defaultEndpointTopP").value.trim();
+                const topP = topPRaw === "" ? null : parseFloat(topPRaw);
                 const maxTokensEnabled = document.getElementById("defaultEndpointMaxTokensEnabled").checked;
-                const maxTokens = parseInt(document.getElementById("defaultEndpointMaxTokens").value, 10);
+                const maxTokensRaw = document.getElementById("defaultEndpointMaxTokens").value.trim();
+                const maxTokens = maxTokensRaw === "" ? null : parseInt(maxTokensRaw, 10);
                 const promptCachingEnabled = document.getElementById("defaultEndpointPromptCachingEnabled").checked;
                 const promptCachingDepth = parseInt(document.getElementById("defaultEndpointPromptCachingDepth").value, 10);
 
-                if (tempEnabled && (isNaN(temp) || temp < 0 || temp > 2)) {
+                if (tempEnabled && temp !== null && (isNaN(temp) || temp < 0 || temp > 2)) {
                     showToast("Temperature must be between 0 and 2", "error");
                     return;
                 }
-                if (topPEnabled && (isNaN(topP) || topP < 0 || topP > 1)) {
+                if (topPEnabled && topP !== null && (isNaN(topP) || topP < 0 || topP > 1)) {
                     showToast("Top P must be between 0 and 1", "error");
                     return;
                 }
-                if (maxTokensEnabled && (isNaN(maxTokens) || maxTokens < 1)) {
+                if (maxTokensEnabled && maxTokens !== null && (isNaN(maxTokens) || maxTokens < 1)) {
                     showToast("Max tokens must be at least 1", "error");
                     return;
                 }

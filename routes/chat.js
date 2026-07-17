@@ -14,6 +14,7 @@ import {
   estimateTokens,
   isClaudeModel,
   applyClaudePromptCaching,
+  applyGenerationPolicy,
   resolveKeyHealth,
 } from "../utils/helpers.js";
 import keyStateManager, {
@@ -139,19 +140,11 @@ router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
     delete openaiReq[param];
   }
 
-  // Apply per-endpoint generation defaults before adapter transformation.
-  // Client-provided values always win; defaults only fill missing fields.
+  // Apply the endpoint's strip/pass-through/override generation policy.
   // Metadata read only — must NOT select a key or advance rotation.
   const endpointMeta = getEndpointMeta(modelName);
   if (endpointMeta?.generationDefaults) {
-    const defaults = endpointMeta.generationDefaults;
-    for (const [param, config] of Object.entries(defaults)) {
-      if (config.enabled && config.value !== undefined && config.value !== null) {
-        if (openaiReq[param] === undefined || openaiReq[param] === null) {
-          openaiReq[param] = config.value;
-        }
-      }
-    }
+    applyGenerationPolicy(openaiReq, endpointMeta.generationDefaults);
   }
 
   // Log request start
@@ -263,7 +256,7 @@ async function streamFromBackend(
         tokenHash,
       } = endpointInfo;
       adapter = getAdapter(apiFormat);
-      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true);
+      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true, endpointInfo.appendApiSuffix);
       let messages = openaiReq.messages || [];
 
       // Apply Claude prompt caching if the target model is Claude and caching is enabled
@@ -588,7 +581,7 @@ async function makeBackendRequest(
         tokenHash,
       } = endpointInfo;
       adapter = getAdapter(apiFormat);
-      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel);
+      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, false, endpointInfo.appendApiSuffix);
       let messages = openaiReq.messages || [];
 
       // Apply Claude prompt caching if the target model is Claude and caching is enabled

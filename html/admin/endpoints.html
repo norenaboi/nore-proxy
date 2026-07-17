@@ -405,7 +405,6 @@
             .api-format-badge.openai { background: var(--primary-alpha-01); color: var(--primary); }
             .api-format-badge.anthropic { background: rgba(217, 119, 6, 0.1); color: #d97706; }
             .api-format-badge.gemini { background: rgba(99, 102, 241, 0.1); color: #6366f1; }
-            .api-format-badge.gemini-openai { background: rgba(168, 85, 247, 0.1); color: #a855f7; }
             .api-format-badge.openai-responses { background: rgba(16, 185, 129, 0.1); color: #10b981; }
             .api-format-badge.openai-codex { background: rgba(20, 184, 166, 0.1); color: #14b8a6; }
 
@@ -718,8 +717,14 @@
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Endpoint URL</label>
-                                <input type="text" id="urlInput" class="form-input" placeholder="e.g., http://localhost:8081/v1">
-                                <p class="form-hint">The base URL for the API endpoint</p>
+                                <input type="text" id="urlInput" class="form-input" placeholder="e.g., https://api.example.com">
+                                <p class="form-hint">Use a base URL when automatic suffixes are on, or include a provider prefix such as /v4 or /v1beta/openai when off.</p>
+                                <label class="gen-toggle" style="margin-top:10px;">
+                                    <input type="checkbox" id="appendApiSuffixInput" checked>
+                                    <span class="gen-toggle-slider"></span>
+                                    <span>Append API version suffix</span>
+                                </label>
+                                <p class="form-hint">On adds the format's full versioned route. Off preserves your URL prefix and adds only the operation path.</p>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">API Tokens <span id="tokenCountBadge" style="font-size:11px;color:var(--gray-500);font-weight:400;"></span></label>
@@ -750,8 +755,8 @@
                             </div>
 
                             <div class="form-group">
-                                <label class="form-label">Default Generation Settings</label>
-                                <p class="form-hint" style="margin-bottom:12px;">When enabled, these values are used only if the client does not send them.</p>
+                                <label class="form-label">Generation Settings</label>
+                                <p class="form-hint" style="margin-bottom:12px;">Off strips the client value. On with a blank field passes the client value through. On with a value overrides the client.</p>
 
                                 <div class="gen-setting-row">
                                     <label class="gen-toggle">
@@ -802,7 +807,6 @@
                                     <option value="openai">OpenAI — /v1/chat/completions (default)</option>
                                     <option value="anthropic">Anthropic — /v1/messages</option>
                                     <option value="gemini">Gemini — /v1beta/generateContent</option>
-                                    <option value="gemini-openai">Gemini OpenAI — /v1beta/openai/chat/completions</option>
                                     <option value="openai-responses">OpenAI Responses — /v1/responses</option>
                                     <option value="openai-codex">OpenAI Codex — /v1/responses</option>
                                 </select>
@@ -957,7 +961,6 @@
                         'openai': 'OpenAI',
                         'anthropic': 'Anthropic',
                         'gemini': 'Gemini',
-                        'gemini-openai': 'Gemini OpenAI',
                         'openai-responses': 'OpenAI Responses',
                         'openai-codex': 'OpenAI Codex',
                     };
@@ -1142,6 +1145,7 @@
                 document.getElementById('modalSubmit').textContent = 'Add Endpoint';
                 document.getElementById('nameInput').value = '';
                 document.getElementById('urlInput').value = '';
+                document.getElementById('appendApiSuffixInput').checked = true;
                 document.getElementById('tokenInput').value = '';
                 document.getElementById('bulkTokenInput').value = '';
                 document.getElementById('tokenInput').placeholder = 'Paste a token and press Add';
@@ -1196,6 +1200,7 @@
                 document.getElementById('modalSubmit').textContent = 'Save Changes';
                 document.getElementById('nameInput').value = endpoint.name || '';
                 document.getElementById('urlInput').value = endpoint.url;
+                document.getElementById('appendApiSuffixInput').checked = endpoint.appendApiSuffix !== false;
                 document.getElementById('tokenInput').value = '';
                 document.getElementById('bulkTokenInput').value = '';
                 document.getElementById('tokenInput').placeholder = 'Add a new token (optional)';
@@ -1364,6 +1369,7 @@
                 const url = document.getElementById('urlInput').value.trim();
                 const headersRaw = document.getElementById('headersInput').value.trim();
                 const apiFormat = document.getElementById('apiFormatInput').value;
+                const appendApiSuffix = document.getElementById('appendApiSuffixInput').checked;
                 const keyRotation = document.getElementById('keyRotationInput').value;
                 const keyHealth = document.getElementById('keyHealthInput').value === 'true';
                 const generationDefaults = collectGenerationDefaults();
@@ -1428,7 +1434,7 @@
                         // server will replace only if new tokens are provided.
                         // We send the full array; server uses non-masked ones as replacements,
                         // masked ones signal "keep existing" only when ALL tokens are masked.
-                        const payload = { index: editingEndpoint, name, url, tokens: finalTokens, headers, apiFormat, keyRotation, keyHealth, generationDefaults, promptCaching };
+                        const payload = { index: editingEndpoint, name, url, tokens: finalTokens, headers, apiFormat, appendApiSuffix, keyRotation, keyHealth, generationDefaults, promptCaching };
 
                         const response = await fetch('/api/endpoints', {
                             method: 'PUT',
@@ -1446,7 +1452,7 @@
                         const response = await fetch('/api/endpoints', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ name, url, tokens: finalTokens, headers, apiFormat, keyRotation, keyHealth, generationDefaults, promptCaching }),
+                            body: JSON.stringify({ name, url, tokens: finalTokens, headers, apiFormat, appendApiSuffix, keyRotation, keyHealth, generationDefaults, promptCaching }),
                         });
 
                         if (!response.ok) {

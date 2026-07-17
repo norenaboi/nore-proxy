@@ -87,10 +87,9 @@ class Config {
           token: tokens[0], // Keep for backward compat
           tokens,
           headers: endpoint.headers || {},
-          // apiFormat controls which API path is appended when forwarding requests.
-          // Valid values: 'openai' (default), 'anthropic', 'gemini'
-          apiFormat: endpoint.apiFormat || 'openai',
-          // Per-endpoint generation defaults applied when the client omits them.
+          apiFormat: endpoint.apiFormat || "openai",
+          appendApiSuffix: endpoint.appendApiSuffix !== false,
+          // Per-endpoint generation policy: strip, pass through, or override.
           generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),
           // Per-endpoint prompt caching (null for old endpoints = deliberately disabled/off).
           promptCaching: endpoint.promptCaching !== undefined ? endpoint.promptCaching : null,

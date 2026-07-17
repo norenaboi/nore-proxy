@@ -132,23 +132,18 @@ class SettingsManager {
   }
 
   /**
-   * Returns the default generationDefaults object for endpoints that do not
-   * define their own and for which the client did not send a value.
+   * Returns the generation policy seeded onto endpoints without their own.
    */
   getDefaultGenerationDefaults() {
+    const entry = (enabledKey, valueKey) => {
+      const enabled = this.get(enabledKey);
+      const value = this.get(valueKey);
+      return { enabled, value: enabled && value !== null ? value : null };
+    };
     return {
-      temperature: {
-        enabled: this.get("defaultEndpointTemperatureEnabled"),
-        value: this.get("defaultEndpointTemperature"),
-      },
-      top_p: {
-        enabled: this.get("defaultEndpointTopPEnabled"),
-        value: this.get("defaultEndpointTopP"),
-      },
-      max_tokens: {
-        enabled: this.get("defaultEndpointMaxTokensEnabled"),
-        value: this.get("defaultEndpointMaxTokens"),
-      },
+      temperature: entry("defaultEndpointTemperatureEnabled", "defaultEndpointTemperature"),
+      top_p: entry("defaultEndpointTopPEnabled", "defaultEndpointTopP"),
+      max_tokens: entry("defaultEndpointMaxTokensEnabled", "defaultEndpointMaxTokens"),
     };
   }
 

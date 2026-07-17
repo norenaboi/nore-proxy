@@ -94,8 +94,11 @@ function buildAnthropicBody(openaiReq, actualModel, isStream) {
   const body = {
     model: actualModel,
     messages: anthropicMessages,
-    max_tokens: openaiReq.max_tokens ?? 4096, // Anthropic requires this
   };
+
+  if (openaiReq.max_tokens !== undefined) {
+    body.max_tokens = openaiReq.max_tokens;
+  }
 
   if (isStream) {
     body.stream = true;
