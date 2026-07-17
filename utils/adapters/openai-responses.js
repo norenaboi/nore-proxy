@@ -382,9 +382,10 @@ function responsesErrorStatus(code) {
     case "rate_limit_exceeded":
     case "tokens_exceeded":
     case "requests_exceeded":
-      return 429;
     case "insufficient_quota":
+      return 429;
     case "billing_hard_limit_reached":
+    case "billing_not_active":
       return 402;
     case "invalid_api_key":
     case "authentication_error":
