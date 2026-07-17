@@ -24,11 +24,11 @@ app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
-        // All HTML pages use inline <script> and <style> tags
+        // Page CSS/JS lives in external files under html/assets (css/, js/, shared.js);
+        // styleSrc keeps 'unsafe-inline' for style="" attributes still used in markup
         defaultSrc: ["'self'"],
         scriptSrc: [
           "'self'",
-          "'unsafe-inline'",
           "https://cdnjs.cloudflare.com",
           "https://cdn.jsdelivr.net",
           "https://static.cloudflareinsights.com",
