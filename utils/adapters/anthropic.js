@@ -53,6 +53,28 @@ function buildAnthropicBody(openaiReq, actualModel, isStream) {
       continue;
     }
 
+    // OpenAI tool result message → Anthropic tool_result block in a user
+    // message. Results from parallel tool calls arrive as consecutive tool
+    // messages; Anthropic expects them as blocks in a single user message.
+    if (msg.role === "tool") {
+      const block = {
+        type: "tool_result",
+        tool_use_id: msg.tool_call_id,
+        content: toToolResultContent(msg.content),
+      };
+      const prev = anthropicMessages[anthropicMessages.length - 1];
+      if (
+        prev?.role === "user" &&
+        Array.isArray(prev.content) &&
+        prev.content.some(b => b.type === "tool_result")
+      ) {
+        prev.content.push(block);
+      } else {
+        anthropicMessages.push({ role: "user", content: [block] });
+      }
+      continue;
+    }
+
     const role = msg.role === "assistant" ? "assistant" : "user";
 
     // Content can be a string or an array of content blocks
@@ -86,6 +108,27 @@ function buildAnthropicBody(openaiReq, actualModel, isStream) {
         // Pass through already-Anthropic-shaped blocks (e.g. cache_control blocks)
         return block;
       }).filter(Boolean);
+    }
+
+    // Assistant tool calls → tool_use blocks, appended after any text content
+    if (role === "assistant" && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+      const blocks = typeof content === "string"
+        ? (content ? [{ type: "text", text: content }] : [])
+        : (Array.isArray(content) ? content : []);
+      for (const tc of msg.tool_calls) {
+        if (tc.type !== "function" || !tc.function) continue;
+        blocks.push({
+          type: "tool_use",
+          id: tc.id,
+          name: tc.function.name,
+          input: parseToolArguments(tc.function.arguments),
+        });
+      }
+      content = blocks;
+    } else if (content == null) {
+      // Anthropic rejects null content; a message with no content and no
+      // tool calls carries nothing — drop it
+      continue;
     }
 
     anthropicMessages.push({ role, content });
@@ -128,10 +171,9 @@ function buildAnthropicBody(openaiReq, actualModel, isStream) {
 
   if (openaiReq.tool_choice) {
     if (typeof openaiReq.tool_choice === "string") {
-      // OpenAI: "auto" / "none" → Anthropic: { type: "auto" } / { type: "any" }
-      body.tool_choice = openaiReq.tool_choice === "none"
-        ? { type: "auto" }  // Anthropic doesn't have "none", closest is auto
-        : { type: openaiReq.tool_choice === "any" ? "any" : "auto" };
+      // OpenAI: "auto" / "none" / "required" → Anthropic: auto / none / any
+      const choiceMap = { auto: "auto", none: "none", required: "any", any: "any" };
+      body.tool_choice = { type: choiceMap[openaiReq.tool_choice] || "auto" };
     } else if (openaiReq.tool_choice?.function?.name) {
       body.tool_choice = {
         type: "tool",
@@ -141,6 +183,32 @@ function buildAnthropicBody(openaiReq, actualModel, isStream) {
   }
 
   return body;
+}
+
+/**
+ * OpenAI tool call arguments are a JSON string; Anthropic wants the object.
+ */
+function parseToolArguments(args) {
+  if (args == null) return {};
+  if (typeof args === "object") return args;
+  try {
+    return JSON.parse(args);
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * OpenAI tool message content (string or content blocks) → tool_result content.
+ */
+function toToolResultContent(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map(b => (b.type === "text" ? { type: "text", text: b.text } : b))
+      .filter(Boolean);
+  }
+  return content == null ? "" : String(content);
 }
 
 /**
@@ -250,6 +318,7 @@ export function parseResponseData(rawData) {
  */
 export function parseStreamChunk(rawChunk, ctx) {
   if (!rawChunk || typeof rawChunk !== "object") return null;
+  const state = getStreamState(ctx);
 
   switch (rawChunk.type) {
     case "message_start": {
@@ -281,14 +350,14 @@ export function parseStreamChunk(rawChunk, ctx) {
         };
       }
       if (delta?.type === "input_json_delta") {
-        // Partial tool call arguments — forward as tool_calls delta
-        // We use the index to identify which tool call this belongs to
+        // Partial tool call arguments — forward as tool_calls delta, using
+        // the sequential tool index assigned at content_block_start
         return {
           deltaContent: null,
           finishReason: null,
           usage: null,
           toolCalls: [{
-            index: rawChunk.index || 0,
+            index: state.toolIndexMap[rawChunk.index] ?? 0,
             function: { arguments: delta.partial_json || "" },
           }],
         };
@@ -299,12 +368,20 @@ export function parseStreamChunk(rawChunk, ctx) {
     case "content_block_start": {
       const block = rawChunk.content_block;
       if (block?.type === "tool_use") {
+        // Anthropic's index counts all content blocks (text/thinking too);
+        // OpenAI clients expect tool call indices to be sequential from 0.
+        // Idempotent: parseStreamChunk may run twice on the same chunk.
+        let toolIndex = state.toolIndexMap[rawChunk.index];
+        if (toolIndex === undefined) {
+          toolIndex = state.nextToolIndex++;
+          state.toolIndexMap[rawChunk.index] = toolIndex;
+        }
         return {
           deltaContent: null,
           finishReason: null,
           usage: null,
           toolCalls: [{
-            index: rawChunk.index || 0,
+            index: toolIndex,
             id: block.id,
             type: "function",
             function: {
@@ -319,6 +396,7 @@ export function parseStreamChunk(rawChunk, ctx) {
 
     case "message_delta": {
       const finishReason = mapFinishReason(rawChunk.delta?.stop_reason);
+      if (finishReason) state.finishSent = true;
       const usage = rawChunk.usage
         ? anthropicUsageToOpenAI(rawChunk.usage)
         : null;
@@ -331,9 +409,12 @@ export function parseStreamChunk(rawChunk, ctx) {
     }
 
     case "message_stop": {
+      // message_delta already carried the real finish reason (e.g.
+      // "tool_calls"); emitting a second "stop" here would make clients
+      // treat a tool-call turn as a normal completion.
       return {
         deltaContent: null,
-        finishReason: "stop",
+        finishReason: state.finishSent ? null : "stop",
         usage: null,
         toolCalls: null,
       };
@@ -386,6 +467,19 @@ export function buildStreamChunk(rawChunk, ctx) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Per-stream adapter state, kept on the caller's streamCtx (one per request).
+ * Tracks the Anthropic block index → sequential tool call index mapping and
+ * whether a finish reason has already been emitted.
+ */
+function getStreamState(ctx) {
+  if (!ctx) return { toolIndexMap: {}, nextToolIndex: 0, finishSent: false };
+  if (!ctx._anthropicState) {
+    ctx._anthropicState = { toolIndexMap: {}, nextToolIndex: 0, finishSent: false };
+  }
+  return ctx._anthropicState;
+}
 
 function mapFinishReason(reason) {
   switch (reason) {
