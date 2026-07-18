@@ -21,6 +21,7 @@ router.get("/api/summary", async (req, res) => {
 
   const totalRequests = logs.length;
   const dailyRequests = recent24hLogs.length;
+  const allTime = logManager.getRequestTotals();
 
   const successful = recent24hLogs.filter(
     (log) => log.status === "success",
@@ -74,6 +75,8 @@ router.get("/api/summary", async (req, res) => {
   res.json({
     total_requests: totalRequests,
     daily_requests: dailyRequests,
+    all_time_requests: allTime.total,
+    all_time_successful: allTime.successful,
     successful,
     failed,
     total_input_tokens: totalInputTokens,

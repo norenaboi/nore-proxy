@@ -41,8 +41,13 @@
 }
 
 .logs-container {
-    background: var(--gray-900);
-    border-radius: 16px;
+    --terminal-bg: #19151e;
+    --terminal-header: #231d2a;
+    --terminal-text: #eee8f3;
+    --terminal-muted: #a99bb5;
+    --terminal-border: #403449;
+    background: var(--terminal-bg);
+    border-radius: 10px;
     overflow: hidden;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
     flex: 1;
@@ -52,9 +57,10 @@
 }
 
 .logs-header {
-    background: var(--gray-800);
+    background: var(--terminal-header);
+    color: var(--text-primary);
     padding: 16px 20px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--terminal-border);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -63,6 +69,8 @@
 .logs-terminal {
     flex: 1;
     overflow-y: auto;
+    background: var(--card-bg);
+    color: var(--terminal-text);
     padding: 20px;
     font-family: "SF Mono", Monaco, Consolas, monospace;
     font-size: 13px;
@@ -84,7 +92,7 @@
 }
 
 .log-time {
-    color: #64748b;
+    color: var(--terminal-muted);
     white-space: nowrap;
 }
 
@@ -108,7 +116,7 @@
 
 .log-message {
     flex: 1;
-    color: var(--gray-50);
+    color: var(--text-primary);
     white-space: pre-wrap;
 }
 
@@ -125,4 +133,29 @@
 
 .controls-section {
     margin-bottom: 24px;
+}
+
+.controls-section .controls {
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+
+.controls-section .btn {
+    flex: 0 0 auto;
+    align-self: center;
+}
+
+@media (max-width: 560px) {
+    .controls-section .controls {
+        align-items: center;
+    }
+
+    .log-entry {
+        display: grid;
+        grid-template-columns: auto 1fr;
+    }
+
+    .log-message {
+        grid-column: 1 / -1;
+    }
 }

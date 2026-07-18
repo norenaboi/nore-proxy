@@ -11,18 +11,18 @@
     <link rel="stylesheet" href="shared.css" />
     <script src="theme.js"></script>
     <link rel="stylesheet" href="css/models.css" />
+        <link rel="stylesheet" href="css/admin-editorial.css" />
 </head>
 <body>
+        <a class="skip-link" href="#main">Skip to content</a>
 
     <aside class="sidebar">
         <div class="logo">
-            <div class="logo-icon">
-                <i class="fa-brands fa-square-web-awesome-stroke"></i>
-            </div>
-            <span class="logo-text">Admin Panel</span>
+            <img class="logo-icon" src="/favicon.ico" alt="">
+            <span class="logo-text">Nore Proxy</span>
         </div>
 
-        <nav class="nav-menu">
+        <nav class="nav-menu" aria-label="Admin navigation">
             <a class="nav-item" href="/admin/dashboard">
                 <i class="fa-brands fa-quinscape"></i>
                 <span>Dashboard</span>
@@ -43,7 +43,7 @@
                 <i class="fa-solid fa-hexagon-nodes"></i>
                 <span>Endpoints</span>
             </a>
-            <a class="nav-item active">
+            <a class="nav-item active" aria-current="page">
                 <i class="fa-solid fa-comment-nodes"></i>
                 <span>Models</span>
             </a>
@@ -68,7 +68,7 @@
     </aside>
 
 
-    <main class="main-content">
+    <main class="main-content" id="main">
         <div id="loading" class="loading">
             <div class="loading-spinner"></div>
             <span>Loading models...</span>

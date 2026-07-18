@@ -1,0 +1,115 @@
+.card,
+.models-table-card,
+.errors-card,
+.toolbar,
+.controls-section,
+.logs-container,
+.users-grid > * {
+    border: 1px solid var(--border-color) !important;
+    border-radius: 10px !important;
+    background: var(--card-bg) !important;
+    box-shadow: none !important;
+}
+.card { margin-bottom: 18px; }
+.card-header,
+.table-header,
+.logs-header {
+    border-bottom: 1px solid var(--border-color) !important;
+    background: transparent !important;
+}
+.card-header h2,
+.card-title,
+.table-header h2,
+.modal-title,
+.detail-header h2 {
+    color: var(--text-primary) !important;
+    font-family: Georgia, "Times New Roman", serif !important;
+    font-weight: 500 !important;
+}
+.card-subtitle,
+.form-hint,
+.title-group p { color: var(--text-secondary) !important; }
+.btn {
+    min-height: 38px;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    font-weight: 650;
+}
+.btn-primary,
+.btn-success {
+    border: 1px solid var(--primary-dark) !important;
+    background: var(--primary-dark) !important;
+    color: white !important;
+}
+.btn-primary:hover,
+.btn-success:hover { filter: brightness(.92); transform: none !important; }
+.btn-secondary,
+.btn-ghost {
+    border: 1px solid var(--border-color) !important;
+    background: var(--bg-secondary) !important;
+    color: var(--primary-dark) !important;
+}
+.btn-danger { border: 1px solid var(--danger) !important; background: var(--danger) !important; color: white !important; }
+.form-input,
+.form-select,
+.form-group input,
+.form-group select,
+.form-group textarea,
+.filter-field select {
+    border: 1px solid var(--input-border) !important;
+    border-radius: 8px !important;
+    background: var(--input-bg) !important;
+    color: var(--text-primary) !important;
+    box-shadow: none !important;
+}
+.form-label,
+.form-group label,
+.filter-field label { color: var(--text-secondary) !important; font-size: 11px !important; font-weight: 700 !important; letter-spacing: .03em; }
+.stats-badge,
+.count-pill,
+.badge { border: 0 !important; background: var(--primary-light) !important; color: var(--primary-dark) !important; }
+.modal-overlay,
+.detail-backdrop { background: rgba(24, 17, 31, .58) !important; backdrop-filter: blur(3px); }
+.modal,
+.detail-panel { border: 1px solid var(--border-color) !important; border-radius: 11px !important; background: var(--card-bg) !important; box-shadow: 0 24px 70px rgba(25, 15, 35, .24) !important; }
+.modal-header,
+.modal-footer,
+.detail-header { border-color: var(--border-color) !important; background: transparent !important; }
+.modal-close,
+.icon-button { color: var(--text-secondary) !important; background: var(--bg-tertiary) !important; }
+.toast,
+.message { border: 1px solid var(--border-color) !important; border-radius: 9px !important; background: var(--card-bg) !important; color: var(--text-primary) !important; box-shadow: 0 16px 40px rgba(36, 27, 45, .14) !important; }
+.loading-spinner { border-color: var(--border-color) !important; border-top-color: var(--primary-dark) !important; }
+.models-list,
+.key-states-list { gap: 10px !important; }
+.model-item,
+.endpoint-item,
+.key-card,
+.user-card,
+.setting-row,
+.detail-field {
+    border-color: var(--border-color) !important;
+    border-radius: 8px !important;
+    background: var(--bg-secondary) !important;
+    box-shadow: none !important;
+}
+.model-item:hover,
+.endpoint-item:hover,
+.key-card:hover,
+.user-card:hover { border-color: var(--primary) !important; transform: none !important; }
+.toolbar { padding: 18px !important; }
+.table-scroll,
+.models-table-card { overflow-x: auto; }
+.models-table-card table,
+.errors-card table { min-width: 880px; }
+.logs-container { overflow: hidden; }
+.code-block { border-color: var(--border-color) !important; background: #19151e !important; color: #eee8f3 !important; }
+.gen-toggle-slider { background: var(--gray-300) !important; }
+.gen-toggle input:checked + .gen-toggle-slider { background: var(--primary-dark) !important; }
+.tokens-scroll-list { border-color: var(--border-color) !important; background: var(--bg-tertiary) !important; }
+@media (max-width: 720px) {
+    .header-actions { flex-wrap: wrap; }
+    .toolbar { align-items: stretch !important; }
+    .filters { grid-template-columns: 1fr !important; }
+    .modal-body-grid { grid-template-columns: 1fr !important; }
+}

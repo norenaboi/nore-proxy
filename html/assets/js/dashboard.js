@@ -1,3 +1,16 @@
+const dashboardState = {
+    range: "24h",
+    generation: 0,
+    data: null,
+};
+
+const rangeLabels = {
+    "24h": "Last 24 hours",
+    "7d": "Last 7 days",
+    "30d": "Last 30 days",
+    total: "All time",
+};
+
 const requestHistory = {
     expanded: false,
     filtersLoaded: false,
@@ -18,6 +31,7 @@ function redirectIfUnauthorized(response) {
 }
 
 async function loadDashboard() {
+    const generation = ++dashboardState.generation;
     try {
         const response = await fetch("/api/logs");
         if (!response.ok) {
@@ -26,6 +40,8 @@ async function loadDashboard() {
         }
 
         const data = await response.json();
+        if (generation !== dashboardState.generation) return;
+        dashboardState.data = data;
         const totalCost = data.summary.total_cost || 0;
         const dailyCost = data.summary.daily_cost || 0;
         const values = {
@@ -62,37 +78,7 @@ async function loadDashboard() {
         document.getElementById("totalCost").textContent = `$${totalCost.toFixed(2)}`;
         document.getElementById("dailyCost").textContent = `$${dailyCost.toFixed(2)}`;
 
-        const tbody = document.getElementById("apiKeysBody");
-        tbody.replaceChildren();
-        for (const key of data.api_keys) {
-            const values = [
-                key.name,
-                key.daily_requests,
-                key.total_requests,
-                key.daily_input_tokens,
-                key.daily_output_tokens,
-                key.daily_cache_write_tokens || 0,
-                key.daily_cache_read_tokens || 0,
-                key.total_input_tokens,
-                key.total_output_tokens,
-                key.total_cache_write_tokens || 0,
-                key.total_cache_read_tokens || 0,
-                `$${(key.total_cost || 0).toFixed(2)}`,
-            ];
-            const row = document.createElement("tr");
-            values.forEach((value, index) => {
-                const cell = document.createElement("td");
-                cell.textContent =
-                    typeof value === "number" ? value.toLocaleString() : value;
-                if (index === 0) {
-                    const strong = document.createElement("strong");
-                    strong.textContent = cell.textContent;
-                    cell.replaceChildren(strong);
-                }
-                row.appendChild(cell);
-            });
-            tbody.appendChild(row);
-        }
+        renderDashboardRange(data);
 
         document.getElementById("loading").style.display = "none";
         document.getElementById("dashboard").style.display = "block";
@@ -101,6 +87,71 @@ async function loadDashboard() {
         document.getElementById("error").style.display = "block";
         document.getElementById("error").textContent = error.message;
     }
+}
+
+function renderDashboardRange(data) {
+    const range = data.ranges?.[dashboardState.range];
+    if (!range) {
+        const error = document.getElementById("error");
+        error.style.display = "block";
+        error.textContent = "Dashboard range data is unavailable. Restart the server with the matching frontend and backend update.";
+        return false;
+    }
+    document.getElementById("error").style.display = "none";
+    const summary = range.summary;
+    const numberValues = {
+        rangeRequests: summary.requests,
+        rangeInput: summary.input_tokens,
+        rangeOutput: summary.output_tokens,
+        rangeCacheWrite: summary.cache_write_tokens,
+        rangeCacheRead: summary.cache_read_tokens,
+        rangeSuccessCount: summary.successes,
+        rangeFailureCount: summary.failures,
+    };
+    for (const [id, value] of Object.entries(numberValues)) {
+        document.getElementById(id).textContent = Number(value || 0).toLocaleString();
+    }
+    document.getElementById("rangeCost").textContent = `$${Number(summary.estimated_cost || 0).toFixed(2)}`;
+    document.getElementById("rangeSuccess").textContent = `${Number(summary.success_rate || 0).toFixed(1)}%`;
+    document.getElementById("rangeInputCost").textContent = `$${Number(summary.input_cost || 0).toFixed(4)}`;
+    document.getElementById("rangeOutputCost").textContent = `$${Number(summary.output_cost || 0).toFixed(4)}`;
+    document.getElementById("rangeCacheWriteCost").textContent = `$${Number(summary.cache_write_cost || 0).toFixed(4)}`;
+    document.getElementById("rangeCacheReadCost").textContent = `$${Number(summary.cache_read_cost || 0).toFixed(4)}`;
+    document.getElementById("rangeLabel").textContent = rangeLabels[dashboardState.range];
+    document.getElementById("apiKeyRangeLabel").textContent = rangeLabels[dashboardState.range];
+
+    const tbody = document.getElementById("apiKeysBody");
+    tbody.replaceChildren();
+    for (const key of range.api_keys) {
+        const row = document.createElement("tr");
+        [key.name, key.requests, key.input_tokens, key.output_tokens,
+            key.cache_write_tokens, key.cache_read_tokens,
+            `$${Number(key.estimated_cost || 0).toFixed(2)}`].forEach((value, index) => {
+            appendCell(row, typeof value === "number" ? value.toLocaleString() : value,
+                index > 0 ? "numeric-cell" : "");
+            if (index === 0) {
+                const cell = row.lastElementChild;
+                const strong = document.createElement("strong");
+                strong.textContent = cell.textContent;
+                cell.replaceChildren(strong);
+            }
+        });
+        tbody.appendChild(row);
+    }
+    return true;
+}
+
+function initializeDashboardRange() {
+    document.querySelectorAll("[data-dashboard-range]").forEach((button) => {
+        button.addEventListener("click", () => {
+            dashboardState.range = button.dataset.dashboardRange;
+            document.querySelectorAll("[data-dashboard-range]").forEach((item) => {
+                item.setAttribute("aria-pressed", String(item === button));
+            });
+            if (dashboardState.data) renderDashboardRange(dashboardState.data);
+            loadDashboard();
+        });
+    });
 }
 
 function appendCell(row, value, className = "") {
@@ -125,8 +176,9 @@ function renderRequest(request) {
     appendCell(row, `$${Number(request.estimatedCost || 0).toFixed(4)}`, "numeric-cell");
     const statusCell = document.createElement("td");
     const badge = document.createElement("span");
-    badge.className = `request-status ${request.status === "failed" ? "failed" : "success"}`;
-    badge.textContent = request.status === "failed" ? "Failed" : "Success";
+    const status = ["success", "failed"].includes(request.status) ? request.status : "unknown";
+    badge.className = `request-status ${status}`;
+    badge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
     statusCell.appendChild(badge);
     row.appendChild(statusCell);
     document.getElementById("recentLogsBody").appendChild(row);
@@ -258,6 +310,7 @@ function initializeRequestHistory() {
     loadRequestPage({ reset: true });
 }
 
+initializeDashboardRange();
 loadDashboard();
 initializeRequestHistory();
 setInterval(loadDashboard, 30000);

@@ -1,46 +1,44 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="icon" type="image/x-icon" href="favicon.ico" />
-        <link
-            rel="stylesheet"
-            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
-        />
-        <title>Model List</title>
-        <link rel="stylesheet" href="css/display.css" />
-    </head>
-    <body>
-        <div class="container">
-            <a href="/" class="back-link">
-                <i class="fa-solid fa-arrow-left"></i> Return to main menu
-            </a>
-
-            <header>
-                <h1>Models</h1>
-                <p class="subtitle">Select your model of choice</p>
-            </header>
-
-            <div class="main-layout">
-                <div class="table-container" id="table-container">
-                    <div class="loading">
-                        <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
-                        <p style="margin-top: 15px">Loading models...</p>
-                    </div>
-                </div>
-
-                <div class="filters-sidebar">
-                    <div class="filters-title">Providers</div>
-                    <div id="filters-list"></div>
-                </div>
+   <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+      <title>Models — Nore Proxy</title>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+      <link rel="stylesheet" href="css/public-editorial.css">
+      <link rel="stylesheet" href="css/display.css">
+   </head>
+   <body>
+      <header class="public-head">
+         <a class="brand" href="/"><img class="brand-mark" src="/favicon.ico" alt=""><strong>Nore Proxy</strong></a>
+         <nav aria-label="Public navigation"><a href="/usage">Usage</a><a href="/models" aria-current="page">Models</a><a href="/">Overview</a></nav>
+      </header>
+      <main class="public-main">
+         <header class="catalog-head">
+            <div>
+               <p class="eyebrow">Model catalog</p>
+               <h1>Available models</h1>
+               <p class="lead">Filter by provider, compare published pricing, and select a row to copy its exact identifier.</p>
             </div>
-        </div>
-
-        <div id="notification" class="copy-notification">
-            <i class="fa-solid fa-check"></i> Copied to Clipboard
-        </div>
-
-        <script src="js/display.js"></script>
-    </body>
+            <a class="back-link" href="/">← Overview</a>
+         </header>
+         <div class="main-layout">
+            <div class="table-container panel" id="table-container">
+               <div class="loading">
+                  <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
+                  <p>Loading models…</p>
+               </div>
+            </div>
+            <aside class="filters-sidebar panel">
+               <div class="filters-title">Providers</div>
+               <div id="filters-list"></div>
+            </aside>
+         </div>
+      </main>
+      <footer class="public-footer"><span>Nore Proxy</span><a href="/usage">Review usage</a></footer>
+      <div id="notification" class="copy-notification"><i class="fa-solid fa-check"></i> Copied to clipboard</div>
+      <script src="js/display.js"></script>
+   </body>
 </html>

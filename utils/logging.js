@@ -1,7 +1,8 @@
 import logManager from "../services/logManager.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import realtimeStats from "../services/realtimeStats.js";
-import { getModelPricing, maskKey } from "./helpers.js";
+import { getModelPricing } from "./helpers.js";
+import { getSafeKeyMetadata } from "./keyIdentity.js";
 import { calculateModelCost } from "./pricing.js";
 import { sanitizeHeadersForLogging } from "./errorLogging.js";
 
@@ -51,8 +52,7 @@ export function logRequestStart(
     timestamp: Date.now() / 1000,
     request_id: requestId,
     model,
-    params,
-    api_key: apiKey,
+    ...getSafeKeyMetadata(apiKey),
   };
 
   logManager.writeRequestLog(logEntry);
@@ -123,9 +123,8 @@ export function logRequestEnd(
       ? { token_accounting_version: tokenAccountingVersion }
       : {}),
     error,
-    params: req.params || {},
     key_name: apiKeyManager.getKeyName(resolvedKey),
-    api_key: maskKey(resolvedKey),
+    ...getSafeKeyMetadata(resolvedKey),
   };
   logManager.writeRequestLog(logEntry);
 

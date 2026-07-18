@@ -64,6 +64,14 @@ router.get("/usage", (req, res) => {
   servePublic(res, "usage.html");
 });
 
+router.get("/terms", (req, res) => {
+  servePublic(res, "terms.html");
+});
+
+router.get("/privacy", (req, res) => {
+  servePublic(res, "privacy.html");
+});
+
 router.get("/admin", (req, res) => {
   res.redirect("/admin/login");
 });

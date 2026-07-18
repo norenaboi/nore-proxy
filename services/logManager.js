@@ -104,19 +104,54 @@ function truncateText(text, maxLen) {
 
 function maskStoredApiKey(value) {
   if (!value || typeof value !== "string") return "Unknown";
-  if (value.includes("...")) return value;
+  if (/^.{5}\.\.\..{3}$/s.test(value) || value === "****") return value;
   if (value.length <= 8) return "****";
   return `${value.slice(0, 5)}...${value.slice(-3)}`;
 }
 
-const MASKED_REQUEST_KEY_SQL = `CASE
-  WHEN instr(json_extract(data, '$.api_key'), '...') > 0
-    THEN json_extract(data, '$.api_key')
-  WHEN length(json_extract(data, '$.api_key')) > 8
-    THEN substr(json_extract(data, '$.api_key'), 1, 5) || '...' ||
-      substr(json_extract(data, '$.api_key'), -3)
-  ELSE '****'
-END`;
+function toEpochSeconds(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    return numeric >= 10_000_000_000 ? numeric / 1000 : numeric;
+  }
+  const milliseconds = Date.parse(String(value));
+  return Number.isNaN(milliseconds) ? null : milliseconds / 1000;
+}
+
+function nonNegativeNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+}
+
+function normalizeRequestRow(row) {
+  const parsed = parseJson(row.data);
+  const data = parsed && typeof parsed === "object" ? parsed : {};
+  const rawStatus = typeof data.status === "string" ? data.status.toLowerCase() : "";
+  const status = rawStatus === "success" || rawStatus === "failed" ? rawStatus : "unknown";
+  const apiKeyId = typeof data.api_key_id === "string" && data.api_key_id ? data.api_key_id : null;
+
+  return {
+    id: row.id,
+    timestamp: toEpochSeconds(data.timestamp ?? row.timestamp),
+    requestId: data.request_id ?? null,
+    name: data.key_name ?? "Unknown",
+    apiKey: maskStoredApiKey(data.api_key),
+    apiKeyId,
+    legacyKey: !apiKeyId,
+    model:
+      (typeof data.model === "string" && data.model.trim()) ||
+      (typeof row.model === "string" && row.model.trim()) ||
+      "Unknown",
+    status,
+    inputTokens: nonNegativeNumber(data.input_tokens),
+    outputTokens: nonNegativeNumber(data.output_tokens),
+    cacheWriteTokens: nonNegativeNumber(data.cache_write_tokens),
+    cacheReadTokens: nonNegativeNumber(data.cache_read_tokens),
+    tokenAccountingVersion: data.token_accounting_version ?? null,
+    duration: nonNegativeNumber(data.duration),
+  };
+}
 
 function mapErrorRow(row) {
   if (!row) return null;
@@ -444,6 +479,23 @@ export class LogManager {
     return rows.map((row) => JSON.parse(row.data));
   }
 
+  getRequestTotals() {
+    const row = this.db
+      .prepare(
+        `SELECT
+          COUNT(*) AS total,
+          SUM(CASE WHEN LOWER(json_extract(data, '$.status')) = 'success' THEN 1 ELSE 0 END) AS successful
+        FROM request_logs
+        WHERE type = 'request_end'`,
+      )
+      .get();
+
+    return {
+      total: Number(row.total) || 0,
+      successful: Number(row.successful) || 0,
+    };
+  }
+
   buildRequestWhere(filters = {}) {
     const clauses = ["type = 'request_end'"];
     const params = {};
@@ -453,23 +505,32 @@ export class LogManager {
       params.cursor = filters.cursor;
     }
     if (filters.model) {
-      clauses.push("model = @model");
+      clauses.push("COALESCE(NULLIF(json_extract(data, '$.model'), ''), model) = @model");
       params.model = filters.model;
     }
     if (filters.apiKey) {
-      clauses.push(`${MASKED_REQUEST_KEY_SQL} = @apiKey`);
+      clauses.push("json_extract(data, '$.api_key_id') = @apiKey");
       params.apiKey = filters.apiKey;
     }
     if (filters.status) {
-      clauses.push("json_extract(data, '$.status') = @status");
+      clauses.push("LOWER(json_extract(data, '$.status')) = @status");
       params.status = filters.status;
     }
-    if (filters.from) {
-      clauses.push("CAST(json_extract(data, '$.timestamp') AS REAL) >= @from");
+    const timestampSql = `CASE
+      WHEN json_type(data, '$.timestamp') IN ('integer', 'real')
+        THEN CASE
+          WHEN CAST(json_extract(data, '$.timestamp') AS REAL) >= 10000000000
+            THEN CAST(json_extract(data, '$.timestamp') AS REAL) / 1000
+          ELSE CAST(json_extract(data, '$.timestamp') AS REAL)
+        END
+      ELSE (julianday(COALESCE(json_extract(data, '$.timestamp'), timestamp)) - 2440587.5) * 86400
+    END`;
+    if (filters.from !== undefined && filters.from !== null) {
+      clauses.push(`${timestampSql} >= @from`);
       params.from = filters.from;
     }
-    if (filters.to) {
-      clauses.push("CAST(json_extract(data, '$.timestamp') AS REAL) <= @to");
+    if (filters.to !== undefined && filters.to !== null) {
+      clauses.push(`${timestampSql} <= @to`);
       params.to = filters.to;
     }
 
@@ -490,26 +551,7 @@ export class LogManager {
       .all({ ...params, queryLimit: limit + 1 });
     const hasMore = rows.length > limit;
     const visibleRows = rows.slice(0, limit);
-    const requests = visibleRows.map((row) => {
-      const data = parseJson(row.data);
-      const safeData = data && typeof data === "object" ? data : {};
-
-      return {
-        id: row.id,
-        timestamp: Number(safeData.timestamp ?? row.timestamp) || 0,
-        requestId: safeData.request_id ?? null,
-        name: safeData.key_name ?? "Unknown",
-        apiKey: maskStoredApiKey(safeData.api_key),
-        model: safeData.model ?? row.model ?? "Unknown",
-        status: safeData.status === "failed" ? "failed" : "success",
-        inputTokens: Number(safeData.input_tokens) || 0,
-        outputTokens: Number(safeData.output_tokens) || 0,
-        cacheWriteTokens: Number(safeData.cache_write_tokens) || 0,
-        cacheReadTokens: Number(safeData.cache_read_tokens) || 0,
-        tokenAccountingVersion: safeData.token_accounting_version ?? null,
-        duration: Number(safeData.duration) || 0,
-      };
-    });
+    const requests = visibleRows.map(normalizeRequestRow);
 
     return {
       requests,
@@ -517,6 +559,18 @@ export class LogManager {
       nextCursor:
         hasMore && requests.length ? requests[requests.length - 1].id : null,
     };
+  }
+
+  getDashboardRequestLogs() {
+    const rows = this.db
+      .prepare(
+        `SELECT id, timestamp, model, data
+         FROM request_logs
+         WHERE type = 'request_end'
+         ORDER BY id DESC`,
+      )
+      .all();
+    return rows.map(normalizeRequestRow);
   }
 
   getRequestHistoryFilters() {
@@ -532,16 +586,15 @@ export class LogManager {
     const keys = new Map();
 
     for (const row of rows) {
-      const data = parseJson(row.data);
-      if (!data || typeof data !== "object") continue;
-      const model = data.model ?? row.model;
-      const apiKey = maskStoredApiKey(data.api_key);
-      if (model) models.add(model);
-      if (apiKey !== "Unknown" && !keys.has(apiKey)) {
-        const name = data.key_name;
-        keys.set(apiKey, {
-          value: apiKey,
-          label: name ? `${name} · ${apiKey}` : apiKey,
+      const request = normalizeRequestRow(row);
+      if (request.model !== "Unknown") models.add(request.model);
+      if (request.apiKeyId && !keys.has(request.apiKeyId)) {
+        keys.set(request.apiKeyId, {
+          value: request.apiKeyId,
+          label:
+            request.name !== "Unknown"
+              ? `${request.name} · ${request.apiKey}`
+              : request.apiKey,
         });
       }
     }

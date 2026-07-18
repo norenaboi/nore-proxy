@@ -1,37 +1,79 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="icon" type="image/x-icon" href="favicon.ico" />
-        <title>Unified API</title>
-        <link rel="stylesheet" href="css/index.css" />
-    </head>
-    <body>
-        <div class="container">
-            <header>
-                <h1>Nore Proxy</h1>
-                <p class="subtitle">A unified OpenAI API proxy server</p>
-            </header>
-
-            <div class="stats">
-                <div class="stat-item">
-                    <div class="stat-value" id="users-count">0</div>
-                    <div class="stat-label">Users</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value" id="uptime">0</div>
-                    <div class="stat-label">Uptime</div>
-                </div>
+   <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      <link rel="icon" href="favicon.ico">
+      <title>Nore Proxy — Unified API</title>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+      <link rel="stylesheet" href="css/public-editorial.css">
+      <link rel="stylesheet" href="css/index.css">
+   </head>
+   <body>
+      <header class="public-head">
+         <a class="brand" href="/"><img class="brand-mark" src="/favicon.ico" alt=""><strong>Nore Proxy</strong></a>
+         <nav aria-label="Public navigation"><a href="/usage">Usage</a><a href="/models">Models</a></nav>
+      </header>
+      <main class="public-main">
+         <section class="intro">
+            <div>
+               <p class="eyebrow">Unified model access</p>
+               <h1>One API for all the models you need.</h1>
+               <p class="lead">A compact proxy for routing requests, tracking usage, and keeping model access in one place.</p>
             </div>
-
-            <nav class="nav-links">
-                <a href="/usage" class="nav-link">View Usage</a>
-                <a href="/models" class="nav-link">View Models</a>
-            </nav>
-        </div>
-
-        <script src="shared.js"></script>
-        <script src="js/index.js"></script>
-    </body>
+            <dl class="live-facts">
+               <div>
+                  <dt>Service</dt>
+                  <dd><i></i>Available</dd>
+               </div>
+               <div>
+                  <dt>Uptime · 24h</dt>
+                  <dd id="success-24h">—</dd>
+               </div>
+               <div>
+                  <dt>Uptime · all time</dt>
+                  <dd id="success-all-time">—</dd>
+               </div>
+               <div>
+                  <dt>Runtime</dt>
+                  <dd id="uptime">—</dd>
+               </div>
+               <div>
+                  <dt>Users</dt>
+                  <dd id="users-count">—</dd>
+               </div>
+            </dl>
+         </section>
+         <section class="service-strip panel" id="connect">
+            <div><span>Interface</span><strong>OpenAI</strong></div>
+            <div><span>Base path</span><strong>/v1/chat/completions</strong></div>
+            <div><span>Authentication</span><strong>Bearer API key</strong></div>
+            <div><span>Interface</span><strong>Anthropic</strong></div>
+            <div><span>Base path</span><strong>/v1/messages</strong></div>
+            <div><span>Authentication</span><strong>Bearer API key</strong></div>
+         </section>
+         <section class="destinations">
+            <a class="panel" href="/usage">
+               <span>Account</span>
+               <div>
+                  <strong>Review API key usage</strong>
+                  <p>Inspect quota, request totals, token volume, and key status.</p>
+               </div>
+               <b>View usage →</b>
+            </a>
+            <a class="panel" href="/models">
+               <span>Catalog</span>
+               <div>
+                  <p>Filter providers, compare pricing, and copy exact model identifiers.</p>
+               </div>
+               <b>View models →</b>
+            </a>
+         </section>
+      </main>
+      <footer class="public-footer">
+         <span class="public-footer-copy">We do not store prompt content in request logs. We retain operational metadata such as request status, duration, and token counts.</span>
+         <span class="public-footer-links"><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/admin/login">Admin</a></span>
+      </footer>
+      <script src="js/index.js"></script>
+   </body>
 </html>

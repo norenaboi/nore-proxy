@@ -1,82 +1,53 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="icon" type="image/x-icon" href="favicon.ico" />
-        <title>API Key Usage</title>
-        <link rel="stylesheet" href="css/usage.css" />
-    </head>
-    <body>
-        <div class="container">
-            <a href="/" class="back-link">← Return to main menu</a>
-
-            <header>
-                <h1>Usage</h1>
-            </header>
-
-            <div class="input-group">
-                <label for="apiKey">
-                    <i class="fa-solid fa-scroll"></i>
-                    Enter Your API Key
-                </label>
-                <input
-                    type="password"
-                    id="apiKey"
-                    placeholder="sk-..."
-                    onkeypress="if (event.key === 'Enter') checkUsage();"
-                />
-                <!-- Button -->
-                <button class="btn" onclick="checkUsage()">
-                    <i class="fa-solid fa-eye"></i>
-                    Reveal Usage
-                </button>
+   <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      <link rel="icon" href="favicon.ico">
+      <title>Usage — Nore Proxy</title>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+      <link rel="stylesheet" href="css/public-editorial.css">
+      <link rel="stylesheet" href="css/usage.css">
+   </head>
+   <body>
+      <header class="public-head">
+         <a class="brand" href="/"><img class="brand-mark" src="/favicon.ico" alt=""><strong>Nore Proxy</strong></a>
+         <nav aria-label="Public navigation"><a href="/usage" aria-current="page">Usage</a><a href="/models">Models</a><a href="/">Overview</a></nav>
+      </header>
+      <main class="public-main usage-main">
+         <header class="usage-head">
+            <div>
+               <p class="eyebrow">Account usage</p>
+               <h1>Review an API key.</h1>
+               <p class="lead">Your key is sent only as authorization for this lookup and remains masked in the interface.</p>
             </div>
-
-            <div class="loading" id="loading">
-                <div class="spinner"></div>
-                <p>Loading...</p>
+            <a class="back-link" href="/">← Overview</a>
+         </header>
+         <section class="input-group panel">
+            <label for="apiKey">API key</label>
+            <div class="key-entry"><input type="password" id="apiKey" autocomplete="off" placeholder="sk-…"><button class="btn" onclick="checkUsage()">Reveal usage</button></div>
+         </section>
+         <div class="loading" id="loading" role="status">
+            <div class="spinner"></div>
+            <p>Loading…</p>
+         </div>
+         <div class="error" id="error" role="alert"></div>
+         <section class="stats-section panel" id="stats-section">
+            <div class="stats-header">
+               <p class="eyebrow">Key summary</p>
+               <h2>Usage Statistics</h2>
             </div>
-
-            <!-- Error -->
-            <div class="error" id="error"></div>
-
-            <div class="stats-section" id="stats-section">
-                <div class="stats-header">Usage Statistics</div>
-                <div class="stat-row">
-                    <span class="stat-label">Name</span>
-                    <span class="stat-value" id="name">-</span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Daily Quota (RPD)</span>
-                    <span class="stat-value" id="quota">-</span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Total Requests</span>
-                    <span class="stat-value" id="total_requests">-</span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Input Tokens (24h)</span>
-                    <span class="stat-value" id="input_24h">-</span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Output Tokens (24h)</span>
-                    <span class="stat-value" id="output_24h">-</span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Input Tokens (Total)</span>
-                    <span class="stat-value" id="input_total">-</span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Output Tokens (Total)</span>
-                    <span class="stat-value" id="output_total">-</span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Status</span>
-                    <span class="stat-value status-active" id="status">-</span>
-                </div>
-            </div>
-        </div>
-        <script src="js/usage.js"></script>
-    </body>
+            <div class="stat-row"><span class="stat-label">Name</span><span class="stat-value" id="name">-</span></div>
+            <div class="stat-row"><span class="stat-label">Daily Quota (RPD)</span><span class="stat-value" id="quota">-</span></div>
+            <div class="stat-row"><span class="stat-label">Total Requests</span><span class="stat-value" id="total_requests">-</span></div>
+            <div class="stat-row"><span class="stat-label">Input Tokens (24h)</span><span class="stat-value" id="input_24h">-</span></div>
+            <div class="stat-row"><span class="stat-label">Output Tokens (24h)</span><span class="stat-value" id="output_24h">-</span></div>
+            <div class="stat-row"><span class="stat-label">Input Tokens (Total)</span><span class="stat-value" id="input_total">-</span></div>
+            <div class="stat-row"><span class="stat-label">Output Tokens (Total)</span><span class="stat-value" id="output_total">-</span></div>
+            <div class="stat-row"><span class="stat-label">Status</span><span class="stat-value" id="status">-</span></div>
+         </section>
+      </main>
+      <footer class="public-footer"><span>Nore Proxy</span><a href="/models">Browse models</a></footer>
+      <script src="js/usage.js"></script>
+   </body>
 </html>

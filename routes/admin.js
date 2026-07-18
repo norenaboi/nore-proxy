@@ -13,6 +13,7 @@ import { loadModelsFromFile, normalizeEndpointUrl, getEndpointForModel, getFullU
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import axios from "axios";
 import { calculateCost } from "../utils/logging.js";
+import { getApiKeyId } from "../utils/keyIdentity.js";
 import crypto from "crypto";
 import { createSession, deleteSession } from "../services/sessionManager.js";
 
@@ -121,6 +122,114 @@ function computeCostsFromLogs(logs) {
     daily_cache_write_cost: dailyCacheWriteCost,
     daily_cache_read_cost: dailyCacheReadCost,
   };
+}
+
+const DASHBOARD_RANGES = {
+  "24h": 86400,
+  "7d": 604800,
+  "30d": 2592000,
+  total: null,
+};
+
+function emptyDashboardAggregate() {
+  return {
+    requests: 0,
+    successes: 0,
+    failures: 0,
+    success_rate: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_write_tokens: 0,
+    cache_read_tokens: 0,
+    input_cost: 0,
+    output_cost: 0,
+    cache_write_cost: 0,
+    cache_read_cost: 0,
+    estimated_cost: 0,
+  };
+}
+
+function addRequestToAggregate(aggregate, request) {
+  aggregate.requests += 1;
+  if (request.status === "success") aggregate.successes += 1;
+  if (request.status === "failed") aggregate.failures += 1;
+  aggregate.input_tokens += request.inputTokens;
+  aggregate.output_tokens += request.outputTokens;
+  aggregate.cache_write_tokens += request.cacheWriteTokens;
+  aggregate.cache_read_tokens += request.cacheReadTokens;
+  if (request.status === "success") {
+    const costs = calculateCost(
+      request.model,
+      request.inputTokens,
+      request.outputTokens,
+      request.cacheWriteTokens,
+      request.cacheReadTokens,
+      request.tokenAccountingVersion,
+    );
+    aggregate.input_cost += costs.inputCost;
+    aggregate.output_cost += costs.outputCost;
+    aggregate.cache_write_cost += costs.cacheWriteCost;
+    aggregate.cache_read_cost += costs.cacheReadCost;
+    aggregate.estimated_cost += costs.totalCost;
+  }
+}
+
+function finalizeDashboardAggregate(aggregate) {
+  return {
+    ...aggregate,
+    success_rate: aggregate.requests
+      ? (aggregate.successes / aggregate.requests) * 100
+      : 0,
+  };
+}
+
+function buildDashboardRanges(requests, configuredKeys) {
+  const now = Date.now() / 1000;
+  const keyDefinitions = Object.entries(configuredKeys).map(([apiKey, key]) => ({
+    id: getApiKeyId(apiKey),
+    mask: maskKey(apiKey),
+    name: key.name || "Unnamed",
+  }));
+  const masks = new Map();
+  for (const key of keyDefinitions) {
+    masks.set(key.mask, (masks.get(key.mask) || 0) + 1);
+  }
+
+  return Object.fromEntries(
+    Object.entries(DASHBOARD_RANGES).map(([range, seconds]) => {
+      const from = seconds === null ? null : now - seconds;
+      const matching = requests.filter(
+        (request) =>
+          request.timestamp !== null && (from === null || request.timestamp >= from),
+      );
+      const summary = emptyDashboardAggregate();
+      const byKey = new Map(
+        keyDefinitions.map((key) => [key.id, emptyDashboardAggregate()]),
+      );
+
+      for (const request of matching) {
+        addRequestToAggregate(summary, request);
+        let keyId = request.apiKeyId;
+        if (!keyId && masks.get(request.apiKey) === 1) {
+          keyId = keyDefinitions.find((key) => key.mask === request.apiKey)?.id;
+        }
+        if (keyId && byKey.has(keyId)) {
+          addRequestToAggregate(byKey.get(keyId), request);
+        }
+      }
+
+      const apiKeys = keyDefinitions
+        .map((key) => ({
+          id: key.id,
+          name: key.name,
+          api_key: key.mask,
+          ...finalizeDashboardAggregate(byKey.get(key.id)),
+        }))
+        .sort((a, b) => b.requests - a.requests || a.name.localeCompare(b.name));
+
+      return [range, { summary: finalizeDashboardAggregate(summary), api_keys: apiKeys }];
+    }),
+  );
 }
 
 router.get("/api/logs", verifySession, async (req, res) => {
@@ -248,10 +357,16 @@ router.get("/api/logs", verifySession, async (req, res) => {
     daily_cache_read_cost: summaryCosts.daily_cache_read_cost,
   };
 
+  const ranges = buildDashboardRanges(
+    logManager.getDashboardRequestLogs(),
+    allApiKeys,
+  );
+
   res.json({
     summary: totals,
     api_keys: dashboardData,
     recent_logs: formattedLogs,
+    ranges,
   });
 });
 
@@ -309,7 +424,11 @@ router.get("/api/requests", verifySession, (req, res) => {
   };
   const from = parseTimestamp(req.query.from);
   const to = parseTimestamp(req.query.to);
-  if (from === undefined || to === undefined || (from && to && from > to)) {
+  if (
+    from === undefined ||
+    to === undefined ||
+    (from !== null && to !== null && from > to)
+  ) {
     return res.status(400).json({ error: "Invalid time range" });
   }
 

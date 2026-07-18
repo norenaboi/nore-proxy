@@ -1,28 +1,31 @@
 <!doctype html>
-<html>
-    <head>
-        <title>Admin Dashboard - API Usage</title>
-        <link rel="icon" type="image/x-icon" href="favicon.ico" />
-        <link rel="stylesheet" href="css/login.css" />
-    </head>
-    <body>
-        <div class="container">
-            <h1>Admin Dashboard</h1>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <title>Admin Login — Nore Proxy</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/login.css">
+</head>
+<body>
+    <main class="login-shell">
+        <a class="brand" href="/"><img src="/favicon.ico" alt=""><strong>Nore Proxy</strong></a>
+        <section class="container" aria-labelledby="loginTitle">
+            <p class="eyebrow">Administration</p>
+            <h1 id="loginTitle">Welcome back.</h1>
+            <p class="intro">Enter the master key to access proxy operations and usage.</p>
             <form onsubmit="login(event)">
                 <div class="form-group">
-                    <label for="masterKey">Master Key:</label>
-                    <input
-                        type="password"
-                        id="masterKey"
-                        required
-                        placeholder="Enter master key"
-                    />
+                    <label for="masterKey">Master key</label>
+                    <input type="password" id="masterKey" required autocomplete="current-password" placeholder="Enter master key">
                 </div>
-                <button type="submit">Access Dashboard</button>
-                <div class="error" id="error"></div>
+                <button type="submit">Access dashboard</button>
+                <div class="error" id="error" role="alert"></div>
             </form>
-        </div>
-
-        <script src="js/login.js"></script>
-    </body>
+        </section>
+        <a class="back-link" href="/">← Return to public pages</a>
+    </main>
+    <script src="js/login.js"></script>
+</body>
 </html>
