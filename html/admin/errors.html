@@ -18,17 +18,17 @@
         <link rel="stylesheet" href="shared.css" />
         <script src="theme.js"></script>
         <link rel="stylesheet" href="css/errors.css" />
+        <link rel="stylesheet" href="css/admin-editorial.css" />
     </head>
     <body>
+        <a class="skip-link" href="#main">Skip to content</a>
         <aside class="sidebar">
             <div class="logo">
-                <div class="logo-icon">
-                    <i class="fa-brands fa-square-web-awesome-stroke"></i>
-                </div>
-                <span class="logo-text">Admin Panel</span>
+                <img class="logo-icon" src="/favicon.ico" alt="">
+                <span class="logo-text">Nore Proxy</span>
             </div>
 
-            <nav class="nav-menu">
+            <nav class="nav-menu" aria-label="Admin navigation">
                 <a class="nav-item" href="/admin/dashboard">
                     <i class="fa-brands fa-quinscape"></i>
                     <span>Dashboard</span>
@@ -57,7 +57,7 @@
                     <i class="fa-solid fa-terminal"></i>
                     <span>Logs</span>
                 </a>
-                <a class="nav-item active">
+                <a class="nav-item active" aria-current="page">
                     <i class="fa-solid fa-triangle-exclamation"></i>
                     <span>Errors</span>
                 </a>
@@ -73,7 +73,7 @@
             </button>
         </aside>
 
-        <main class="main-content">
+        <main class="main-content" id="main">
             <header class="header">
                 <div class="title-group">
                     <h1>Stored Errors</h1>

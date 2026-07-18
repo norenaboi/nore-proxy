@@ -1,385 +1,91 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="icon" type="image/x-icon" href="favicon.ico" />
-        <title>Admin Usage Dashboard</title>
-        <link
-            href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
-            rel="stylesheet"
-        />
-        <link
-            rel="stylesheet"
-            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
-            crossorigin="anonymous"
-            referrerpolicy="no-referrer"
-        />
-        <link rel="stylesheet" href="shared.css" />
-        <script src="theme.js"></script>
-        <link rel="stylesheet" href="css/dashboard.css" />
-    </head>
-    <body>
-        <aside class="sidebar">
-            <div class="logo">
-                <div class="logo-icon">
-                    <i class="fa-brands fa-square-web-awesome-stroke"></i>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <title>Admin Usage Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
+    <link rel="stylesheet" href="shared.css">
+    <script src="theme.js"></script>
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <aside class="sidebar">
+        <div class="logo"><img class="logo-icon" src="/favicon.ico" alt=""><span class="logo-text">Nore Proxy</span></div>
+        <nav class="nav-menu" aria-label="Admin navigation">
+            <a class="nav-item active" aria-current="page"><i class="fa-brands fa-quinscape"></i><span>Dashboard</span></a>
+            <a class="nav-item" href="/admin/model-usage"><i class="fa-solid fa-chart-line"></i><span>Model Usage</span></a>
+            <a class="nav-item" href="/admin/users"><i class="fa-solid fa-users"></i><span>Users</span></a>
+            <a class="nav-item" href="/admin/keys"><i class="fa-solid fa-key"></i><span>API Keys</span></a>
+            <a class="nav-item" href="/admin/endpoints"><i class="fa-solid fa-hexagon-nodes"></i><span>Endpoints</span></a>
+            <a class="nav-item" href="/admin/models"><i class="fa-solid fa-comment-nodes"></i><span>Models</span></a>
+            <a class="nav-item" href="/admin/logs"><i class="fa-solid fa-terminal"></i><span>Logs</span></a>
+            <a class="nav-item" href="/admin/errors"><i class="fa-solid fa-triangle-exclamation"></i><span>Errors</span></a>
+            <a class="nav-item" href="/admin/settings"><i class="fa-solid fa-sliders"></i><span>Settings</span></a>
+        </nav>
+        <button class="logout" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i><span>Logout</span></button>
+    </aside>
+
+    <main class="main-content" id="main">
+        <div id="loading" class="loading"><div class="loading-spinner"></div><span>Loading dashboard data…</span></div>
+        <div id="error" class="error" style="display:none"><span id="errorText">Could not load dashboard</span></div>
+        <div id="dashboard" style="display:none">
+            <header class="header dashboard-header">
+                <div><p class="eyebrow">Overview</p><h1>API Usage Dashboard</h1></div>
+                <div class="header-tools">
+                    <div id="dashboardRange" class="range-control" aria-label="Dashboard time range">
+                        <button type="button" data-dashboard-range="24h" aria-pressed="true">24h</button>
+                        <button type="button" data-dashboard-range="7d" aria-pressed="false">7d</button>
+                        <button type="button" data-dashboard-range="30d" aria-pressed="false">30d</button>
+                        <button type="button" data-dashboard-range="total" aria-pressed="false">Total</button>
+                    </div>
+                    <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme"><span class="theme-toggle-slider"><i class="fa-solid fa-sun"></i></span></button>
                 </div>
-                <span class="logo-text">Admin Panel</span>
+            </header>
+
+            <section class="summary-strip" aria-label="Traffic summary">
+                <article><span>Requests</span><strong id="rangeRequests">-</strong><small id="rangeLabel">Last 24 hours</small></article>
+                <article><span>Estimated cost</span><strong id="rangeCost">$0.00</strong><small>Model-aware estimate</small></article>
+                <article><span>Success rate</span><strong id="rangeSuccess">-</strong><small><span id="rangeSuccessCount">0</span> successful · <span id="rangeFailureCount">0</span> failed</small></article>
+            </section>
+
+            <section class="token-ledger" aria-label="Token totals">
+                <article><span>Input tokens</span><strong id="rangeInput">-</strong><small id="rangeInputCost">$0.00</small></article>
+                <article><span>Output tokens</span><strong id="rangeOutput">-</strong><small id="rangeOutputCost">$0.00</small></article>
+                <article><span>Cache read</span><strong id="rangeCacheRead">-</strong><small id="rangeCacheReadCost">$0.00</small></article>
+                <article><span>Cache write</span><strong id="rangeCacheWrite">-</strong><small id="rangeCacheWriteCost">$0.00</small></article>
+            </section>
+
+            <div class="legacy-metrics" hidden aria-hidden="true">
+                <span id="totalRequests"></span><span id="dailyRequests"></span><span id="totalInput"></span><span id="totalOutput"></span><span id="totalCacheWrite"></span><span id="totalCacheRead"></span><span id="dailyInput"></span><span id="dailyOutput"></span><span id="dailyCacheWrite"></span><span id="dailyCacheRead"></span><span id="totalInputCost"></span><span id="totalOutputCost"></span><span id="totalCacheWriteCost"></span><span id="totalCacheReadCost"></span><span id="dailyInputCost"></span><span id="dailyOutputCost"></span><span id="dailyCacheWriteCost"></span><span id="dailyCacheReadCost"></span><span id="totalCost"></span><span id="dailyCost"></span>
             </div>
 
-            <nav class="nav-menu">
-                <a class="nav-item active">
-                    <i class="fa-brands fa-quinscape"></i>
-                    <span>Dashboard</span>
-                </a>
-                <a class="nav-item" href="/admin/model-usage">
-                    <i class="fa-solid fa-chart-line"></i>
-                    <span>Model Usage</span>
-                </a>
-                <a class="nav-item" href="/admin/users">
-                    <i class="fa-solid fa-users"></i>
-                    <span>Users</span>
-                </a>
-                <a class="nav-item" href="/admin/keys">
-                    <i class="fa-solid fa-key"></i>
-                    <span>API Keys</span>
-                </a>
-                <a class="nav-item" href="/admin/endpoints">
-                    <i class="fa-solid fa-hexagon-nodes"></i>
-                    <span>Endpoints</span>
-                </a>
-                <a class="nav-item" href="/admin/models">
-                    <i class="fa-solid fa-comment-nodes"></i>
-                    <span>Models</span>
-                </a>
-                <a class="nav-item" href="/admin/logs">
-                    <i class="fa-solid fa-terminal"></i>
-                    <span>Logs</span>
-                </a>
-                <a class="nav-item" href="/admin/errors">
-                    <i class="fa-solid fa-triangle-exclamation"></i>
-                    <span>Errors</span>
-                </a>
-                <a class="nav-item" href="/admin/settings">
-                    <i class="fa-solid fa-sliders"></i>
-                    <span>Settings</span>
-                </a>
-            </nav>
+            <div class="tables-grid">
+                <section class="table-card usage-table-card">
+                    <header class="table-header"><div><p class="eyebrow">API keys</p><h2>API Keys Usage</h2></div><span><strong id="apiKeyRangeLabel">Last 24 hours</strong> · <span id="keyCount">0 keys</span></span></header>
+                    <div class="table-scroll" tabindex="0" aria-label="API key usage table"><table><caption class="visually-hidden">API key usage for selected period</caption><thead><tr><th>Name</th><th class="numeric-cell">Requests</th><th class="numeric-cell">Input</th><th class="numeric-cell">Output</th><th class="numeric-cell">Cache Write</th><th class="numeric-cell">Cache Read</th><th class="numeric-cell">Estimated Cost</th></tr></thead><tbody id="apiKeysBody"></tbody></table></div>
+                </section>
 
-            <button class="logout" onclick="logout()">
-                <i class="fa-solid fa-right-from-bracket"></i>
-                <span>Logout</span>
-            </button>
-        </aside>
-
-        <main class="main-content">
-            <div id="loading" class="loading">
-                <div class="loading-spinner"></div>
-                <span>Loading dashboard data...</span>
+                <section class="table-card request-history-card">
+                    <header class="table-header"><div><p class="eyebrow">Recent traffic</p><h2>Recent Requests</h2></div><button id="requestHistoryToggle" class="request-history-toggle" type="button" aria-expanded="false" aria-controls="requestHistoryFilters">Browse all requests <i class="fa-solid fa-chevron-down"></i></button></header>
+                    <div id="requestHistoryFilters" class="request-history-filters" hidden>
+                        <label>API key<select id="requestApiKeyFilter"><option value="">All API keys</option></select></label>
+                        <label>Model<select id="requestModelFilter"><option value="">All models</option></select></label>
+                        <label>Status<select id="requestStatusFilter"><option value="">All statuses</option><option value="success">Success</option><option value="failed">Failed</option></select></label>
+                        <label>Time range<select id="requestTimeFilter"><option value="">All time</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
+                        <button id="requestFiltersReset" type="button">Reset filters</button>
+                    </div>
+                    <div class="request-table-scroll" tabindex="0" aria-label="Recent requests table"><table><caption class="visually-hidden">Recent API request metadata</caption><thead><tr><th>Time</th><th>Name</th><th>Model</th><th>Input Tokens</th><th>Output Tokens</th><th>Cache Write</th><th>Cache Read</th><th>Duration</th><th>Est. Cost</th><th>Status</th></tr></thead><tbody id="recentLogsBody"></tbody></table></div>
+                    <div id="requestHistoryState" class="request-history-state" role="status" aria-live="polite"></div>
+                    <div id="requestHistorySentinel" aria-hidden="true"></div>
+                </section>
             </div>
-
-            <div id="error" class="error" style="display: none">
-                <span id="errorText">Error message here</span>
-            </div>
-
-            <div id="dashboard" style="display: none">
-                <header class="header">
-                    <h1>API Usage Dashboard</h1>
-                    <div class="header-actions">
-                        <button
-                            class="theme-toggle"
-                            onclick="toggleTheme()"
-                            aria-label="Toggle theme"
-                        >
-                            <span class="theme-toggle-slider">
-                                <i class="fa-solid fa-sun"></i>
-                            </span>
-                        </button>
-                    </div>
-                </header>
-
-                <div class="summary-cards">
-                    <div class="summary-card">
-                        <div class="card-header">
-                            <h3>Total Requests</h3>
-                            <div class="card-icon">
-                                <i class="fa-regular fa-file-lines"></i>
-                            </div>
-                        </div>
-                        <div class="value" id="totalRequests">-</div>
-                        <span class="card-trend">All time</span>
-                    </div>
-
-                    <div class="summary-card">
-                        <div class="card-header">
-                            <h3>Input Tokens</h3>
-                            <div class="card-icon">
-                                <i
-                                    class="fa-solid fa-arrow-right-to-bracket"
-                                ></i>
-                            </div>
-                        </div>
-                        <div class="value" id="totalInput">-</div>
-                        <span class="card-trend">All time input</span>
-                        <span class="card-cost" id="totalInputCost">$0.00</span>
-                    </div>
-
-                    <div class="summary-card">
-                        <div class="card-header">
-                            <h3>Output Tokens</h3>
-                            <div class="card-icon">
-                                <i
-                                    class="fa-solid fa-arrow-right-from-bracket"
-                                ></i>
-                            </div>
-                        </div>
-                        <div class="value" id="totalOutput">-</div>
-                        <span class="card-trend">All time output</span>
-                        <span class="card-cost" id="totalOutputCost"
-                            >$0.00</span
-                        >
-                    </div>
-
-                    <div class="summary-card" style="grid-column: span 1">
-                        <div class="card-header">
-                            <h3>Total Estimated Cost</h3>
-                            <div class="card-icon">
-                                <i class="fa-solid fa-dollar-sign"></i>
-                            </div>
-                        </div>
-                        <div class="value" id="totalCost">$0.00</div>
-                        <span class="card-trend">All time estimated cost</span>
-                    </div>
-
-                    <div class="summary-card">
-                        <div class="card-header">
-                            <h3>Requests (24h)</h3>
-                            <div class="card-icon">
-                                <i class="fa-regular fa-file-lines"></i>
-                            </div>
-                        </div>
-                        <div class="value" id="dailyRequests">-</div>
-                        <span class="card-trend">Last 24 hours</span>
-                    </div>
-
-                    <div class="summary-card">
-                        <div class="card-header">
-                            <h3>Input Tokens (24h)</h3>
-                            <div class="card-icon">
-                                <i
-                                    class="fa-solid fa-arrow-right-to-bracket"
-                                ></i>
-                            </div>
-                        </div>
-                        <div class="value" id="dailyInput">-</div>
-                        <span class="card-trend">Today's input</span>
-                        <span class="card-cost" id="dailyInputCost">$0.00</span>
-                    </div>
-
-                    <div class="summary-card">
-                        <div class="card-header">
-                            <h3>Output Tokens (24h)</h3>
-                            <div class="card-icon">
-                                <i
-                                    class="fa-solid fa-arrow-right-from-bracket"
-                                ></i>
-                            </div>
-                        </div>
-                        <div class="value" id="dailyOutput">-</div>
-                        <span class="card-trend">Today's output</span>
-                        <span class="card-cost" id="dailyOutputCost"
-                            >$0.00</span
-                        >
-                    </div>
-
-                    <div class="summary-card" style="grid-column: span 1">
-                        <div class="card-header">
-                            <h3>Daily Estimated Cost</h3>
-                            <div class="card-icon">
-                                <i class="fa-solid fa-dollar-sign"></i>
-                            </div>
-                        </div>
-                        <div class="value" id="dailyCost">$0.00</div>
-                        <span class="card-trend"
-                            >Last 24 hours estimated cost</span
-                        >
-                    </div>
-
-                    <div class="summary-card">
-                        <div class="card-header">
-                            <h3>Cache Write (24h)</h3>
-                            <div class="card-icon">
-                                <i class="fa-solid fa-database"></i>
-                            </div>
-                        </div>
-                        <div class="value" id="dailyCacheWrite">-</div>
-                        <span class="card-trend">Today's cache write</span>
-                        <span class="card-cost" id="dailyCacheWriteCost"
-                            >$0.00</span
-                        >
-                    </div>
-
-                    <div class="summary-card">
-                        <div class="card-header">
-                            <h3>Cache Read (24h)</h3>
-                            <div class="card-icon">
-                                <i class="fa-solid fa-database"></i>
-                            </div>
-                        </div>
-                        <div class="value" id="dailyCacheRead">-</div>
-                        <span class="card-trend">Today's cache read</span>
-                        <span class="card-cost" id="dailyCacheReadCost"
-                            >$0.00</span
-                        >
-                    </div>
-
-                    <div class="summary-card">
-                        <div class="card-header">
-                            <h3>Cache Write</h3>
-                            <div class="card-icon">
-                                <i class="fa-solid fa-database"></i>
-                            </div>
-                        </div>
-                        <div class="value" id="totalCacheWrite">-</div>
-                        <span class="card-trend">All time cache write</span>
-                        <span class="card-cost" id="totalCacheWriteCost"
-                            >$0.00</span
-                        >
-                    </div>
-
-                    <div class="summary-card">
-                        <div class="card-header">
-                            <h3>Cache Read</h3>
-                            <div class="card-icon">
-                                <i class="fa-solid fa-database"></i>
-                            </div>
-                        </div>
-                        <div class="value" id="totalCacheRead">-</div>
-                        <span class="card-trend">All time cache read</span>
-                        <span class="card-cost" id="totalCacheReadCost"
-                            >$0.00</span
-                        >
-                    </div>
-                </div>
-
-                <div class="tables-grid">
-                    <div class="table-card">
-                        <div class="table-header">
-                            <h2>
-                                <i class="fa-solid fa-key"></i>
-                                API Keys Usage
-                            </h2>
-                            <span class="badge" id="keyCount">0 keys</span>
-                        </div>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>Requests (24h)</th>
-                                    <th>Total Requests</th>
-                                    <th>Input (24h)</th>
-                                    <th>Output (24h)</th>
-                                    <th>Cache Write (24h)</th>
-                                    <th>Cache Read (24h)</th>
-                                    <th>Total Input</th>
-                                    <th>Total Output</th>
-                                    <th>Total Cache Write</th>
-                                    <th>Total Cache Read</th>
-                                    <th>Estimated Cost</th>
-                                </tr>
-                            </thead>
-                            <tbody id="apiKeysBody"></tbody>
-                        </table>
-                    </div>
-
-                    <section class="table-card request-history-card">
-                        <div class="table-header">
-                            <h2>
-                                <i class="fa-solid fa-clock-rotate-left"></i>
-                                Recent Requests
-                            </h2>
-                            <button
-                                id="requestHistoryToggle"
-                                class="request-history-toggle"
-                                type="button"
-                                aria-expanded="false"
-                                aria-controls="requestHistoryFilters"
-                            >
-                                Browse all requests
-                                <i class="fa-solid fa-chevron-down"></i>
-                            </button>
-                        </div>
-                        <div
-                            id="requestHistoryFilters"
-                            class="request-history-filters"
-                            hidden
-                        >
-                            <label>
-                                API key
-                                <select id="requestApiKeyFilter">
-                                    <option value="">All API keys</option>
-                                </select>
-                            </label>
-                            <label>
-                                Model
-                                <select id="requestModelFilter">
-                                    <option value="">All models</option>
-                                </select>
-                            </label>
-                            <label>
-                                Status
-                                <select id="requestStatusFilter">
-                                    <option value="">All statuses</option>
-                                    <option value="success">Success</option>
-                                    <option value="failed">Failed</option>
-                                </select>
-                            </label>
-                            <label>
-                                Time range
-                                <select id="requestTimeFilter">
-                                    <option value="">All time</option>
-                                    <option value="24h">Last 24 hours</option>
-                                    <option value="7d">Last 7 days</option>
-                                    <option value="30d">Last 30 days</option>
-                                </select>
-                            </label>
-                            <button id="requestFiltersReset" type="button">
-                                Reset filters
-                            </button>
-                        </div>
-                        <div class="request-table-scroll" tabindex="0">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Time</th>
-                                        <th>Name</th>
-                                        <th>Model</th>
-                                        <th>Input Tokens</th>
-                                        <th>Output Tokens</th>
-                                        <th>Cache Write</th>
-                                        <th>Cache Read</th>
-                                        <th>Duration</th>
-                                        <th>Est. Cost</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="recentLogsBody"></tbody>
-                            </table>
-                        </div>
-                        <div
-                            id="requestHistoryState"
-                            class="request-history-state"
-                            role="status"
-                            aria-live="polite"
-                        ></div>
-                        <div id="requestHistorySentinel" aria-hidden="true"></div>
-                    </section>
-                </div>
-            </div>
-        </main>
-
-        <script src="shared.js"></script>
-        <script src="js/dashboard.js"></script>
-    </body>
+        </div>
+    </main>
+    <script src="shared.js"></script>
+    <script src="js/dashboard.js"></script>
+</body>
 </html>

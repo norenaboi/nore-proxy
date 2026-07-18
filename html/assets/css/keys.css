@@ -303,7 +303,7 @@ th:nth-of-type(7) {
     );
     padding: 8px 14px;
     border-radius: 8px;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--gray-600);
     border: 1px solid var(--gray-200);
     display: inline-flex;

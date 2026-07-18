@@ -3,6 +3,7 @@ let filteredModels = [];
 let currentSort = { column: "name", direction: "asc" };
 let activeFilters = new Set();
 const iconCache = new Map();
+const MODEL_CACHE_KEY = "nore-proxy:model-catalog:v1";
 
 // Preload icons to prevent delayed loading
 function preloadIcon(url) {
@@ -85,19 +86,15 @@ function getProvider(modelId) {
 
 function getProviderIcon(provider) {
     const icons = {
-        Anthropic:
-            "https://www.google.com/s2/favicons?domain=anthropic.com&sz=128",
-        Google: "https://www.google.com/s2/favicons?domain=gemini.google.com&sz=128",
-        OpenAI: "https://www.google.com/s2/favicons?domain=openai.com&sz=128",
-        DeepSeek:
-            "https://www.google.com/s2/favicons?domain=deepseek.com&sz=128",
-        ZhipuAI:
-            "https://www.google.com/s2/favicons?domain=zhipuai.cn&sz=128",
-        xAI: "https://www.google.com/s2/favicons?domain=x.ai&sz=128",
-        MoonshotAI:
-            "https://www.google.com/s2/favicons?domain=kimi.ai&sz=128",
-        Qwen: "https://www.google.com/s2/favicons?domain=tongyi.aliyun.com&sz=128",
-        Others: "https://www.google.com/s2/favicons?domain=openrouter.ai&sz=128",
+        Anthropic: "/icons/providers/anthropic.png",
+        Google: "/icons/providers/google.png",
+        OpenAI: "/icons/providers/openai.png",
+        DeepSeek: "/icons/providers/deepseek.png",
+        ZhipuAI: "/icons/providers/zhipuai.png",
+        xAI: "/icons/providers/xai.png",
+        MoonshotAI: "/icons/providers/moonshot.png",
+        Qwen: "/icons/providers/qwen.png",
+        Others: "/icons/providers/other.png",
     };
     return icons[provider] || icons.Others;
 }
@@ -311,58 +308,116 @@ function showNotification() {
     }, 2000);
 }
 
-async function loadModels() {
-    try {
-        const response = await fetch("/v1/models");
-        const data = await response.json();
-        const models = data.data || data.models || data;
+function normalizeModels(models) {
+    if (!Array.isArray(models)) return [];
 
-        if (!Array.isArray(models) || models.length === 0) {
-            document.getElementById("table-container").innerHTML = `
-                <div class="no-results">
-                    <i class="fa-solid fa-skull-crossbones fa-2x" style="color: #ccc"></i>
-                    <p style="margin-top: 15px">No models found</p>
-                </div>
-            `;
-            return;
-        }
-
-        allModels = models.map((model) => {
+    return models
+        .map((model) => {
             const modelId =
                 typeof model === "string"
                     ? model
-                    : model.id || model.name || model.model;
-            const pricing =
-                typeof model === "object" ? model.pricing : null;
-            const provider = getProvider(modelId);
+                    : model?.id || model?.name || model?.model;
+            if (typeof modelId !== "string" || !modelId) return null;
 
+            const sourcePricing =
+                typeof model === "object" && model?.pricing
+                    ? model.pricing
+                    : {};
             return {
                 id: modelId,
-                provider: provider,
-                pricing: pricing || {
-                    input: 0,
-                    output: 0,
-                    cache_write: 0,
-                    cache_read: 0,
+                pricing: {
+                    input: Number(sourcePricing.input) || 0,
+                    output: Number(sourcePricing.output) || 0,
+                    cache_write: Number(sourcePricing.cache_write) || 0,
+                    cache_read: Number(sourcePricing.cache_read) || 0,
                 },
             };
-        });
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.id.localeCompare(b.id));
+}
 
-        filteredModels = allModels;
+function readModelCache() {
+    try {
+        const cached = JSON.parse(localStorage.getItem(MODEL_CACHE_KEY));
+        if (cached?.version !== 1) return null;
+        const models = normalizeModels(cached.models);
+        return models.length ? models : null;
+    } catch {
+        return null;
+    }
+}
 
-        // Preload all icons before rendering
-        await preloadAllIcons();
+function writeModelCache(models) {
+    try {
+        localStorage.setItem(
+            MODEL_CACHE_KEY,
+            JSON.stringify({ version: 1, models }),
+        );
+    } catch (error) {
+        console.warn("Could not cache model catalog", error);
+    }
+}
 
-        renderFilters();
-        renderTable();
+function applyModels(models) {
+    allModels = models.map((model) => ({
+        ...model,
+        provider: getProvider(model.id),
+    }));
+
+    const availableProviders = new Set(
+        allModels.map((model) => model.provider),
+    );
+    activeFilters = new Set(
+        [...activeFilters].filter((provider) =>
+            availableProviders.has(provider),
+        ),
+    );
+
+    renderFilters();
+    filterModels();
+    preloadAllIcons();
+}
+
+function renderModelLoadError() {
+    document.getElementById("table-container").innerHTML = `
+        <div class="no-results">
+            <i class="fa-solid fa-triangle-exclamation fa-2x" style="color: #e74c3c"></i>
+            <p style="margin-top: 15px">Failed to load models</p>
+        </div>
+    `;
+}
+
+async function loadModels() {
+    const cachedModels = readModelCache();
+    if (cachedModels) applyModels(cachedModels);
+
+    try {
+        const response = await fetch("/v1/models", { cache: "no-store" });
+        if (!response.ok) throw new Error(`Model request failed: ${response.status}`);
+
+        const data = await response.json();
+        const freshModels = normalizeModels(data.data || data.models || data);
+
+        if (freshModels.length === 0) {
+            if (!cachedModels) {
+                document.getElementById("table-container").innerHTML = `
+                    <div class="no-results">
+                        <i class="fa-solid fa-skull-crossbones fa-2x" style="color: #ccc"></i>
+                        <p style="margin-top: 15px">No models found</p>
+                    </div>
+                `;
+            }
+            return;
+        }
+
+        if (JSON.stringify(freshModels) !== JSON.stringify(cachedModels)) {
+            writeModelCache(freshModels);
+            applyModels(freshModels);
+        }
     } catch (error) {
         console.error("Failed to fetch models", error);
-        document.getElementById("table-container").innerHTML = `
-            <div class="no-results">
-                <i class="fa-solid fa-triangle-exclamation fa-2x" style="color: #e74c3c"></i>
-                <p style="margin-top: 15px">Failed to load models</p>
-            </div>
-        `;
+        if (!cachedModels) renderModelLoadError();
     }
 }
 

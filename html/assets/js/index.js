@@ -24,6 +24,10 @@ async function refreshStats() {
         // Animate number changes
         document.getElementById("users-count").textContent =
             data.total_api_keys || 0;
+        document.getElementById("success-24h").textContent =
+            `${((data.successful / data.daily_requests)*100).toFixed(1)}%`;
+        document.getElementById("success-all-time").textContent =
+            `${((data.all_time_successful / data.all_time_requests)*100).toFixed(1)}%`;
         document.getElementById("uptime").textContent =
             formatDuration(data.uptime);
     } catch (error) {

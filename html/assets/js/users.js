@@ -19,14 +19,30 @@ async function loadUsers() {
 
 function renderUsers() {
     const grid = document.getElementById("usersGrid");
+    const query = document
+        .getElementById("userSearch")
+        .value.trim()
+        .toLowerCase();
+    const visibleUsers = query
+        ? allUsers.filter((user) =>
+              [user.name, user.api_key].some((value) =>
+                  String(value || "").toLowerCase().includes(query),
+              ),
+          )
+        : allUsers;
 
-    if (allUsers.length === 0) {
-        grid.innerHTML =
-            '<div class="empty-state"><i class="fa-solid fa-users"></i><p>No users found</p></div>';
+    document.getElementById("searchCount").textContent = query
+        ? `${visibleUsers.length} of ${allUsers.length} users`
+        : `${allUsers.length} users`;
+
+    if (visibleUsers.length === 0) {
+        grid.innerHTML = query
+            ? '<div class="empty-state"><i class="fa-solid fa-magnifying-glass"></i><p>No users match your search</p></div>'
+            : '<div class="empty-state"><i class="fa-solid fa-users"></i><p>No users found</p></div>';
         return;
     }
 
-    grid.innerHTML = allUsers
+    grid.innerHTML = visibleUsers
         .map(
             (user) => `
         <div class="user-card" onclick="showUserDetail('${escapeHtml(user.api_key_full)}')">
@@ -35,29 +51,6 @@ function renderUsers() {
                 <div class="user-info">
                     <h3>${escapeHtml(user.name)}</h3>
                     <div class="user-key">${escapeHtml(user.api_key)}</div>
-                </div>
-            </div>
-            <div style="margin-bottom: 16px;">
-                <span class="status-badge ${user.active ? "active" : "inactive"}">
-                    ${user.active ? "Active" : "Inactive"}
-                </span>
-            </div>
-            <div class="user-stats">
-                <div class="stat-item">
-                    <div class="stat-label">Today</div>
-                    <div class="stat-value">${user.daily_requests.toLocaleString()}</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-label">Total</div>
-                    <div class="stat-value">${user.total_requests.toLocaleString()}</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-label">Input Tokens</div>
-                    <div class="stat-value">${formatNumber(user.total_input_tokens)}</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-label">Output Tokens</div>
-                    <div class="stat-value">${formatNumber(user.total_output_tokens)}</div>
                 </div>
             </div>
         </div>
@@ -119,12 +112,12 @@ function renderUserDetail() {
             <div class="summary-card">
                 <h3>Total Input Tokens</h3>
                 <div class="value">${formatNumber(user.total_input_tokens)}</div>
-                <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalInputCost.toFixed(4)}</div>
+                <div class="cost-caption">$${totalInputCost.toFixed(4)}</div>
             </div>
             <div class="summary-card">
                 <h3>Total Output Tokens</h3>
                 <div class="value">${formatNumber(user.total_output_tokens)}</div>
-                <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalOutputCost.toFixed(4)}</div>
+                <div class="cost-caption">$${totalOutputCost.toFixed(4)}</div>
             </div>
             <div class="summary-card">
                 <h3>Total Estimated Cost</h3>
@@ -137,12 +130,12 @@ function renderUserDetail() {
             <div class="summary-card">
                 <h3>Daily Input Tokens</h3>
                 <div class="value">${formatNumber(user.daily_input_tokens)}</div>
-                <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyInputCost.toFixed(4)}</div>
+                <div class="cost-caption">$${dailyInputCost.toFixed(4)}</div>
             </div>
             <div class="summary-card">
                 <h3>Daily Output Tokens</h3>
                 <div class="value">${formatNumber(user.daily_output_tokens)}</div>
-                <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyOutputCost.toFixed(4)}</div>
+                <div class="cost-caption">$${dailyOutputCost.toFixed(4)}</div>
             </div>
             <div class="summary-card">
                 <h3>Daily Estimated Cost</h3>
@@ -151,22 +144,22 @@ function renderUserDetail() {
             <div class="summary-card">
                 <h3>Total Cache Write</h3>
                 <div class="value">${formatNumber(user.total_cache_write_tokens || 0)}</div>
-                <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalCacheWriteCost.toFixed(4)}</div>
+                <div class="cost-caption">$${totalCacheWriteCost.toFixed(4)}</div>
             </div>
             <div class="summary-card">
                 <h3>Total Cache Read</h3>
                 <div class="value">${formatNumber(user.total_cache_read_tokens || 0)}</div>
-                <div style="font-size: 11px; color: #999; margin-top: 4px;">$${totalCacheReadCost.toFixed(4)}</div>
+                <div class="cost-caption">$${totalCacheReadCost.toFixed(4)}</div>
             </div>
             <div class="summary-card">
                 <h3>Daily Cache Write</h3>
                 <div class="value">${formatNumber(user.daily_cache_write_tokens || 0)}</div>
-                <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyCacheWriteCost.toFixed(4)}</div>
+                <div class="cost-caption">$${dailyCacheWriteCost.toFixed(4)}</div>
             </div>
             <div class="summary-card">
                 <h3>Daily Cache Read</h3>
                 <div class="value">${formatNumber(user.daily_cache_read_tokens || 0)}</div>
-                <div style="font-size: 11px; color: #999; margin-top: 4px;">$${dailyCacheReadCost.toFixed(4)}</div>
+                <div class="cost-caption">$${dailyCacheReadCost.toFixed(4)}</div>
             </div>
         </div>
 
@@ -229,6 +222,8 @@ function backToList() {
     document.getElementById("userDetail").classList.remove("show");
     currentUser = null;
 }
+
+document.getElementById("userSearch").addEventListener("input", renderUsers);
 
 // Load users on page load
 loadUsers();
