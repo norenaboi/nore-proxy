@@ -293,31 +293,88 @@
                         </table>
                     </div>
 
-                    <div class="table-card">
+                    <section class="table-card request-history-card">
                         <div class="table-header">
                             <h2>
                                 <i class="fa-solid fa-clock-rotate-left"></i>
                                 Recent Requests
                             </h2>
-                            <span class="badge">Live</span>
+                            <button
+                                id="requestHistoryToggle"
+                                class="request-history-toggle"
+                                type="button"
+                                aria-expanded="false"
+                                aria-controls="requestHistoryFilters"
+                            >
+                                Browse all requests
+                                <i class="fa-solid fa-chevron-down"></i>
+                            </button>
                         </div>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Time</th>
-                                    <th>Name</th>
-                                    <th>Model</th>
-                                    <th>Input Tokens</th>
-                                    <th>Output Tokens</th>
-                                    <th>Cache Write</th>
-                                    <th>Cache Read</th>
-                                    <th>Duration</th>
-                                    <th>Est. Cost</th>
-                                </tr>
-                            </thead>
-                            <tbody id="recentLogsBody"></tbody>
-                        </table>
-                    </div>
+                        <div
+                            id="requestHistoryFilters"
+                            class="request-history-filters"
+                            hidden
+                        >
+                            <label>
+                                API key
+                                <select id="requestApiKeyFilter">
+                                    <option value="">All API keys</option>
+                                </select>
+                            </label>
+                            <label>
+                                Model
+                                <select id="requestModelFilter">
+                                    <option value="">All models</option>
+                                </select>
+                            </label>
+                            <label>
+                                Status
+                                <select id="requestStatusFilter">
+                                    <option value="">All statuses</option>
+                                    <option value="success">Success</option>
+                                    <option value="failed">Failed</option>
+                                </select>
+                            </label>
+                            <label>
+                                Time range
+                                <select id="requestTimeFilter">
+                                    <option value="">All time</option>
+                                    <option value="24h">Last 24 hours</option>
+                                    <option value="7d">Last 7 days</option>
+                                    <option value="30d">Last 30 days</option>
+                                </select>
+                            </label>
+                            <button id="requestFiltersReset" type="button">
+                                Reset filters
+                            </button>
+                        </div>
+                        <div class="request-table-scroll" tabindex="0">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Name</th>
+                                        <th>Model</th>
+                                        <th>Input Tokens</th>
+                                        <th>Output Tokens</th>
+                                        <th>Cache Write</th>
+                                        <th>Cache Read</th>
+                                        <th>Duration</th>
+                                        <th>Est. Cost</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="recentLogsBody"></tbody>
+                            </table>
+                        </div>
+                        <div
+                            id="requestHistoryState"
+                            class="request-history-state"
+                            role="status"
+                            aria-live="polite"
+                        ></div>
+                        <div id="requestHistorySentinel" aria-hidden="true"></div>
+                    </section>
                 </div>
             </div>
         </main>

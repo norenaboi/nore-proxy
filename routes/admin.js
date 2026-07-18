@@ -255,6 +255,98 @@ router.get("/api/logs", verifySession, async (req, res) => {
   });
 });
 
+function parseRequestInteger(value, fallback, minimum, maximum) {
+  if (value === undefined) return fallback;
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    return null;
+  }
+  return parsed;
+}
+
+router.get("/api/requests/filters", verifySession, (_req, res) => {
+  try {
+    return res.json(logManager.getRequestHistoryFilters());
+  } catch (error) {
+    console.error("Error loading request filters:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.get("/api/requests", verifySession, (req, res) => {
+  const limit = parseRequestInteger(req.query.limit, 50, 1, 50);
+  const cursor = parseRequestInteger(
+    req.query.cursor,
+    null,
+    1,
+    Number.MAX_SAFE_INTEGER,
+  );
+  if (limit === null || (req.query.cursor !== undefined && cursor === null)) {
+    return res.status(400).json({ error: "Invalid pagination values" });
+  }
+
+  const stringFilters = ["apiKey", "model", "status"];
+  if (
+    stringFilters.some(
+      (name) =>
+        req.query[name] !== undefined && typeof req.query[name] !== "string",
+    )
+  ) {
+    return res.status(400).json({ error: "Invalid filter value" });
+  }
+
+  const status = req.query.status?.trim() || null;
+  if (status && status !== "success" && status !== "failed") {
+    return res.status(400).json({ error: "Invalid request status" });
+  }
+
+  const parseTimestamp = (value) => {
+    if (value === undefined || value === "") return null;
+    if (typeof value !== "string") return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  };
+  const from = parseTimestamp(req.query.from);
+  const to = parseTimestamp(req.query.to);
+  if (from === undefined || to === undefined || (from && to && from > to)) {
+    return res.status(400).json({ error: "Invalid time range" });
+  }
+
+  try {
+    const result = logManager.getRequestHistory({
+      limit,
+      cursor,
+      apiKey: req.query.apiKey?.trim() || null,
+      model: req.query.model?.trim() || null,
+      status,
+      from,
+      to,
+    });
+    const requests = result.requests.map((request) => {
+      const costs = calculateCost(
+        request.model,
+        request.inputTokens,
+        request.outputTokens,
+        request.cacheWriteTokens,
+        request.cacheReadTokens,
+        request.tokenAccountingVersion,
+      );
+      const { tokenAccountingVersion, ...safeRequest } = request;
+      return { ...safeRequest, estimatedCost: costs.totalCost };
+    });
+
+    return res.json({
+      requests,
+      nextCursor: result.nextCursor,
+      hasMore: result.hasMore,
+    });
+  } catch (error) {
+    console.error("Error loading request history:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // List stored upstream errors with exact-match filters and pagination.
 router.get("/api/errors", verifySession, (req, res) => {
   try {

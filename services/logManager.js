@@ -102,6 +102,22 @@ function truncateText(text, maxLen) {
   return text.slice(0, maxLen) + "…[truncated]";
 }
 
+function maskStoredApiKey(value) {
+  if (!value || typeof value !== "string") return "Unknown";
+  if (value.includes("...")) return value;
+  if (value.length <= 8) return "****";
+  return `${value.slice(0, 5)}...${value.slice(-3)}`;
+}
+
+const MASKED_REQUEST_KEY_SQL = `CASE
+  WHEN instr(json_extract(data, '$.api_key'), '...') > 0
+    THEN json_extract(data, '$.api_key')
+  WHEN length(json_extract(data, '$.api_key')) > 8
+    THEN substr(json_extract(data, '$.api_key'), 1, 5) || '...' ||
+      substr(json_extract(data, '$.api_key'), -3)
+  ELSE '****'
+END`;
+
 function mapErrorRow(row) {
   if (!row) return null;
 
@@ -163,6 +179,8 @@ export class LogManager {
       );
       CREATE INDEX IF NOT EXISTS idx_request_type ON request_logs(type);
       CREATE INDEX IF NOT EXISTS idx_request_model ON request_logs(model);
+      CREATE INDEX IF NOT EXISTS idx_request_type_id
+        ON request_logs(type, id DESC);
     `);
 
     this.ensureErrorLogSchema();
@@ -424,6 +442,115 @@ export class LogManager {
 
     const rows = this.db.prepare(query).all(...params);
     return rows.map((row) => JSON.parse(row.data));
+  }
+
+  buildRequestWhere(filters = {}) {
+    const clauses = ["type = 'request_end'"];
+    const params = {};
+
+    if (filters.cursor) {
+      clauses.push("id < @cursor");
+      params.cursor = filters.cursor;
+    }
+    if (filters.model) {
+      clauses.push("model = @model");
+      params.model = filters.model;
+    }
+    if (filters.apiKey) {
+      clauses.push(`${MASKED_REQUEST_KEY_SQL} = @apiKey`);
+      params.apiKey = filters.apiKey;
+    }
+    if (filters.status) {
+      clauses.push("json_extract(data, '$.status') = @status");
+      params.status = filters.status;
+    }
+    if (filters.from) {
+      clauses.push("CAST(json_extract(data, '$.timestamp') AS REAL) >= @from");
+      params.from = filters.from;
+    }
+    if (filters.to) {
+      clauses.push("CAST(json_extract(data, '$.timestamp') AS REAL) <= @to");
+      params.to = filters.to;
+    }
+
+    return { clause: clauses.join(" AND "), params };
+  }
+
+  getRequestHistory(filters = {}) {
+    const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 50);
+    const { clause, params } = this.buildRequestWhere(filters);
+    const rows = this.db
+      .prepare(
+        `SELECT id, timestamp, model, data
+         FROM request_logs
+         WHERE ${clause}
+         ORDER BY id DESC
+         LIMIT @queryLimit`,
+      )
+      .all({ ...params, queryLimit: limit + 1 });
+    const hasMore = rows.length > limit;
+    const visibleRows = rows.slice(0, limit);
+    const requests = visibleRows.map((row) => {
+      const data = parseJson(row.data);
+      const safeData = data && typeof data === "object" ? data : {};
+
+      return {
+        id: row.id,
+        timestamp: Number(safeData.timestamp ?? row.timestamp) || 0,
+        requestId: safeData.request_id ?? null,
+        name: safeData.key_name ?? "Unknown",
+        apiKey: maskStoredApiKey(safeData.api_key),
+        model: safeData.model ?? row.model ?? "Unknown",
+        status: safeData.status === "failed" ? "failed" : "success",
+        inputTokens: Number(safeData.input_tokens) || 0,
+        outputTokens: Number(safeData.output_tokens) || 0,
+        cacheWriteTokens: Number(safeData.cache_write_tokens) || 0,
+        cacheReadTokens: Number(safeData.cache_read_tokens) || 0,
+        tokenAccountingVersion: safeData.token_accounting_version ?? null,
+        duration: Number(safeData.duration) || 0,
+      };
+    });
+
+    return {
+      requests,
+      hasMore,
+      nextCursor:
+        hasMore && requests.length ? requests[requests.length - 1].id : null,
+    };
+  }
+
+  getRequestHistoryFilters() {
+    const rows = this.db
+      .prepare(
+        `SELECT model, data
+         FROM request_logs
+         WHERE type = 'request_end'
+         ORDER BY id DESC`,
+      )
+      .all();
+    const models = new Set();
+    const keys = new Map();
+
+    for (const row of rows) {
+      const data = parseJson(row.data);
+      if (!data || typeof data !== "object") continue;
+      const model = data.model ?? row.model;
+      const apiKey = maskStoredApiKey(data.api_key);
+      if (model) models.add(model);
+      if (apiKey !== "Unknown" && !keys.has(apiKey)) {
+        const name = data.key_name;
+        keys.set(apiKey, {
+          value: apiKey,
+          label: name ? `${name} · ${apiKey}` : apiKey,
+        });
+      }
+    }
+
+    return {
+      models: [...models].sort(),
+      apiKeys: [...keys.values()].sort((a, b) => a.label.localeCompare(b.label)),
+      statuses: ["success", "failed"],
+    };
   }
 
   renameModel(oldName, newName) {
