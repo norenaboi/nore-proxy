@@ -20,21 +20,24 @@
             <div>
                <p class="eyebrow">Model catalog</p>
                <h1>Available models</h1>
-               <p class="lead">Filter by provider, compare published pricing, and select a row to copy its exact identifier.</p>
+               <p class="lead">Search the catalog, filter by provider, and click any card to copy its exact identifier.</p>
             </div>
             <a class="back-link" href="/">← Overview</a>
          </header>
-         <div class="main-layout">
-            <div class="table-container panel" id="table-container">
-               <div class="loading">
-                  <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
-                  <p>Loading models…</p>
-               </div>
+         <div class="toolbar">
+            <div class="search-wrap" id="search-wrap">
+               <i class="fa-solid fa-magnifying-glass search-icon"></i>
+               <input class="search-input" id="model-search" type="search" placeholder="Search models… ( / )" autocomplete="off" aria-label="Search models">
+               <button class="search-clear" id="search-clear" type="button">Clear</button>
             </div>
-            <aside class="filters-sidebar panel">
-               <div class="filters-title">Providers</div>
-               <div id="filters-list"></div>
-            </aside>
+            <div class="chips" id="filters-list"></div>
+         </div>
+         <p class="result-meta" id="result-meta"></p>
+         <div class="model-grid" id="model-grid">
+            <div class="loading">
+               <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
+               <p>Loading models…</p>
+            </div>
          </div>
       </main>
       <footer class="public-footer"><span>Nore Proxy</span><a href="/usage">Review usage</a></footer>

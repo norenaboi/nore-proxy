@@ -1,6 +1,5 @@
 let allModels = [];
-let filteredModels = [];
-let currentSort = { column: "name", direction: "asc" };
+let searchQuery = "";
 let activeFilters = new Set();
 const iconCache = new Map();
 const MODEL_CACHE_KEY = "nore-proxy:model-catalog:v1";
@@ -100,45 +99,44 @@ function getProviderIcon(provider) {
 }
 
 function formatPrice(value) {
-    if (value == null || value === "" || value === 0) {
-        return "$0.00";
-    }
-    const n = parseFloat(value);
+    const n = Number(value) || 0;
     if (n === 0) return "$0.00";
-    return `$${n.toFixed(3)}`;
+    if (n >= 0.1) return `$${n.toFixed(2)}`;
+    return `$${parseFloat(n.toPrecision(2))}`;
 }
 
-function sortModels(models, column, direction) {
-    return [...models].sort((a, b) => {
-        let aVal, bVal;
-
-        if (column === "name") {
-            aVal = a.id.toLowerCase();
-            bVal = b.id.toLowerCase();
-        } else if (column === "provider") {
-            aVal = a.provider.toLowerCase();
-            bVal = b.provider.toLowerCase();
-        } else if (column === "price") {
-            // Sort by input price
-            aVal = a.pricing?.input || 0;
-            bVal = b.pricing?.input || 0;
-        }
-
-        if (aVal < bVal) return direction === "asc" ? -1 : 1;
-        if (aVal > bVal) return direction === "asc" ? 1 : -1;
-        return 0;
-    });
+function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+    })[c]);
 }
 
-function filterModels() {
-    if (activeFilters.size === 0) {
-        filteredModels = allModels;
-    } else {
-        filteredModels = allModels.filter((model) =>
-            activeFilters.has(model.provider),
-        );
-    }
-    renderTable();
+function highlight(text, query) {
+    if (!query) return escapeHtml(text);
+    const idx = text.toLowerCase().indexOf(query.toLowerCase());
+    if (idx === -1) return escapeHtml(text);
+    return (
+        escapeHtml(text.slice(0, idx)) +
+        "<mark>" +
+        escapeHtml(text.slice(idx, idx + query.length)) +
+        "</mark>" +
+        escapeHtml(text.slice(idx + query.length))
+    );
+}
+
+function getFilteredModels() {
+    const query = searchQuery.trim().toLowerCase();
+    return allModels.filter(
+        (model) =>
+            (activeFilters.size === 0 || activeFilters.has(model.provider)) &&
+            (!query ||
+                model.id.toLowerCase().includes(query) ||
+                model.provider.toLowerCase().includes(query)),
+    );
 }
 
 function renderFilters() {
@@ -154,150 +152,81 @@ function renderFilters() {
     filtersList.innerHTML = providers
         .map(
             (provider) => `
-        <div class="filter-item" onclick="toggleFilter('${provider}')">
-            <input
-                type="checkbox"
-                class="filter-checkbox"
-                id="filter-${provider}"
-                ${activeFilters.has(provider) ? "checked" : ""}
-            />
-            <img src="${getProviderIcon(provider)}" class="filter-icon" alt="${provider}" onerror="this.style.display='none'" />
-            <span class="filter-label">${provider}</span>
-            <span class="filter-count">${providerCounts[provider]}</span>
-        </div>
+        <button class="chip ${activeFilters.has(provider) ? "active" : ""}" data-provider="${escapeHtml(provider)}" type="button">
+            <img src="${getProviderIcon(provider)}" class="chip-icon" alt="" onerror="this.style.display='none'" />
+            ${escapeHtml(provider)} <span class="count">${providerCounts[provider]}</span>
+        </button>
     `,
         )
         .join("");
 }
 
 function toggleFilter(provider) {
-    const checkbox = document.getElementById(`filter-${provider}`);
-
     if (activeFilters.has(provider)) {
         activeFilters.delete(provider);
-        checkbox.checked = false;
     } else {
         activeFilters.add(provider);
-        checkbox.checked = true;
     }
-
-    filterModels();
+    renderFilters();
+    renderGrid();
 }
 
-function renderTable() {
-    const container = document.getElementById("table-container");
-    const sorted = sortModels(
-        filteredModels,
-        currentSort.column,
-        currentSort.direction,
-    );
+function priceItem(label, value) {
+    return `
+        <div class="price-item">
+            <span class="label">${label}</span>
+            <span class="value">${formatPrice(value)} <small>/M</small></span>
+        </div>
+    `;
+}
 
-    if (sorted.length === 0) {
-        container.innerHTML = `
+function renderGrid() {
+    const grid = document.getElementById("model-grid");
+    const models = getFilteredModels().sort((a, b) =>
+        a.id.localeCompare(b.id),
+    );
+    const query = searchQuery.trim();
+
+    document.getElementById("result-meta").textContent =
+        `${models.length} of ${allModels.length} models`;
+
+    if (models.length === 0) {
+        grid.innerHTML = `
             <div class="no-results">
                 <i class="fa-solid fa-filter fa-2x" style="color: #ccc"></i>
-                <p style="margin-top: 15px">No models match your filters</p>
+                <p style="margin-top: 15px">No models match ${query ? `<strong>${escapeHtml(query)}</strong>` : "your filters"}</p>
             </div>
         `;
         return;
     }
 
-    const tableHTML = `
-        <table class="models-table">
-            <thead>
-                <tr>
-                    <th onclick="sortBy('name')" class="${currentSort.column === "name" ? "sorted-" + currentSort.direction : ""}">
-                        Model <span class="sort-icon"></span>
-                    </th>
-                    <th onclick="sortBy('provider')" class="${currentSort.column === "provider" ? "sorted-" + currentSort.direction : ""}">
-                        Provider <span class="sort-icon"></span>
-                    </th>
-                    <th onclick="sortBy('price')" class="${currentSort.column === "price" ? "sorted-" + currentSort.direction : ""}">
-                        Pricing <span class="sort-icon"></span>
-                    </th>
-                    <th style="width: 50px;"></th>
-                </tr>
-            </thead>
-            <tbody>
-                ${sorted
-                    .map(
-                        (model) => `
-                    <tr onclick="copyModelName('${model.id}', event)">
-                        <td>
-                            <div class="model-name-cell">
-                                <img src="${getProviderIcon(model.provider)}" class="model-icon" alt="${model.provider}" onerror="this.style.display='none'" />
-                                <span class="model-name">${model.id}</span>
-                            </div>
-                        </td>
-                        <td class="provider-cell">${model.provider}</td>
-                        <td>
-                            <div class="pricing-cell">
-                                <div class="price-item">
-                                    <span class="price-label">Input</span>
-                                    <span class="price-value">${formatPrice(model.pricing?.input)}/M tokens</span>
-                                </div>
-                                <div class="price-item">
-                                    <span class="price-label">Output</span>
-                                    <span class="price-value">${formatPrice(model.pricing?.output)}/M tokens</span>
-                                </div>
-                                ${
-                                    model.pricing?.cache_write !=
-                                        null &&
-                                    model.pricing.cache_write !== 0
-                                        ? `
-                                <div class="price-item">
-                                    <span class="price-label">Cache Write</span>
-                                    <span class="price-value">${formatPrice(model.pricing.cache_write)}/M tokens</span>
-                                </div>`
-                                        : ""
-                                }
-                                ${
-                                    model.pricing?.cache_read !=
-                                        null &&
-                                    model.pricing.cache_read !== 0
-                                        ? `
-                                <div class="price-item">
-                                    <span class="price-label">Cache Read</span>
-                                    <span class="price-value">${formatPrice(model.pricing.cache_read)}/M tokens</span>
-                                </div>`
-                                        : ""
-                                }
-                            </div>
-                        </td>
-                        <td style="text-align: center;">
-                            <i class="fa-regular fa-copy copy-icon"></i>
-                        </td>
-                    </tr>
-                `,
-                    )
-                    .join("")}
-            </tbody>
-        </table>
-    `;
-
-    container.innerHTML = tableHTML;
+    grid.innerHTML = models
+        .map(
+            (model) => `
+        <article class="model-card panel" data-model="${escapeHtml(model.id)}" tabindex="0" role="button" aria-label="Copy ${escapeHtml(model.id)}">
+            <div class="card-top">
+                <img src="${getProviderIcon(model.provider)}" class="model-icon" alt="${escapeHtml(model.provider)}" onerror="this.style.display='none'" />
+                <div class="card-id">
+                    <span class="model-name" title="${escapeHtml(model.id)}">${highlight(model.id, query)}</span>
+                    <span class="provider">${escapeHtml(model.provider)}</span>
+                </div>
+            </div>
+            <button class="card-copy" type="button">Copy</button>
+            <div class="price-grid">
+                ${priceItem("Input", model.pricing?.input)}
+                ${priceItem("Output", model.pricing?.output)}
+                ${priceItem("Cache Write", model.pricing?.cache_write)}
+                ${priceItem("Cache Read", model.pricing?.cache_read)}
+            </div>
+        </article>
+    `,
+        )
+        .join("");
 }
 
-function sortBy(column) {
-    if (currentSort.column === column) {
-        currentSort.direction =
-            currentSort.direction === "asc" ? "desc" : "asc";
-    } else {
-        currentSort.column = column;
-        currentSort.direction = "asc";
-    }
-    renderTable();
-}
-
-function copyModelName(modelId, event) {
+function copyModelName(modelId) {
     navigator.clipboard.writeText(modelId);
     showNotification();
-
-    const row = event.currentTarget;
-    row.style.background = "rgba(212, 175, 55, 0.2)";
-    setTimeout(() => {
-        row.style.background = "";
-    }, 300);
 }
 
 function showNotification() {
@@ -375,12 +304,12 @@ function applyModels(models) {
     );
 
     renderFilters();
-    filterModels();
+    renderGrid();
     preloadAllIcons();
 }
 
 function renderModelLoadError() {
-    document.getElementById("table-container").innerHTML = `
+    document.getElementById("model-grid").innerHTML = `
         <div class="no-results">
             <i class="fa-solid fa-triangle-exclamation fa-2x" style="color: #e74c3c"></i>
             <p style="margin-top: 15px">Failed to load models</p>
@@ -401,7 +330,7 @@ async function loadModels() {
 
         if (freshModels.length === 0) {
             if (!cachedModels) {
-                document.getElementById("table-container").innerHTML = `
+                document.getElementById("model-grid").innerHTML = `
                     <div class="no-results">
                         <i class="fa-solid fa-skull-crossbones fa-2x" style="color: #ccc"></i>
                         <p style="margin-top: 15px">No models found</p>
@@ -421,4 +350,47 @@ async function loadModels() {
     }
 }
 
-document.addEventListener("DOMContentLoaded", loadModels);
+function setupInteractions() {
+    const searchEl = document.getElementById("model-search");
+    const searchWrap = document.getElementById("search-wrap");
+
+    searchEl.addEventListener("input", () => {
+        searchQuery = searchEl.value;
+        searchWrap.classList.toggle("has-value", !!searchQuery);
+        renderGrid();
+    });
+
+    document.getElementById("search-clear").addEventListener("click", () => {
+        searchEl.value = "";
+        searchEl.dispatchEvent(new Event("input"));
+        searchEl.focus();
+    });
+
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "/" && document.activeElement !== searchEl) {
+            event.preventDefault();
+            searchEl.focus();
+        }
+    });
+
+    document.getElementById("filters-list").addEventListener("click", (event) => {
+        const chip = event.target.closest(".chip");
+        if (chip) toggleFilter(chip.dataset.provider);
+    });
+
+    const grid = document.getElementById("model-grid");
+    grid.addEventListener("click", (event) => {
+        const card = event.target.closest(".model-card");
+        if (card) copyModelName(card.dataset.model);
+    });
+    grid.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        const card = event.target.closest(".model-card");
+        if (card) copyModelName(card.dataset.model);
+    });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    setupInteractions();
+    loadModels();
+});
