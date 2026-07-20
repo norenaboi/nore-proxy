@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import settingsManager from "../services/settingsManager.js";
+import { getEndpointsPath } from "../utils/configPaths.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,7 +55,7 @@ class Config {
     this.ENDPOINTS = {};
     this._rrCounters = {};
 
-    const endpointsPath = path.join(__dirname, "..", "endpoints.json");
+    const endpointsPath = getEndpointsPath();
 
     if (!fs.existsSync(endpointsPath)) {
       console.log("endpoints.json not found, no endpoints loaded");

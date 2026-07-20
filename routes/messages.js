@@ -14,16 +14,24 @@ import {
 } from "../utils/logging.js";
 import {
   MODEL_REGISTRY,
-  getEndpointForModel,
+  getEndpointForConcreteModel,
   getFullUrl,
   estimateTokens,
-  isClaudeModel,
   applyGenerationPolicy,
-  getEndpointMeta,
   resolveKeyHealth,
 } from "../utils/helpers.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import { openAIResponseToAnthropic } from "../utils/responseFormats.js";
+import {
+  attemptedKeyHashes,
+  classifyUpstreamFailure,
+  createRoutingState,
+  markStreamOutputStarted,
+  nextTarget,
+  recordRoutingAttempt,
+  routingMetadata,
+  summarizeRoutingAttempts,
+} from "../utils/autoRouting.js";
 import {
   buildUpstreamErrorContext,
   getUpstreamErrorMessage,
@@ -132,6 +140,16 @@ function anthropicToolsToOpenAI(tools) {
   }));
 }
 
+function anthropicToolChoiceToOpenAI(choice) {
+  if (!choice) return undefined;
+  if (choice.type === "auto" || choice.type === "none") return choice.type;
+  if (choice.type === "any") return "required";
+  if (choice.type === "tool" && choice.name) {
+    return { type: "function", function: { name: choice.name } };
+  }
+  return undefined;
+}
+
 // Anthropic tool_result content may be a string or an array of blocks.
 // OpenAI's role:"tool" message expects a plain string.
 function toolResultText(content) {
@@ -154,19 +172,8 @@ function toolResultText(content) {
 
 function writeAnthropicEvent(res, event, data) {
   if (res.writableEnded) return;
+  if (res.__routingState) markStreamOutputStarted(res.__routingState);
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-}
-
-function sendAnthropicStreamError(res, error, statusCode = 500) {
-  if (res.writableEnded) return;
-  writeAnthropicEvent(res, "error", {
-    type: "error",
-    error: {
-      type: "api_error",
-      message: error?.message || "Internal server error",
-    },
-  });
-  res.end();
 }
 
 // --- Error persistence (shared with chat.js pattern) ---
@@ -180,6 +187,9 @@ function persistUpstreamError({
   error,
   statusCode,
   responseBody,
+  autoModel,
+  targetModel,
+  routingAttempts,
 }) {
   const context = buildUpstreamErrorContext({
     modelName,
@@ -189,6 +199,9 @@ function persistUpstreamError({
     error,
     statusCode,
     responseBody,
+    autoModel,
+    targetModel,
+    routingAttempts,
   });
   return logError(
     requestId,
@@ -199,22 +212,202 @@ function persistUpstreamError({
   );
 }
 
-// Records a mid-stream failure against the active key. The upstream already
-// returned 200 and then failed partway (e.g. Responses API `response.failed`),
-// so this is the only place the failure's status is seen. Sidelines the key for
-// actionable codes when key health is on, mirroring the HTTP-status path.
-function recordMidStreamFailure(endpointInfo, error) {
-  const status = Number(error?.statusCode);
-  if (!endpointInfo?.token || !ACTIONABLE_CODES.has(status)) return;
-  const sideline = resolveKeyHealth(endpointInfo.keyHealth);
-  keyStateManager.recordFailure(endpointInfo.endpointKey, endpointInfo.token, status, { sideline });
+const clone = (value) => structuredClone(value);
+const statusOf = (error) => error?.response?.status ?? error?.statusCode ?? null;
+
+function autoExhausted(lastError, state) {
+  const error = new Error(lastError?.message || "All automatic routing targets failed.");
+  error.name = "AutoTargetsExhaustedError";
+  error.code = "auto_targets_exhausted";
+  error.statusCode = statusOf(lastError) || 502;
+  error.responseBody = lastError?.responseBody;
+  error.attemptContext = lastError?.attemptContext;
+  error.routingState = state;
+  return error;
+}
+
+function withAttemptContext(error, endpointInfo, headers, fullUrl, responseBody) {
+  Object.defineProperty(error, "attemptContext", {
+    value: {
+      endpointInfo,
+      requestHeaders: headers,
+      upstreamUrl: fullUrl,
+      responseBody: error.responseBody ?? responseBody ?? null,
+    },
+    configurable: true,
+  });
+  return error;
+}
+
+async function executeMessagesRouting(requestId, requestedModel, runAttempt) {
+  const state = createRoutingState({
+    requestId,
+    requestedModel,
+    registry: MODEL_REGISTRY,
+    globalCeiling: settingsManager.get("autoModelMaxTargetAttempts"),
+  });
+  const maxKeyAttempts = 1 + Math.max(
+    0,
+    parseInt(settingsManager.get("keyHopAttempts"), 10) || 0,
+  );
+  let lastError = null;
+  let autoFallbackOccurred = false;
+
+  for (let target = nextTarget(state); target; target = nextTarget(state)) {
+    let fallbackTarget = false;
+    let endpointKey = null;
+    for (let keyAttempt = 1; keyAttempt <= maxKeyAttempts; keyAttempt++) {
+      const excluded = endpointKey
+        ? attemptedKeyHashes(state, endpointKey)
+        : new Set();
+      const endpointInfo = getEndpointForConcreteModel(target, {
+        excludeHashes: excluded,
+      });
+      if (!endpointInfo) {
+        const error = new Error("Can't find the model you're looking for.");
+        error.name = "EndpointResolutionError";
+        error.statusCode = state.autoModel ? 503 : 404;
+        if (!state.autoModel) throw error;
+        lastError = error;
+        const decision = classifyUpstreamFailure({ statusCode: 503 });
+        recordRoutingAttempt(state, {
+          targetModel: target,
+          keyAttempt,
+          outcome: "target_unavailable",
+          retryReason: decision.reason,
+          statusCode: 503,
+        });
+        fallbackTarget = true;
+        break;
+      }
+      endpointKey = endpointInfo.endpointKey;
+      const tried = attemptedKeyHashes(state, endpointKey);
+
+      if (endpointInfo.tokenExhausted || !endpointInfo.token) {
+        lastError = withAttemptContext(
+          keyStateManager.buildExhaustionError(endpointKey),
+          endpointInfo,
+        );
+        const decision = classifyUpstreamFailure({ keyExhausted: true });
+        recordRoutingAttempt(state, {
+          targetModel: target,
+          endpointKey,
+          endpointName: endpointInfo.endpointName,
+          keyAttempt,
+          outcome: "key_exhausted",
+          retryReason: decision.reason,
+          statusCode: 404,
+        });
+        fallbackTarget = true;
+        break;
+      }
+
+      try {
+        const result = await runAttempt(state, endpointInfo, keyAttempt);
+        recordRoutingAttempt(state, {
+          targetModel: target,
+          endpointKey,
+          endpointName: endpointInfo.endpointName,
+          tokenHash: endpointInfo.tokenHash,
+          keyAttempt,
+          outcome: "success",
+        });
+        if (result && typeof result === "object") {
+          Object.defineProperty(result, "routingState", {
+            value: state,
+            enumerable: false,
+          });
+        }
+        return result;
+      } catch (error) {
+        if (error.clientAbort) throw error;
+        lastError = error;
+        const statusCode = statusOf(error);
+        const decision = classifyUpstreamFailure({
+          statusCode,
+          error,
+          streamOutputStarted: state.streamOutputStarted,
+        });
+        recordRoutingAttempt(state, {
+          targetModel: target,
+          endpointKey,
+          endpointName: endpointInfo.endpointName,
+          tokenHash: endpointInfo.tokenHash,
+          keyAttempt,
+          outcome: "failure",
+          retryReason: decision.reason,
+          statusCode,
+        });
+        if (endpointInfo.tokenHash) tried.add(endpointInfo.tokenHash);
+        if (endpointInfo.token && ACTIONABLE_CODES.has(Number(statusCode))) {
+          keyStateManager.recordFailure(
+            endpointKey,
+            endpointInfo.token,
+            Number(statusCode),
+            { sideline: resolveKeyHealth(endpointInfo.keyHealth) },
+          );
+        }
+        if (decision.retryKey && keyAttempt < maxKeyAttempts) continue;
+        fallbackTarget = decision.fallbackTarget;
+        break;
+      }
+    }
+    if (!fallbackTarget) throw lastError;
+    if (state.autoModel) autoFallbackOccurred = true;
+  }
+
+  if (autoFallbackOccurred) throw autoExhausted(lastError, state);
+  if (lastError) {
+    lastError.routingState = state;
+    throw lastError;
+  }
+  const error = new Error(`Model '${requestedModel}' not found.`);
+  error.statusCode = 404;
+  throw error;
+}
+
+function successfulRoutingMetadata(state, endpointInfo = null) {
+  const metadata = routingMetadata(state, endpointInfo);
+  metadata.routing_attempt_count += 1;
+  return metadata;
+}
+
+function anthropicErrorType(statusCode) {
+  if (statusCode === 400) return "invalid_request_error";
+  if (statusCode === 401) return "authentication_error";
+  if (statusCode === 403) return "permission_error";
+  if (statusCode === 404) return "not_found_error";
+  if (statusCode === 413) return "request_too_large";
+  if (statusCode === 429) return "rate_limit_error";
+  if (statusCode === 529) return "overloaded_error";
+  return "api_error";
+}
+
+function anthropicErrorEnvelope(error, statusCode) {
+  if (error?.responseBody?.type === "error" && error.responseBody.error?.type) {
+    return {
+      ...error.responseBody,
+      error: {
+        ...error.responseBody.error,
+        ...(error.code ? { code: error.code } : {}),
+      },
+    };
+  }
+  return {
+    type: "error",
+    error: {
+      type: anthropicErrorType(statusCode),
+      message: error?.message || "Internal server error",
+      ...(error?.code ? { code: error.code } : {}),
+    },
+  };
 }
 
 // --- Route: POST /v1/messages ---
 
 router.post("/v1/messages", verifyApiKey, async (req, res) => {
   const apiKey = req.apiKey;
-  const anthropicReq = req.body;
+  const anthropicReq = clone(req.body);
   const modelName = anthropicReq.model;
   const isStreaming = anthropicReq.stream === true;
   const requestId = uuidv4();
@@ -241,13 +434,6 @@ router.post("/v1/messages", verifyApiKey, async (req, res) => {
     });
   }
 
-  // Apply the same endpoint generation policy used by the OpenAI route before
-  // logging or forwarding either the native or converted request.
-  const endpointMeta = getEndpointMeta(modelName);
-  if (endpointMeta?.generationDefaults) {
-    applyGenerationPolicy(anthropicReq, endpointMeta.generationDefaults);
-  }
-
   // Log request start
   const requestParams = {
     temperature: anthropicReq.temperature,
@@ -264,14 +450,36 @@ router.post("/v1/messages", verifyApiKey, async (req, res) => {
       res.json(responseData);
     }
   } catch (error) {
-    logRequestEnd(requestId, false, 0, 0, error.message);
-    console.error(`MESSAGES [ID: ${requestId}]: Exception:`, error);
-
-    if (!res.headersSent) {
-      res.status(error.statusCode || error.response?.status || 500).json({
-        type: "error",
-        error: { type: "api_error", message: error.message || String(error) },
+    const state = error.routingState || null;
+    const context = error.attemptContext || {};
+    logRequestEnd(requestId, false, 0, 0, error.message, "", null, 0, 0, null, routingMetadata(state, context.endpointInfo));
+    const statusCode = statusOf(error) || 500;
+    if (!error.clientAbort) {
+      persistUpstreamError({
+        requestId,
+        modelName,
+        endpointInfo: context.endpointInfo,
+        requestHeaders: context.requestHeaders,
+        upstreamUrl: context.upstreamUrl,
+        error,
+        statusCode,
+        responseBody: context.responseBody,
+        autoModel: state?.autoModel,
+        targetModel: state?.currentTargetModel,
+        routingAttempts: summarizeRoutingAttempts(state),
       });
+      console.error(
+        `MESSAGES [ID: ${requestId}]: ${error?.name || "Error"}: ${error?.message || String(error)}`,
+      );
+    }
+
+    if (error.clientAbort) {
+      if (!res.writableEnded) try { res.end(); } catch (_) {}
+    } else if (isStreaming && res.headersSent && !res.writableEnded) {
+      writeAnthropicEvent(res, "error", anthropicErrorEnvelope(error, statusCode));
+      res.end();
+    } else if (!res.headersSent) {
+      res.status(statusCode).json(anthropicErrorEnvelope(error, statusCode));
     } else if (!res.writableEnded) {
       res.end();
     }
@@ -281,6 +489,33 @@ router.post("/v1/messages", verifyApiKey, async (req, res) => {
 // --- Non-streaming request ---
 
 async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, openaiMessages) {
+  return executeMessagesRouting(requestId, modelName, (state, endpointInfo) =>
+    makeMessagesAttempt(
+      requestId,
+      anthropicReq,
+      modelName,
+      apiKey,
+      openaiMessages,
+      endpointInfo,
+      state,
+    ),
+  );
+}
+
+async function makeMessagesAttempt(
+  requestId,
+  baseAnthropicReq,
+  modelName,
+  apiKey,
+  baseOpenaiMessages,
+  endpointOverride,
+  routingState,
+) {
+  const anthropicReq = clone(baseAnthropicReq);
+  const openaiMessages = clone(baseOpenaiMessages);
+  if (endpointOverride?.generationDefaults) {
+    applyGenerationPolicy(anthropicReq, endpointOverride.generationDefaults);
+  }
   let endpointInfo = null;
   let fullUrl = null;
   let data = null;
@@ -294,11 +529,12 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
     // Smart key selection with single-request retry across usable keys.
     // Only 400/401/402/429 trigger a hop; any other status/error is terminal.
     const triedHashes = new Set();
-    const maxAttempts =
-      1 + Math.max(0, parseInt(settingsManager.get("keyHopAttempts"), 10) || 0);
+    const maxAttempts = endpointOverride
+      ? 1
+      : 1 + Math.max(0, parseInt(settingsManager.get("keyHopAttempts"), 10) || 0);
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      endpointInfo = getEndpointForModel(modelName, { excludeHashes: triedHashes });
+      endpointInfo = endpointOverride || getEndpointForConcreteModel(modelName, { excludeHashes: triedHashes });
       if (!endpointInfo) {
         const error = new Error("Can't find the model you're looking for.");
         error.name = "EndpointResolutionError";
@@ -348,6 +584,8 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
           temperature: anthropicReq.temperature,
           top_p: anthropicReq.top_p,
           tools: anthropicToolsToOpenAI(anthropicReq.tools),
+          tool_choice: anthropicToolChoiceToOpenAI(anthropicReq.tool_choice),
+          stop: anthropicReq.stop_sequences,
           stream: false,
         };
         Object.keys(openaiReq).forEach((k) => {
@@ -386,19 +624,6 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
         response = resp;
         upstreamResponseBody = resp.data;
         break;
-      }
-
-      // Non-2xx. Only actionable codes update key state and may trigger a hop.
-      // sideline benches the key only when key health is on for this endpoint.
-      const canRetry = attempt < maxAttempts - 1;
-      const sideline = resolveKeyHealth(endpointInfo.keyHealth);
-      if (ACTIONABLE_CODES.has(resp.status) && canRetry) {
-        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
-        triedHashes.add(tokenHash);
-        continue;
-      }
-      if (ACTIONABLE_CODES.has(resp.status)) {
-        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
       }
 
       upstreamResponseBody = resp.data;
@@ -443,6 +668,10 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
       anthropicResponse = openAIResponseToAnthropic(parsed.response || rawData, modelName, requestId);
     }
 
+    if (anthropicResponse && typeof anthropicResponse === "object") {
+      anthropicResponse.model = modelName;
+    }
+
     const inputTokens = usage.prompt_tokens ?? estimateTokens(openaiMessages);
     const outputTokens = usage.completion_tokens ?? estimateTokens(contentText);
     const cacheWriteTokens = usage.prompt_tokens_details?.cache_creation_input_tokens
@@ -468,6 +697,7 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
       billingTokens.cacheWriteTokens,
       billingTokens.cacheReadTokens,
       billingTokens.tokenAccountingVersion,
+      successfulRoutingMetadata(routingState, endpointInfo),
     );
 
     return anthropicResponse;
@@ -475,31 +705,76 @@ async function makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, o
     const responseBody = await readUpstreamErrorBody(
       error.responseBody ?? error.response?.data ?? upstreamResponseBody,
     );
-    const statusCode = error.response?.status ?? error.statusCode ?? null;
-
-    persistUpstreamError({
-      requestId,
-      modelName,
-      endpointInfo,
-      requestHeaders: headers,
-      upstreamUrl: fullUrl,
-      error,
-      statusCode,
-      responseBody,
-    });
-    logRequestEnd(requestId, false, 0, 0, error.message);
-    throw error;
+    throw withAttemptContext(error, endpointInfo, headers, fullUrl, responseBody);
   }
 }
 
 // --- Streaming request ---
 
 async function streamMessages(req, res, requestId, anthropicReq, modelName, apiKey, openaiMessages) {
+  const abortController = new AbortController();
+  let activeStream = null;
+  let cancelActiveAttempt = null;
+  let clientAborted = false;
+  const abortClient = () => {
+    if (clientAborted || res.writableEnded) return;
+    clientAborted = true;
+    const error = new Error("Client aborted stream");
+    error.clientAbort = true;
+    cancelActiveAttempt?.(error);
+    abortController.abort();
+    activeStream?.destroy?.(error);
+  };
+  req.once("aborted", abortClient);
+  res.once("close", abortClient);
+  try {
+    return await executeMessagesRouting(requestId, modelName, (state, endpointInfo) =>
+      streamMessagesAttempt(
+        res,
+        requestId,
+        anthropicReq,
+        modelName,
+        apiKey,
+        openaiMessages,
+        state,
+        endpointInfo,
+        abortController,
+        () => clientAborted,
+        (stream) => { activeStream = stream; },
+        (cancel) => { cancelActiveAttempt = cancel; },
+      ),
+    );
+  } finally {
+    cancelActiveAttempt = null;
+    activeStream = null;
+    req.off("aborted", abortClient);
+    res.off("close", abortClient);
+  }
+}
+
+async function streamMessagesAttempt(
+  res,
+  requestId,
+  baseAnthropicReq,
+  modelName,
+  apiKey,
+  baseOpenaiMessages,
+  routingState,
+  endpointOverride,
+  abortController,
+  isClientAborted,
+  setActiveStream,
+  setAttemptCancel,
+) {
+  const anthropicReq = clone(baseAnthropicReq);
+  const openaiMessages = clone(baseOpenaiMessages);
+  if (endpointOverride?.generationDefaults) {
+    applyGenerationPolicy(anthropicReq, endpointOverride.generationDefaults);
+  }
   let accumulatedContent = "";
   let endpointInfo = null;
   let fullUrl = null;
   let headers = {};
-  let streamSettled = false;
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -513,11 +788,12 @@ async function streamMessages(req, res, requestId, anthropicReq, modelName, apiK
     // Smart key selection with single-request retry across usable keys.
     // Only 400/401/402/429 trigger a hop; any other status/error is terminal.
     const triedHashes = new Set();
-    const maxAttempts =
-      1 + Math.max(0, parseInt(settingsManager.get("keyHopAttempts"), 10) || 0);
+    const maxAttempts = endpointOverride
+      ? 1
+      : 1 + Math.max(0, parseInt(settingsManager.get("keyHopAttempts"), 10) || 0);
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      endpointInfo = getEndpointForModel(modelName, { excludeHashes: triedHashes });
+      endpointInfo = endpointOverride || getEndpointForConcreteModel(modelName, { excludeHashes: triedHashes });
       if (!endpointInfo) {
         const error = new Error("Can't find the model you're looking for.");
         error.name = "EndpointResolutionError";
@@ -568,6 +844,8 @@ async function streamMessages(req, res, requestId, anthropicReq, modelName, apiK
           temperature: anthropicReq.temperature,
           top_p: anthropicReq.top_p,
           tools: anthropicToolsToOpenAI(anthropicReq.tools),
+          tool_choice: anthropicToolChoiceToOpenAI(anthropicReq.tool_choice),
+          stop: anthropicReq.stop_sequences,
           stream: true,
         };
         Object.keys(openaiReq).forEach((k) => {
@@ -602,147 +880,160 @@ async function streamMessages(req, res, requestId, anthropicReq, modelName, apiK
         responseType: "stream",
         timeout: 180000,
         validateStatus: () => true,
+        signal: abortController.signal,
       });
+      setActiveStream(resp.data);
 
       if (resp.status >= 200 && resp.status < 300) {
-        keyStateManager.recordSuccess(endpointKey, backendToken);
         response = resp;
         break;
       }
 
-      // Non-2xx. Only actionable codes update key state and may trigger a hop.
-      // sideline benches the key only when key health is on for this endpoint.
-      const canRetry = attempt < maxAttempts - 1;
-      if (ACTIONABLE_CODES.has(resp.status)) {
-        const sideline = resolveKeyHealth(endpointInfo.keyHealth);
-        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
-        triedHashes.add(tokenHash);
-        if (canRetry) {
-          resp.data?.destroy?.();
-          continue;
-        }
-      }
-
+      // The outer routing executor owns key retry and target fallback.
       const responseBody = await readUpstreamErrorBody(resp.data);
+      resp.data?.destroy?.();
       const error = new Error(`Error ${resp.status}: ${getUpstreamErrorMessage(responseBody)}`);
       error.name = "UpstreamHttpError";
       error.statusCode = resp.status;
-
-      persistUpstreamError({ requestId, modelName, endpointInfo, requestHeaders: headers, upstreamUrl: fullUrl, error, statusCode: resp.status, responseBody });
-      logRequestEnd(requestId, false, 0, 0, error.message);
-      sendAnthropicStreamError(res, error, resp.status);
-      return;
+      error.responseBody = responseBody;
+      throw error;
     }
 
     if (!response) {
       throw keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
     }
 
-    if (apiFormat === "anthropic") {
-      // Pass through Anthropic SSE events as-is (they're already in the right format)
-      streamAnthropicPassthrough(res, response.data, requestId, modelName, apiKey, openaiMessages, endpointInfo, headers, fullUrl, () => streamSettled, (v) => { streamSettled = v; });
-    } else {
-      // Convert OpenAI-style stream to Anthropic SSE events
-      streamOpenAIToAnthropic(res, response.data, requestId, modelName, apiKey, openaiMessages, endpointInfo, headers, fullUrl, apiFormat, () => streamSettled, (v) => { streamSettled = v; });
-    }
+    const consume = apiFormat === "anthropic"
+      ? streamAnthropicPassthrough
+      : streamOpenAIToAnthropic;
+    const args = apiFormat === "anthropic"
+      ? [res, response.data, requestId, modelName, apiKey, openaiMessages, routingState]
+      : [res, response.data, requestId, modelName, apiKey, openaiMessages, apiFormat, routingState];
+    const streamPromise = consume(...args);
+    setAttemptCancel(streamPromise.cancel);
+    await streamPromise;
+    setAttemptCancel(null);
+    setActiveStream(null);
+    keyStateManager.recordSuccess(endpointInfo.endpointKey, endpointInfo.token);
+    return { streamed: true };
   } catch (error) {
-    console.error(`MESSAGES [ID: ${requestId}]: Stream error:`, error);
-    const responseBody = await readUpstreamErrorBody(error.responseBody ?? error.response?.data);
-    const statusCode = error.response?.status ?? error.statusCode ?? 500;
-
-    persistUpstreamError({ requestId, modelName, endpointInfo, requestHeaders: headers, upstreamUrl: fullUrl, error, statusCode, responseBody });
-    logRequestEnd(requestId, false, 0, 0, error.message);
-    sendAnthropicStreamError(res, error, statusCode);
+    if (isClientAborted()) error.clientAbort = true;
+    const responseBody = await readUpstreamErrorBody(
+      error.responseBody ?? error.response?.data,
+    );
+    throw withAttemptContext(error, endpointInfo, headers, fullUrl, responseBody);
   }
 }
 
-// Pass through Anthropic SSE events, tracking content for logging
-function streamAnthropicPassthrough(res, stream, requestId, modelName, apiKey, openaiMessages, endpointInfo, headers, fullUrl, getSettled, setSettled) {
-  let buffer = "";
-  let accumulatedContent = "";
-  let usage = null;
-
-  stream.on("data", (chunk) => {
-    const text = chunk.toString();
-    if (!res.writableEnded) {
-      res.write(text);
-    }
-
-    // Parse for logging
-    buffer += text;
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data: ")) continue;
-      try {
-        const data = JSON.parse(trimmed.slice(6));
-        if (data.type === "content_block_delta" && data.delta?.type === "text_delta") {
+// Pass through Anthropic SSE events, tracking content for logging.
+function streamAnthropicPassthrough(
+  res,
+  stream,
+  requestId,
+  modelName,
+  apiKey,
+  openaiMessages,
+  routingState,
+) {
+  let cancel;
+  const promise = new Promise((resolve, reject) => {
+    let settled = false;
+    let buffer = "";
+    let accumulatedContent = "";
+    let usage = null;
+    const cleanup = () => {
+      stream.off("data", onData);
+      stream.off("end", onEnd);
+      stream.off("error", onError);
+      stream.off("close", onClose);
+    };
+    const settle = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    cancel = (error) => settle(error);
+    const onData = (chunk) => {
+      if (settled) return;
+      buffer += chunk.toString();
+      const records = buffer.split("\n\n");
+      buffer = records.pop() || "";
+      for (const record of records) {
+        if (settled) return;
+        let eventName = null;
+        let payload = null;
+        for (const line of record.split("\n")) {
+          if (line.startsWith("event: ")) eventName = line.slice(7).trim();
+          if (line.startsWith("data: ")) payload = line.slice(6).trim();
+        }
+        if (!payload) continue;
+        let data;
+        try { data = JSON.parse(payload); } catch { continue; }
+        if (data.type === "error") {
+          const error = new Error(data.error?.message || "Upstream stream failed");
+          error.name = "UpstreamStreamError";
+          error.statusCode = {
+            invalid_request_error: 400,
+            authentication_error: 401,
+            billing_error: 402,
+            permission_error: 403,
+            not_found_error: 404,
+            rate_limit_error: 429,
+            overloaded_error: 529,
+          }[data.error?.type] || 500;
+          error.responseBody = data;
+          settle(error);
+          stream.destroy();
+          return;
+        }
+        if (data.type === "message_start" && data.message) {
+          data.message = { ...data.message, model: modelName };
+          usage = { ...(usage || {}), ...(data.message.usage || {}) };
+        } else if (data.type === "message_delta" && data.usage) {
+          usage = { ...(usage || {}), ...data.usage };
+        } else if (data.type === "content_block_delta" && data.delta?.type === "text_delta") {
           accumulatedContent += data.delta.text || "";
         }
-        if (data.type === "message_delta" && data.usage) {
-          usage = data.usage;
+        if (!res.writableEnded) {
+          markStreamOutputStarted(routingState);
+          writeAnthropicEvent(res, eventName || data.type, data);
         }
-        if (data.type === "message_start" && data.message?.usage) {
-          usage = { ...usage, ...data.message.usage };
-        }
-      } catch {}
-    }
+      }
+    };
+    const onEnd = () => {
+      if (settled) return;
+      const billingTokens = normalizeBillingTokens({
+        inputTokens: usage?.input_tokens ?? estimateTokens(openaiMessages),
+        outputTokens: usage?.output_tokens ?? estimateTokens(accumulatedContent),
+        cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
+        cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+        inputIncludesCache: false,
+      });
+      logRequestEnd(requestId, true, billingTokens.inputTokens, billingTokens.outputTokens, null, accumulatedContent, apiKey, billingTokens.cacheWriteTokens, billingTokens.cacheReadTokens, billingTokens.tokenAccountingVersion, successfulRoutingMetadata(routingState));
+      if (!res.writableEnded) res.end();
+      settle();
+    };
+    const onError = (error) => settle(error);
+    const onClose = () => {
+      if (!settled) settle(new Error("Upstream stream closed before completion"));
+    };
+    stream.on("data", onData);
+    stream.once("end", onEnd);
+    stream.once("error", onError);
+    stream.once("close", onClose);
   });
-
-  stream.on("end", () => {
-    if (getSettled()) return;
-    setSettled(true);
-
-    const inputTokens = usage?.input_tokens ?? estimateTokens(openaiMessages);
-    const outputTokens = usage?.output_tokens ?? estimateTokens(accumulatedContent);
-    const cacheWriteTokens = usage?.cache_creation_input_tokens ?? 0;
-    const cacheReadTokens = usage?.cache_read_input_tokens ?? 0;
-    const billingTokens = normalizeBillingTokens({
-      inputTokens,
-      outputTokens,
-      cacheWriteTokens,
-      cacheReadTokens,
-      inputIncludesCache: false,
-    });
-
-    logRequestEnd(
-      requestId,
-      true,
-      billingTokens.inputTokens,
-      billingTokens.outputTokens,
-      null,
-      accumulatedContent,
-      apiKey,
-      billingTokens.cacheWriteTokens,
-      billingTokens.cacheReadTokens,
-      billingTokens.tokenAccountingVersion,
-    );
-
-    if (!res.writableEnded) {
-      res.end();
-    }
-  });
-
-  stream.on("error", (error) => {
-    if (getSettled()) return;
-    setSettled(true);
-
-    if (error && typeof error.message === "string" && /abort/i.test(error.message)) {
-      logRequestEnd(requestId, false, 0, 0, error.message);
-      if (!res.writableEnded) { try { res.end(); } catch {} }
-      return;
-    }
-
-    persistUpstreamError({ requestId, modelName, endpointInfo, requestHeaders: headers, upstreamUrl: fullUrl, error });
-    logRequestEnd(requestId, false, 0, 0, error.message);
-    sendAnthropicStreamError(res, error, 500);
-  });
+  promise.cancel = (error) => cancel?.(error);
+  return promise;
 }
 
 // Convert an OpenAI-style SSE stream into Anthropic SSE events
-function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, openaiMessages, endpointInfo, headers, fullUrl, apiFormat, getSettled, setSettled) {
+function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, openaiMessages, apiFormat, routingState) {
+  let cancel;
+  const promise = new Promise((resolve, reject) => {
+  let settled = false;
+  res.__routingState = routingState;
   const adapter = getAdapter(apiFormat);
   let buffer = "";
   let accumulatedContent = "";
@@ -755,7 +1046,8 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
   let thinkingBlockIndex = -1;
   let textBlockOpen = false;
   let textBlockIndex = -1;
-  const toolBlocks = new Map(); // OpenAI tool_call index -> { index, id, name }
+  const toolFragments = new Map(); // OpenAI index -> { id, name, fragments[] }
+  const toolOrder = [];
   let lastToolIndex = null;
   const msgId = `msg_${requestId.replace(/-/g, "").slice(0, 20)}`;
 
@@ -819,25 +1111,54 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
     });
   }
 
-  // Close any currently-open content block (thinking, text, or tool_use).
+  function closeTextBlock() {
+    if (!textBlockOpen) return;
+    writeAnthropicEvent(res, "content_block_stop", {
+      type: "content_block_stop",
+      index: textBlockIndex,
+    });
+    textBlockOpen = false;
+    textBlockIndex = -1;
+  }
+
+  function flushToolBlocks() {
+    closeThinkingBlock();
+    closeTextBlock();
+    for (const toolIndex of toolOrder) {
+      const tool = toolFragments.get(toolIndex);
+      if (!tool?.id) continue;
+      const index = nextBlockIndex++;
+      writeAnthropicEvent(res, "content_block_start", {
+        type: "content_block_start",
+        index,
+        content_block: {
+          type: "tool_use",
+          id: tool.id,
+          name: tool.name || "",
+          input: {},
+        },
+      });
+      for (const fragment of tool.fragments) {
+        writeAnthropicEvent(res, "content_block_delta", {
+          type: "content_block_delta",
+          index,
+          delta: { type: "input_json_delta", partial_json: fragment },
+        });
+      }
+      writeAnthropicEvent(res, "content_block_stop", {
+        type: "content_block_stop",
+        index,
+      });
+    }
+    toolFragments.clear();
+    toolOrder.length = 0;
+    lastToolIndex = null;
+  }
+
   function closeOpenBlocks() {
     closeThinkingBlock();
-    if (textBlockOpen) {
-      writeAnthropicEvent(res, "content_block_stop", {
-        type: "content_block_stop",
-        index: textBlockIndex,
-      });
-      textBlockOpen = false;
-      textBlockIndex = -1;
-    }
-    for (const block of toolBlocks.values()) {
-      writeAnthropicEvent(res, "content_block_stop", {
-        type: "content_block_stop",
-        index: block.index,
-      });
-    }
-    toolBlocks.clear();
-    lastToolIndex = null;
+    closeTextBlock();
+    flushToolBlocks();
   }
 
   // Emit the terminal message_delta + message_stop exactly once (issue 5).
@@ -859,7 +1180,24 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
     writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
   }
 
-  stream.on("data", (chunk) => {
+  const cleanup = () => {
+    stream.off("data", onData);
+    stream.off("end", onEnd);
+    stream.off("error", onError);
+    stream.off("close", onClose);
+    delete res.__routingState;
+  };
+  const settle = (error) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    if (error) reject(error);
+    else resolve();
+  };
+  cancel = (error) => settle(error);
+
+  const onData = (chunk) => {
+    if (settled) return;
     buffer += chunk.toString();
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
@@ -891,7 +1229,7 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
         if (
           parsed.deltaReasoning &&
           !textBlockOpen &&
-          toolBlocks.size === 0
+          toolFragments.size === 0
         ) {
           // Anthropic content blocks cannot overlap. Reasoning normally
           // precedes answer text; if an upstream emits more reasoning after a
@@ -919,77 +1257,50 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
         }
 
         if (parsed.toolCalls) {
+          closeThinkingBlock();
+          closeTextBlock();
           for (const tc of parsed.toolCalls) {
-            // Route by OpenAI's tool_call index so parallel tool calls land
-            // in distinct content blocks (issue 3). Fall back to the last
-            // seen index for argument-only deltas that omit it.
             const tcIndex = tc.index ?? lastToolIndex ?? 0;
-
-            let block = toolBlocks.get(tcIndex);
-
-            // Open a new tool_use block the first time we see this index, or
-            // when an id arrives for it. Close any open text block first.
-            if (!block && tc.id) {
-              closeThinkingBlock();
-              if (textBlockOpen) {
-                writeAnthropicEvent(res, "content_block_stop", {
-                  type: "content_block_stop",
-                  index: textBlockIndex,
-                });
-                textBlockOpen = false;
-                textBlockIndex = -1;
-              }
-              block = { index: nextBlockIndex++, id: tc.id, name: tc.function?.name || "" };
-              toolBlocks.set(tcIndex, block);
-              writeAnthropicEvent(res, "content_block_start", {
-                type: "content_block_start",
-                index: block.index,
-                content_block: { type: "tool_use", id: block.id, name: block.name, input: {} },
-              });
+            let tool = toolFragments.get(tcIndex);
+            if (!tool) {
+              tool = { id: null, name: "", fragments: [] };
+              toolFragments.set(tcIndex, tool);
+              toolOrder.push(tcIndex);
             }
-
+            if (tc.id) tool.id = tc.id;
+            if (tc.function?.name) tool.name = tc.function.name;
+            // Preserve arguments carried on the same chunk as the tool ID.
+            if (tc.function?.arguments) tool.fragments.push(tc.function.arguments);
             lastToolIndex = tcIndex;
-
-            // Emit any arguments present in this same chunk — including the
-            // first chunk that also carried the id (issue 4).
-            if (block && tc.function?.arguments) {
-              writeAnthropicEvent(res, "content_block_delta", {
-                type: "content_block_delta",
-                index: block.index,
-                delta: { type: "input_json_delta", partial_json: tc.function.arguments },
-              });
-            }
           }
         }
 
         if (parsed.usage) {
-          streamUsage = parsed.usage;
+          streamUsage = {
+            ...(streamUsage || {}),
+            ...parsed.usage,
+            prompt_tokens_details: {
+              ...(streamUsage?.prompt_tokens_details || {}),
+              ...(parsed.usage.prompt_tokens_details || {}),
+            },
+          };
         }
 
         if (parsed.finishReason && parsed.finishReason !== "error") {
           emitTerminal(parsed.finishReason);
         }
       } catch (error) {
-        if (getSettled()) return;
-        setSettled(true);
-        // A mid-stream failure (e.g. Responses API `response.failed`) carries its
-        // own statusCode. Record it against the key so an actionable code still
-        // sidelines even though the upstream returned 200 before failing.
-        recordMidStreamFailure(endpointInfo, error);
-        const statusCode = error.statusCode ?? 500;
-        persistUpstreamError({ requestId, modelName, endpointInfo, requestHeaders: headers, upstreamUrl: fullUrl, error, statusCode, responseBody: chunkData });
-        logRequestEnd(requestId, false, 0, 0, error.message);
-        sendAnthropicStreamError(res, error, statusCode);
+        if (settled) return;
+        error.responseBody = error.responseBody ?? chunkData;
+        settle(error);
         stream.destroy();
         return;
       }
     }
-  });
+  };
 
-  stream.on("end", () => {
-    if (getSettled()) return;
-    setSettled(true);
-
+  const onEnd = () => {
+    if (settled) return;
     const inputTokens = streamUsage?.prompt_tokens ?? estimateTokens(openaiMessages);
     const outputTokens = streamUsage?.completion_tokens ??
       (estimateTokens(accumulatedContent) + estimateTokens(accumulatedReasoning));
@@ -1016,28 +1327,25 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
       billingTokens.cacheWriteTokens,
       billingTokens.cacheReadTokens,
       billingTokens.tokenAccountingVersion,
+      successfulRoutingMetadata(routingState),
     );
 
     if (!res.writableEnded) {
       res.end();
     }
+    settle();
+  };
+  const onError = (error) => settle(error);
+  const onClose = () => {
+    if (!settled) settle(new Error("Upstream stream closed before completion"));
+  };
+  stream.on("data", onData);
+  stream.once("end", onEnd);
+  stream.once("error", onError);
+  stream.once("close", onClose);
   });
-
-  stream.on("error", (error) => {
-    if (getSettled()) return;
-    setSettled(true);
-
-    if (error && typeof error.message === "string" && /abort/i.test(error.message)) {
-      logRequestEnd(requestId, false, 0, 0, error.message);
-      if (!res.writableEnded) { try { res.end(); } catch {} }
-      stream.destroy();
-      return;
-    }
-
-    persistUpstreamError({ requestId, modelName, endpointInfo, requestHeaders: headers, upstreamUrl: fullUrl, error });
-    logRequestEnd(requestId, false, 0, 0, error.message);
-    sendAnthropicStreamError(res, error, 500);
-  });
+  promise.cancel = (error) => cancel?.(error);
+  return promise;
 }
 
 export default router;

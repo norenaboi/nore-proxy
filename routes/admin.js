@@ -16,6 +16,12 @@ import { calculateCost } from "../utils/logging.js";
 import { getApiKeyId } from "../utils/keyIdentity.js";
 import crypto from "crypto";
 import { createSession, deleteSession } from "../services/sessionManager.js";
+import {
+  findAutoDependents,
+  rewriteAutoTargetReferences,
+  validateModelDefinition,
+} from "../utils/autoRouting.js";
+import { getEndpointsPath, getModelsPath } from "../utils/configPaths.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -663,185 +669,254 @@ router.delete("/api/keys", verifySession, async (req, res) => {
     GET PUT POST DELETE for models.json
 */
 
-// Get all models
-router.get("/api/models", verifySession, async (req, res) => {
+const DEFAULT_MODEL_PRICING = {
+  input: 1,
+  output: 1,
+  cache_write: 1,
+  cache_read: 1,
+};
+
+function readModelsDocument() {
+  const modelsPath = getModelsPath();
+  if (!fs.existsSync(modelsPath)) return { models: {} };
+  const data = JSON.parse(fs.readFileSync(modelsPath, "utf-8"));
+  data.models ||= {};
+  return data;
+}
+
+function readEndpointsDocument() {
+  const endpointsPath = getEndpointsPath();
+  if (!fs.existsSync(endpointsPath)) return {};
+  return JSON.parse(fs.readFileSync(endpointsPath, "utf-8"));
+}
+
+function modelType(config) {
+  return config?.type === "auto" ? "auto" : "concrete";
+}
+
+function modelValidationContext(models) {
+  return {
+    models,
+    endpoints: readEndpointsDocument(),
+    globalCeiling: settingsManager.get("autoModelMaxTargetAttempts"),
+  };
+}
+
+function validateAdminModel(name, config, models) {
+  const result = validateModelDefinition(name, config, modelValidationContext(models));
+  return result.valid ? null : result.errors.join("; ");
+}
+
+function normalizedModelRecord(name, config) {
+  const common = {
+    name,
+    modelType: modelType(config),
+    disabled: config.disabled === true,
+    pricing: config.pricing || { ...DEFAULT_MODEL_PRICING },
+  };
+  if (common.modelType === "auto") {
+    return {
+      ...common,
+      targets: Array.isArray(config.targets) ? [...config.targets] : [],
+      targetSelection: config.targetSelection || "sticky",
+      maxTargetAttempts: config.maxTargetAttempts ?? null,
+    };
+  }
+  return {
+    ...common,
+    backend: typeof config.backend === "string" ? config.backend : name,
+    version: typeof config.version === "string" ? config.version : "",
+  };
+}
+
+function buildStoredModel(definition, existing = {}) {
+  const incoming = { ...definition };
+  delete incoming.name;
+  delete incoming.oldName;
+  if (incoming.modelType !== undefined) {
+    incoming.type = incoming.modelType === "auto" ? "auto" : "concrete";
+    delete incoming.modelType;
+  }
+  const stored = {
+    ...existing,
+    ...incoming,
+    pricing: incoming.pricing ?? existing.pricing ?? { ...DEFAULT_MODEL_PRICING },
+    disabled: incoming.disabled ?? existing.disabled ?? false,
+  };
+  const type = modelType(stored);
+  if (type === "auto") {
+    stored.type = "auto";
+    delete stored.backend;
+    delete stored.version;
+  } else {
+    delete stored.type;
+    delete stored.targets;
+    delete stored.targetSelection;
+    delete stored.maxTargetAttempts;
+  }
+  return stored;
+}
+
+function dependencyConflict(res, dependents, message) {
+  return res.status(409).json({ error: message, dependents });
+}
+
+// Get all models as normalized concrete/auto records.
+router.get("/api/models", verifySession, async (_req, res) => {
   try {
-    const jsonPath = path.join(__dirname, "../models.json");
-
-    if (!fs.existsSync(jsonPath)) {
-      return res.json({ models: [] });
-    }
-
-    const content = fs.readFileSync(jsonPath, "utf-8");
-    const data = JSON.parse(content);
-    const models = Object.entries(data.models || {}).map(([name, config]) => ({
-      name,
-      backend: config.backend || name,
-      version: config.version || "",
-      disabled: config.disabled === true,
-      pricing: config.pricing || {
-        input: 0,
-        output: 0,
-        cache_write: 0,
-        cache_read: 0,
-      },
-    }));
-    res.json({ models });
+    const data = readModelsDocument();
+    return res.json({
+      models: Object.entries(data.models).map(([name, config]) =>
+        normalizedModelRecord(name, config),
+      ),
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 });
 
-// Add model
+// Add model. Concrete and auto definitions share the same validator.
 router.post("/api/models", verifySession, async (req, res) => {
   try {
-    const { name, backend, version, pricing } = req.body;
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
     if (!name) return res.status(400).json({ error: "Model name required" });
 
-    const jsonPath = path.join(__dirname, "../models.json");
-    let data = { models: {} };
-
-    if (fs.existsSync(jsonPath)) {
-      const content = fs.readFileSync(jsonPath, "utf-8");
-      data = JSON.parse(content);
-    }
-
+    const data = readModelsDocument();
     if (data.models[name]) {
       return res.status(400).json({ error: "Model already exists" });
     }
 
-    data.models[name] = {
-      backend: backend || name,
-      version: version || "",
-      pricing: pricing || {
-        input: 1,
-        output: 1,
-        cache_write: 1,
-        cache_read: 1,
-      },
-    };
+    const stored = buildStoredModel(req.body);
+    const candidateModels = { ...data.models, [name]: stored };
+    const validationError = validateAdminModel(name, stored, candidateModels);
+    if (validationError) return res.status(400).json({ error: validationError });
 
-    fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
+    data.models[name] = stored;
+    fs.writeFileSync(getModelsPath(), JSON.stringify(data, null, 2));
     loadModelsFromFile();
-    res.json({ message: "Model added" });
+    return res.json({ message: "Model added" });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 });
 
-// Update model
+// Update model while preserving disabled and unrelated persisted fields.
 router.put("/api/models", verifySession, async (req, res) => {
   try {
-    const { oldName, name, backend, version, pricing } = req.body;
+    const oldName = typeof req.body.oldName === "string" ? req.body.oldName.trim() : "";
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    if (!oldName) return res.status(400).json({ error: "Old model name required" });
+    if (!name) return res.status(400).json({ error: "Model name required" });
 
-    if (!oldName) {
-      return res.status(400).json({ error: "Old model name required" });
-    }
-    if (!name) {
-      return res.status(400).json({ error: "Model name required" });
-    }
-
-    const jsonPath = path.join(__dirname, "../models.json");
-    if (!fs.existsSync(jsonPath)) {
+    const modelsPath = getModelsPath();
+    if (!fs.existsSync(modelsPath)) {
       return res.status(404).json({ error: "Models file not found" });
     }
-
-    const content = fs.readFileSync(jsonPath, "utf-8");
-    const data = JSON.parse(content);
-
-    if (!data.models[oldName]) {
-      return res.status(404).json({ error: "Model not found" });
-    }
+    const originalContent = fs.readFileSync(modelsPath, "utf-8");
+    const data = JSON.parse(originalContent);
+    data.models ||= {};
+    const existing = data.models[oldName];
+    if (!existing) return res.status(404).json({ error: "Model not found" });
 
     const nameChanged = oldName !== name;
     if (nameChanged && data.models[name]) {
       return res.status(400).json({ error: "Model already exists" });
     }
 
-    const updatedModel = {
-      backend: backend || name,
-      version: version || "",
-      pricing: pricing || {
-        input: 1,
-        output: 1,
-        cache_write: 1,
-        cache_read: 1,
-      },
-    };
-
-    if (nameChanged) {
-      delete data.models[oldName];
+    const updates = { ...req.body };
+    delete updates.oldName;
+    delete updates.name;
+    const stored = buildStoredModel(updates, existing);
+    const existingIsConcrete = modelType(existing) === "concrete";
+    if (existingIsConcrete && (modelType(stored) !== "concrete" || stored.disabled === true)) {
+      const dependents = findAutoDependents(data.models, oldName);
+      if (dependents.length) {
+        return dependencyConflict(res, dependents, "Referenced concrete model cannot be disabled or converted");
+      }
     }
-    data.models[name] = updatedModel;
 
-    fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
+    const candidateModels = { ...data.models };
+    if (nameChanged) delete candidateModels[oldName];
+    candidateModels[name] = stored;
+    if (nameChanged && existingIsConcrete && modelType(stored) === "concrete") {
+      rewriteAutoTargetReferences(candidateModels, oldName, name);
+    }
+    const validationError = validateAdminModel(name, stored, candidateModels);
+    if (validationError) return res.status(400).json({ error: validationError });
+
+    data.models = candidateModels;
+    fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2));
     try {
       if (nameChanged) logManager.renameModel(oldName, name);
     } catch (error) {
-      fs.writeFileSync(jsonPath, content);
+      fs.writeFileSync(modelsPath, originalContent);
       throw error;
     }
 
     loadModelsFromFile();
-    res.json({ message: "Model updated" });
+    return res.json({ message: "Model updated" });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 });
 
-// Delete model
 router.delete("/api/models", verifySession, async (req, res) => {
   try {
-    const { name } = req.body;
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
     if (!name) return res.status(400).json({ error: "Model name required" });
-
-    const jsonPath = path.join(__dirname, "../models.json");
-    if (!fs.existsSync(jsonPath)) {
+    const modelsPath = getModelsPath();
+    if (!fs.existsSync(modelsPath)) {
       return res.status(404).json({ error: "Models file not found" });
     }
-
-    const content = fs.readFileSync(jsonPath, "utf-8");
-    const data = JSON.parse(content);
-
-    if (!data.models[name]) {
-      return res.status(404).json({ error: "Model not found" });
+    const data = readModelsDocument();
+    const existing = data.models[name];
+    if (!existing) return res.status(404).json({ error: "Model not found" });
+    if (modelType(existing) === "concrete") {
+      const dependents = findAutoDependents(data.models, name);
+      if (dependents.length) {
+        return dependencyConflict(res, dependents, "Referenced concrete model cannot be deleted");
+      }
     }
 
     delete data.models[name];
-    fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
+    fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2));
     loadModelsFromFile();
-    res.json({ message: "Model deleted" });
+    return res.json({ message: "Model deleted" });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 });
 
-// Toggle model disabled state
 router.patch("/api/models/toggle", verifySession, async (req, res) => {
   try {
-    const { name } = req.body;
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
     if (!name) return res.status(400).json({ error: "Model name required" });
-
-    const jsonPath = path.join(__dirname, "../models.json");
-    if (!fs.existsSync(jsonPath)) {
+    const modelsPath = getModelsPath();
+    if (!fs.existsSync(modelsPath)) {
       return res.status(404).json({ error: "Models file not found" });
     }
+    const data = readModelsDocument();
+    const existing = data.models[name];
+    if (!existing) return res.status(404).json({ error: "Model not found" });
 
-    const content = fs.readFileSync(jsonPath, "utf-8");
-    const data = JSON.parse(content);
-
-    if (!data.models[name]) {
-      return res.status(404).json({ error: "Model not found" });
+    const disabled = existing.disabled !== true;
+    if (disabled && modelType(existing) === "concrete") {
+      const dependents = findAutoDependents(data.models, name);
+      if (dependents.length) {
+        return dependencyConflict(res, dependents, "Referenced concrete model cannot be disabled");
+      }
     }
-
-    const current = data.models[name].disabled === true;
-    data.models[name].disabled = !current;
-
-    fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
+    const updated = { ...existing, disabled };
+    if (!disabled) {
+      const validationError = validateAdminModel(name, updated, { ...data.models, [name]: updated });
+      if (validationError) return res.status(400).json({ error: validationError });
+    }
+    data.models[name] = updated;
+    fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2));
     loadModelsFromFile();
-    res.json({ message: `Model ${!current ? "disabled" : "enabled"}`, disabled: !current });
+    return res.json({ message: `Model ${disabled ? "disabled" : "enabled"}`, disabled });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 });
 
@@ -852,9 +927,23 @@ router.post("/api/models/test", verifySession, async (req, res) => {
     const { name } = req.body;
     if (!name) return res.status(400).json({ ok: false, error: "Model name required" });
 
+    const modelsData = readModelsDocument();
+    const modelConfig = modelsData.models[name];
+    if (!modelConfig) {
+      return res.status(400).json({ ok: false, error: `Model '${name}' does not exist` });
+    }
+    if (modelType(modelConfig) === "auto") {
+      return res.status(400).json({ ok: false, error: "Auto models cannot be tested directly" });
+    }
+    if (modelConfig.disabled === true) {
+      return res.status(400).json({ ok: false, error: "Disabled models cannot be tested" });
+    }
+
+    // ignoreState selects the endpoint's first configured token without advancing
+    // endpoint key rotation or consulting mutable key health state.
     const endpointInfo = getEndpointForModel(name, { ignoreState: true });
     if (!endpointInfo) {
-      return res.status(404).json({ ok: false, error: `No endpoint configured for model '${name}'` });
+      return res.status(400).json({ ok: false, error: `No endpoint configured for model '${name}'` });
     }
 
     const { url: backendUrl, token: backendToken, actualModel, customHeaders, apiFormat } = endpointInfo;
@@ -939,7 +1028,7 @@ router.post("/api/models/test", verifySession, async (req, res) => {
 // Get all endpoints
 router.get("/api/endpoints", verifySession, async (req, res) => {
   try {
-    const endpointsPath = path.join(__dirname, "../endpoints.json");
+    const endpointsPath = getEndpointsPath();
     
     if (!fs.existsSync(endpointsPath)) {
       return res.json({ endpoints: [] });
@@ -1038,7 +1127,7 @@ router.post("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "Invalid URL" });
     }
 
-    const endpointsPath = path.join(__dirname, "../endpoints.json");
+    const endpointsPath = getEndpointsPath();
     let data = {};
     
     if (fs.existsSync(endpointsPath)) {
@@ -1164,7 +1253,7 @@ router.put("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "Invalid endpoint index" });
 
     const endpointKey = `v${index}`;
-    const endpointsPath = path.join(__dirname, "../endpoints.json");
+    const endpointsPath = getEndpointsPath();
     
     if (!fs.existsSync(endpointsPath)) {
       return res.status(404).json({ error: "Endpoints file not found" });
@@ -1299,7 +1388,7 @@ router.delete("/api/endpoints", verifySession, async (req, res) => {
       return res.status(400).json({ error: "Invalid endpoint index" });
 
     const endpointKey = `v${index}`;
-    const endpointsPath = path.join(__dirname, "../endpoints.json");
+    const endpointsPath = getEndpointsPath();
     
     if (!fs.existsSync(endpointsPath)) {
       return res.status(404).json({ error: "Endpoints file not found" });
@@ -1312,27 +1401,40 @@ router.delete("/api/endpoints", verifySession, async (req, res) => {
       return res.status(404).json({ error: "Endpoint not found" });
     }
 
-    const modelsPath = path.join(__dirname, "../models.json");
-    let modelsContent = null;
-    let modelsData = { models: {} };
-    if (fs.existsSync(modelsPath)) {
-      modelsContent = fs.readFileSync(modelsPath, "utf-8");
-      modelsData = JSON.parse(modelsContent);
-      modelsData.models ||= {};
+    const modelsPath = getModelsPath();
+    const modelsContent = fs.existsSync(modelsPath)
+      ? fs.readFileSync(modelsPath, "utf-8")
+      : null;
+    const modelsData = modelsContent === null
+      ? { models: {} }
+      : JSON.parse(modelsContent);
+    modelsData.models ||= {};
+
+    const endpointConcreteModels = Object.entries(modelsData.models)
+      .filter(([, config]) => modelType(config) === "concrete" && config.version === endpointKey)
+      .map(([modelName]) => modelName);
+    const blockingConcreteModels = endpointConcreteModels.filter(
+      (modelName) => findAutoDependents(modelsData.models, modelName).length > 0,
+    );
+    const autoBlockers = [...new Set(
+      blockingConcreteModels.flatMap((modelName) =>
+        findAutoDependents(modelsData.models, modelName),
+      ),
+    )];
+    if (autoBlockers.length) {
+      return res.status(409).json({
+        error: "Endpoint models are referenced by auto models",
+        blockers: { concrete: blockingConcreteModels, auto: autoBlockers },
+      });
     }
 
-    let deletedModels = 0;
-    for (const [modelName, modelConfig] of Object.entries(modelsData.models)) {
-      if (modelConfig?.version === endpointKey) {
-        delete modelsData.models[modelName];
-        deletedModels += 1;
-      }
+    for (const modelName of endpointConcreteModels) {
+      delete modelsData.models[modelName];
     }
-
     delete data[endpointKey];
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
     try {
-      if (modelsContent !== null && deletedModels > 0) {
+      if (modelsContent !== null && endpointConcreteModels.length > 0) {
         fs.writeFileSync(modelsPath, JSON.stringify(modelsData, null, 2));
       }
     } catch (error) {
@@ -1341,8 +1443,13 @@ router.delete("/api/endpoints", verifySession, async (req, res) => {
     }
 
     Config.loadEndpoints();
-    if (modelsContent !== null && deletedModels > 0) loadModelsFromFile();
-    res.json({ message: "Endpoint deleted", deletedModels });
+    if (modelsContent !== null && endpointConcreteModels.length > 0) {
+      loadModelsFromFile();
+    }
+    return res.json({
+      message: "Endpoint deleted",
+      deletedModels: endpointConcreteModels.length,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1440,7 +1547,7 @@ router.get("/api/endpoints/:version/models", verifySession, async (req, res) => 
 // Helper for the key-state routes — the raw tokens never leave the server;
 // they're only used to compute hashes/masks. Returns null if not found.
 function readEndpointTokens(version) {
-  const endpointsPath = path.join(__dirname, "../endpoints.json");
+  const endpointsPath = getEndpointsPath();
   if (!fs.existsSync(endpointsPath)) return null;
   const data = JSON.parse(fs.readFileSync(endpointsPath, "utf-8"));
   const endpoint = data[`v${version}`];
@@ -1601,6 +1708,33 @@ router.put("/api/settings", verifySession, (req, res) => {
     if (updates.keyHopAttempts !== undefined && (!Number.isInteger(updates.keyHopAttempts) || updates.keyHopAttempts < 0)) {
       return res.status(400).json({ error: "Key hop attempts must be an integer >= 0" });
     }
+    if (
+      updates.autoModelMaxTargetAttempts !== undefined &&
+      (!Number.isInteger(updates.autoModelMaxTargetAttempts) ||
+        updates.autoModelMaxTargetAttempts < 1 ||
+        updates.autoModelMaxTargetAttempts > 20)
+    ) {
+      return res.status(400).json({
+        error: "Auto model max target attempts must be an integer from 1 to 20",
+      });
+    }
+    if (updates.autoModelMaxTargetAttempts !== undefined) {
+      const models = readModelsDocument().models;
+      const blockers = Object.entries(models)
+        .filter(([, config]) =>
+          modelType(config) === "auto" &&
+          config.disabled !== true &&
+          Number.isInteger(config.maxTargetAttempts) &&
+          config.maxTargetAttempts > updates.autoModelMaxTargetAttempts,
+        )
+        .map(([name]) => name);
+      if (blockers.length) {
+        return res.status(409).json({
+          error: "Enabled auto models exceed the requested global target-attempt ceiling",
+          blockers,
+        });
+      }
+    }
     if (updates.keyTimeoutHours !== undefined && (!Number.isInteger(updates.keyTimeoutHours) || updates.keyTimeoutHours < 1)) {
       return res.status(400).json({ error: "Key timeout hours must be an integer >= 1" });
     }
@@ -1629,10 +1763,11 @@ router.put("/api/settings", verifySession, (req, res) => {
 
 // Reload configuration
 router.post("/api/reload", verifySession, async (req, res) => {
+  // Config and model validation consume runtime settings, so refresh those first.
+  settingsManager.reload();
   Config.reload();
   apiKeyManager.loadKeys();
   loadModelsFromFile();
-  settingsManager.reload();
   apiKeyManager.resetDaily();
 
   res.json({

@@ -48,6 +48,22 @@ function renderKeyFailover(s) {
 
     <div class="setting-row">
         <div class="setting-info">
+            <div class="setting-label">Auto Model Target Attempts</div>
+            <div class="setting-description">
+                Global ceiling for how many ordered concrete targets an automatic model may
+                try for one request. Individual auto models may set a lower limit.
+            </div>
+        </div>
+        <div class="setting-control">
+            <div class="number-input-wrapper">
+                <input type="number" class="number-input" id="autoModelMaxTargetAttempts"
+                       min="1" max="20" step="1" placeholder="3">
+            </div>
+        </div>
+    </div>
+
+    <div class="setting-row">
+        <div class="setting-info">
             <div class="setting-label">Key Timeout Hours</div>
             <div class="setting-description">
                 How long a rate-limited (429) key stays timed out before it auto-recovers.
@@ -63,6 +79,9 @@ function renderKeyFailover(s) {
         </div>
     </div>
     `;
+    document.getElementById("keyHopAttempts").value = s.keyHopAttempts ?? 0;
+    document.getElementById("autoModelMaxTargetAttempts").value = s.autoModelMaxTargetAttempts ?? 3;
+    document.getElementById("keyTimeoutHours").value = s.keyTimeoutHours ?? 24;
 }
 
 function renderKeyDefaults(s) {
@@ -325,10 +344,15 @@ async function saveSettings() {
     }
 
     const keyHopAttempts = parseInt(document.getElementById("keyHopAttempts").value, 10);
+    const autoModelMaxTargetAttempts = parseInt(document.getElementById("autoModelMaxTargetAttempts").value, 10);
     const keyTimeoutHours = parseInt(document.getElementById("keyTimeoutHours").value, 10);
 
     if (isNaN(keyHopAttempts) || keyHopAttempts < 0) {
         showToast("Key hop attempts must be 0 or higher", "error");
+        return;
+    }
+    if (isNaN(autoModelMaxTargetAttempts) || autoModelMaxTargetAttempts < 1 || autoModelMaxTargetAttempts > 20) {
+        showToast("Auto model target attempts must be from 1 to 20", "error");
         return;
     }
     if (isNaN(keyTimeoutHours) || keyTimeoutHours < 1) {
@@ -384,6 +408,7 @@ async function saveSettings() {
                 rpmDefault,
                 maxContextSizeDefault,
                 keyHopAttempts,
+                autoModelMaxTargetAttempts,
                 keyTimeoutHours,
                 defaultEndpointKeyRotation: keyRotation,
                 defaultEndpointKeyHealth: keyHealth,

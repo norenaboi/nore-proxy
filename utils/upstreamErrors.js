@@ -95,6 +95,9 @@ export function buildUpstreamErrorContext({
   error = null,
   statusCode,
   responseBody,
+  autoModel = null,
+  targetModel = null,
+  routingAttempts = null,
 }) {
   const resolvedStatus =
     statusCode ?? error?.response?.status ?? error?.statusCode ?? null;
@@ -107,6 +110,9 @@ export function buildUpstreamErrorContext({
     endpointName: endpointInfo?.endpointName ?? null,
     apiFormat: endpointInfo?.apiFormat ?? null,
     maskedApiKey: endpointInfo?.token ? maskKey(endpointInfo.token) : null,
+    autoModel,
+    targetModel: targetModel ?? endpointInfo?.targetModel ?? null,
+    routingAttempts,
     statusCode: Number.isInteger(numericStatus) ? numericStatus : null,
     errorCode: error?.code ?? null,
     requestHeaders,

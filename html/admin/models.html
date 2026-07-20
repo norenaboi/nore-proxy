@@ -133,11 +133,24 @@
                     <div class="form-group">
                         <div class="form-col">
                             <div>
-                                <label class="form-label">Display Name</label>
+                                <label class="form-label" for="nameInput">Display Name</label>
                                 <input type="text" id="nameInput" class="form-input" placeholder="bedrock/claude-opus">
                             </div>
                             <div>
-                                <label class="form-label">Backend Model</label>
+                                <label class="form-label" for="modelTypeSelect">Model Type</label>
+                                <select id="modelTypeSelect" class="form-select">
+                                    <option value="concrete">Concrete model</option>
+                                    <option value="auto">Automatic routing model</option>
+                                </select>
+                                <p class="form-help">Concrete models map to one upstream model. Automatic models route across an ordered list of concrete targets.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="concreteControls" class="type-controls">
+                        <div class="form-col">
+                            <div>
+                                <label class="form-label" for="backendSelect">Backend Model</label>
                                 <div class="backend-select-row">
                                     <select id="backendSelect" class="form-select">
                                         <option value="">— select an endpoint first —</option>
@@ -149,10 +162,38 @@
                                 <input type="text" id="backendInput" class="form-input" placeholder="or type the actual model name" style="margin-top:8px;">
                             </div>
                             <div>
-                                <label class="form-label">Endpoint</label>
+                                <label class="form-label" for="versionSelect">Endpoint</label>
                                 <select id="versionSelect" class="form-select">
                                     <option value="">— select an endpoint —</option>
                                 </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="autoControls" class="type-controls auto-controls" hidden>
+                        <div class="form-col">
+                            <div>
+                                <label class="form-label" for="targetSelectionInput">Target Selection</label>
+                                <select id="targetSelectionInput" class="form-select">
+                                    <option value="sticky">Sticky — start with the first target</option>
+                                    <option value="roundrobin">Round-robin — rotate the starting target</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="form-label" for="targetCandidateSelect">Concrete Targets</label>
+                                <div class="backend-select-row">
+                                    <select id="targetCandidateSelect" class="form-select"></select>
+                                    <button type="button" class="btn btn-secondary" id="addTargetButton" onclick="addSelectedTarget()">
+                                        <i class="fa-solid fa-plus"></i> Add
+                                    </button>
+                                </div>
+                                <p class="form-help">Choose at least two unique, enabled concrete models. Order controls failover priority.</p>
+                                <div id="selectedTargets" class="selected-targets" aria-live="polite"></div>
+                            </div>
+                            <div>
+                                <label class="form-label" for="maxTargetAttemptsInput">Maximum Target Attempts <span class="optional-label">Optional</span></label>
+                                <input type="number" id="maxTargetAttemptsInput" class="form-input compact-input" min="1" max="20" step="1" placeholder="Use global setting">
+                                <p class="form-help" id="maxTargetAttemptsHelp">Leave blank to use the global failover limit.</p>
                             </div>
                         </div>
                     </div>

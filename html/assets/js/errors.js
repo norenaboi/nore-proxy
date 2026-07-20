@@ -229,6 +229,8 @@ async function openDetail(id) {
         setText("detailApiKey", error.maskedApiKey);
         setText("detailModel", error.model);
         setText("detailUpstreamModel", error.upstreamModel);
+        setText("detailAutoModel", error.autoModel);
+        setText("detailTargetModel", error.targetModel);
         setText(
             "detailEndpoint",
             [error.endpointName, error.endpointKey]
@@ -237,6 +239,7 @@ async function openDetail(id) {
         );
         setText("detailUrl", error.upstreamUrl);
         setText("detailMessage", error.errorMessage);
+        setJson("detailRoutingAttempts", error.routingAttempts);
         setJson("detailHeaders", error.requestHeaders);
         setJson("detailResponse", error.responseBody);
         setText("detailStack", error.stackTrace);

@@ -13,8 +13,10 @@ A unified OpenAI API proxy server
 - **Key health tracking**: failing keys are sidelined automatically and requests hop to the next healthy key.
 - **Per-endpoint generation policies**: strip, pass through, or override client `temperature`, `top_p`, and `max_tokens` values.
 - **Prompt caching for Claude**: optional Claude cache breakpoints with cache-read and cache-write token accounting.
-- **Model registry**: map display names to upstream models, group by endpoint in the admin UI, and fetch model lists on demand.
-- **Cost tracking**: calculate input, output, cache-read, and cache-write costs using per-model pricing.
+- **Model registry and automatic routing**: map display names to concrete upstream models or ordered automatic target groups, with sticky-priority or round-robin initial selection.
+- **Bounded failover**: retry distinct usable keys within a concrete target first, then fall back across targets for rate limits, upstream 5xx responses, key exhaustion, network failures, and timeouts. Streaming never retries after client-visible output.
+- **Dependency-safe model management**: renames update automatic target references atomically, while disabling/deleting referenced models or endpoints is blocked with actionable dependency details.
+- **Cost tracking**: calculate input, output, cache-read, and cache-write costs using pricing attached to the requested public model.
 - **Usage dashboards**: view per-user and per-model request, token, and cost breakdowns.
 - **Self-service usage**: API key holders can view their own usage from the public usage page.
 - **Upstream error inspection**: persistent, sanitized error logs with filtering and a dedicated admin page.
@@ -121,7 +123,7 @@ Environment variables configure server-level behavior that cannot be changed at 
 
 ### Runtime settings
 
-Rate-limit defaults, prompt caching, and endpoint creation defaults are managed through the admin Settings UI and persisted in `settings.json`. They can be changed without restarting the server.
+Rate-limit defaults, prompt caching, endpoint creation defaults, key-hop limits, and the global automatic-model target-attempt ceiling are managed through the admin Settings UI and persisted in `settings.json`. They can be changed without restarting the server. The automatic-model ceiling bounds each request; model-specific limits may lower it but cannot exceed it.
 
 The server will not start if `MASTER_KEY` is missing or shorter than 16 characters.
 

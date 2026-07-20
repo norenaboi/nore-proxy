@@ -5,751 +5,347 @@ import { verifyApiKey } from "../middleware/auth.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import settingsManager from "../services/settingsManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
-import {
-  logRequestStart,
-  logRequestEnd,
-  logError,
-  normalizeBillingTokens,
-} from "../utils/logging.js";
-import {
-  MODEL_REGISTRY,
-  getEndpointForModel,
-  getEndpointMeta,
-  getFullUrl,
-  estimateTokens,
-  isClaudeModel,
-  applyClaudePromptCaching,
-  applyGenerationPolicy,
-  resolveKeyHealth,
-} from "../utils/helpers.js";
-import keyStateManager, {
-  ACTIONABLE_CODES,
-} from "../services/keyStateManager.js";
+import { logRequestStart, logRequestEnd, logError, normalizeBillingTokens } from "../utils/logging.js";
+import { MODEL_REGISTRY, getEndpointForConcreteModel, getFullUrl, estimateTokens, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, resolveKeyHealth } from "../utils/helpers.js";
+import keyStateManager, { ACTIONABLE_CODES } from "../services/keyStateManager.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
-import {
-  buildUpstreamErrorContext,
-  getUpstreamErrorMessage,
-  readUpstreamErrorBody,
-} from "../utils/upstreamErrors.js";
+import { buildUpstreamErrorContext, getUpstreamErrorMessage, readUpstreamErrorBody } from "../utils/upstreamErrors.js";
+import { attemptedKeyHashes, classifyUpstreamFailure, createRoutingState, markStreamOutputStarted, nextTarget, recordRoutingAttempt, routingMetadata, summarizeRoutingAttempts } from "../utils/autoRouting.js";
 
 const router = express.Router();
+const clone = (value) => structuredClone(value);
+const statusOf = (error) => error?.response?.status ?? error?.statusCode ?? null;
 
-function persistUpstreamError({
-  requestId,
-  modelName,
-  endpointInfo,
-  requestHeaders,
-  upstreamUrl,
-  error,
-  statusCode,
-  responseBody,
-}) {
-  const context = buildUpstreamErrorContext({
-    modelName,
-    endpointInfo,
-    requestHeaders,
-    upstreamUrl,
-    error,
-    statusCode,
-    responseBody,
-  });
-
-  return logError(
-    requestId,
-    error?.name || "Error",
-    error?.message || "Unknown error",
-    error?.stack || "",
-    context,
-  );
-}
-
-// Records a mid-stream failure against the active key. The upstream already
-// returned 200 and then failed partway (e.g. Responses API `response.failed`),
-// so this is the only place the failure's status is seen. Sidelines the key for
-// actionable codes when key health is on, mirroring the HTTP-status path.
-function recordMidStreamFailure(endpointInfo, error) {
-  const status = Number(error?.statusCode);
-  if (!endpointInfo?.token || !ACTIONABLE_CODES.has(status)) return;
-  const sideline = resolveKeyHealth(endpointInfo.keyHealth);
-  keyStateManager.recordFailure(endpointInfo.endpointKey, endpointInfo.token, status, { sideline });
+function persistUpstreamError({ requestId, modelName, endpointInfo, requestHeaders, upstreamUrl, error, statusCode, responseBody, autoModel, targetModel, routingAttempts }) {
+  return logError(requestId, error?.name || "Error", error?.message || "Unknown error", error?.stack || "", buildUpstreamErrorContext({ modelName, endpointInfo, requestHeaders, upstreamUrl, error, statusCode, responseBody, autoModel, targetModel, routingAttempts }));
 }
 
 function sendStreamError(res, requestId, modelName, error, statusCode = 500) {
   if (res.writableEnded) return;
-
-  const errorChunk = {
-    id: `chatcmpl-${requestId}`,
-    object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
-    model: modelName,
-    choices: [
-      {
-        index: 0,
-        delta: {},
-        finish_reason: "error",
-      },
-    ],
-    error: {
-      message: error?.message || "Unknown error",
-      type: "server_error",
-      code: statusCode,
-    },
-  };
-
-  res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
+  res.write(`data: ${JSON.stringify({ id: `chatcmpl-${requestId}`, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: modelName, choices: [{ index: 0, delta: {}, finish_reason: "error" }], error: { message: error?.message || "Unknown error", type: "server_error", code: error?.code || statusCode } })}\n\n`);
   res.write("data: [DONE]\n\n");
   res.end();
 }
 
+function httpError(status, body) {
+  const error = new Error(`Error ${status}: ${getUpstreamErrorMessage(body)}`);
+  error.name = "UpstreamHttpError";
+  error.statusCode = status;
+  error.responseBody = body;
+  return error;
+}
+
+function withContext(error, endpointInfo, prepared = {}, responseBody) {
+  Object.defineProperty(error, "attemptContext", {
+    value: {
+      endpointInfo,
+      requestHeaders: prepared.headers,
+      upstreamUrl: prepared.fullUrl,
+      responseBody: error.responseBody ?? responseBody ?? null,
+    },
+    configurable: true,
+  });
+  return error;
+}
+
+function autoExhausted(lastError, state) {
+  const error = new Error(lastError?.message || "All automatic routing targets failed.");
+  error.name = "AutoTargetsExhaustedError";
+  error.code = "auto_targets_exhausted";
+  error.statusCode = statusOf(lastError) || 502;
+  error.responseBody = lastError?.responseBody;
+  error.attemptContext = lastError?.attemptContext;
+  error.routingState = state;
+  return error;
+}
+
+function prepareAttempt(baseRequest, endpoint, requestId, isStreaming) {
+  const request = clone(baseRequest);
+  let cacheDepth = -1;
+  if (request.cache_depth !== undefined) {
+    const parsed = parseInt(request.cache_depth, 10);
+    cacheDepth = Number.isNaN(parsed) ? -1 : parsed;
+  } else if (endpoint.promptCaching?.enabled === true && isClaudeModel(endpoint.actualModel)) {
+    cacheDepth = endpoint.promptCaching.depth;
+  }
+  delete request.cache_depth;
+  delete request.frequency_penalty;
+  delete request.presence_penalty;
+  request.model = endpoint.targetModel;
+  if (endpoint.generationDefaults) applyGenerationPolicy(request, endpoint.generationDefaults);
+  if (isClaudeModel(endpoint.actualModel) && cacheDepth !== -1) request.messages = applyClaudePromptCaching(request.messages || [], cacheDepth);
+
+  const ctx = { requestId, isStreaming };
+  const adapter = getAdapter(endpoint.apiFormat);
+  const data = isStreaming ? adapter.transformStreamRequest(request, endpoint.actualModel, ctx) : adapter.transformRequest(request, endpoint.actualModel, ctx);
+  const headers = { ...endpoint.customHeaders, ...getExtraHeaders(endpoint.apiFormat, ctx), "Content-Type": "application/json" };
+  if (endpoint.apiFormat === "anthropic") headers["x-api-key"] = endpoint.token;
+  else if (endpoint.apiFormat !== "gemini") headers.Authorization = `Bearer ${endpoint.token}`;
+  const fullUrl = getFullUrl(endpoint.url, endpoint.apiFormat, endpoint.actualModel, isStreaming, endpoint.appendApiSuffix);
+  const requestUrl = endpoint.apiFormat === "gemini" ? `${fullUrl}?${isStreaming ? "alt=sse&" : ""}key=${endpoint.token}` : fullUrl;
+  return { adapter, data, headers, fullUrl, requestUrl };
+}
+
+function recordKeyFailure(endpoint, status) {
+  if (!endpoint?.token || !ACTIONABLE_CODES.has(Number(status))) return;
+  keyStateManager.recordFailure(endpoint.endpointKey, endpoint.token, Number(status), { sideline: resolveKeyHealth(endpoint.keyHealth) });
+}
+
+function noteAttempt(state, endpoint, keyAttempt, outcome, decision, statusCode) {
+  recordRoutingAttempt(state, { targetModel: endpoint?.targetModel, endpointKey: endpoint?.endpointKey, endpointName: endpoint?.endpointName, tokenHash: endpoint?.tokenHash, keyAttempt, outcome, retryReason: decision?.reason, statusCode });
+}
+
+function mergeUsage(current, incoming) {
+  if (!incoming) return current;
+  const mergedDetails = {
+    ...(current?.prompt_tokens_details || {}),
+    ...(incoming.prompt_tokens_details || {}),
+  };
+  return {
+    ...(current || {}),
+    ...incoming,
+    ...(Object.keys(mergedDetails).length ? { prompt_tokens_details: mergedDetails } : {}),
+  };
+}
+
+function inBandStreamError(raw) {
+  if (raw?.type !== "error") return null;
+  const detail = raw.error || {};
+  const error = new Error(detail.message || "Upstream stream failed");
+  error.name = "UpstreamStreamError";
+  error.code = detail.type || detail.code || null;
+  const statuses = {
+    authentication_error: 401,
+    permission_error: 403,
+    permission_denied: 403,
+    billing_error: 402,
+    rate_limit_error: 429,
+    rate_limit_exceeded: 429,
+    overloaded_error: 529,
+    api_error: 500,
+  };
+  error.statusCode = statuses[error.code] || 500;
+  error.responseBody = raw;
+  return error;
+}
+
+async function executeRouting(requestId, requestedModel, runAttempt) {
+  const state = createRoutingState({ requestId, requestedModel, registry: MODEL_REGISTRY, globalCeiling: settingsManager.get("autoModelMaxTargetAttempts") });
+  const maxKeyAttempts = 1 + Math.max(0, parseInt(settingsManager.get("keyHopAttempts"), 10) || 0);
+  let lastError = null;
+  let autoFallbackOccurred = false;
+
+  for (let target = nextTarget(state); target; target = nextTarget(state)) {
+    let fallback = false;
+    let endpointKey = null;
+    for (let keyAttempt = 1; keyAttempt <= maxKeyAttempts; keyAttempt++) {
+      const excluded = endpointKey ? attemptedKeyHashes(state, endpointKey) : new Set();
+      const endpoint = getEndpointForConcreteModel(target, { excludeHashes: excluded });
+      if (!endpoint) {
+        const error = new Error("Can't find the model you're looking for.");
+        error.name = "EndpointResolutionError";
+        error.statusCode = 404;
+        throw error;
+      }
+      endpointKey = endpoint.endpointKey;
+      const tried = attemptedKeyHashes(state, endpointKey);
+      if (endpoint.tokenExhausted || !endpoint.token) {
+        lastError = withContext(keyStateManager.buildExhaustionError(endpointKey), endpoint);
+        const decision = classifyUpstreamFailure({ keyExhausted: true });
+        noteAttempt(state, endpoint, keyAttempt, "key_exhausted", decision, 404);
+        fallback = true;
+        break;
+      }
+      try {
+        const result = await runAttempt(state, endpoint);
+        noteAttempt(state, endpoint, keyAttempt, "success", null, null);
+        if (result && typeof result === "object") {
+          Object.defineProperty(result, "routingState", {
+            value: state,
+            enumerable: false,
+          });
+        }
+        return result;
+      } catch (error) {
+        if (error.clientAbort) throw error;
+        lastError = error;
+        const status = statusOf(error);
+        const decision = classifyUpstreamFailure({ statusCode: status, error, streamOutputStarted: state.streamOutputStarted });
+        noteAttempt(state, endpoint, keyAttempt, "failure", decision, status);
+        recordKeyFailure(endpoint, status);
+        if (endpoint.tokenHash) tried.add(endpoint.tokenHash);
+        if (decision.retryKey && keyAttempt < maxKeyAttempts) continue;
+        fallback = decision.fallbackTarget;
+        break;
+      }
+    }
+    if (!fallback) throw lastError;
+    if (state.autoModel) autoFallbackOccurred = true;
+  }
+  if (autoFallbackOccurred) throw autoExhausted(lastError, state);
+  if (lastError) {
+    lastError.routingState = state;
+    throw lastError;
+  }
+  const error = new Error(`Model '${requestedModel}' not found.`);
+  error.statusCode = 404;
+  throw error;
+}
+
 router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
   const apiKey = req.apiKey;
+  const baseRequest = clone(req.body);
+  try { apiKeyManager.checkForGeneration(apiKey, rateLimiter, estimateTokens(baseRequest.messages || [])); }
+  catch (error) { return res.status(error.statusCode || 500).json({ error: { message: error.message } }); }
 
-  const contextTokens = estimateTokens(req.body.messages || []);
-
-  try {
-    apiKeyManager.checkForGeneration(apiKey, rateLimiter, contextTokens);
-  } catch (error) {
-    return res
-      .status(error.statusCode || 500)
-      .json({ error: { message: error.message } });
-  }
-
-  const openaiReq = req.body;
   const requestId = uuidv4();
-  const isStreaming = openaiReq.stream === true;
-  const modelName = openaiReq.model;
-
-  // Extract and remove cache_depth before forwarding.
-  // Per-request override takes priority; falls back to per-endpoint setting.
-  let cacheDepth = -1;
-  if (openaiReq.cache_depth !== undefined) {
-    cacheDepth = parseInt(openaiReq.cache_depth, 10);
-  } else {
-    // Metadata read only — must NOT select a key or advance rotation.
-    const endpointMeta = getEndpointMeta(modelName);
-    if (endpointMeta?.promptCaching?.enabled === true && isClaudeModel(endpointMeta.actualModel)) {
-      cacheDepth = endpointMeta.promptCaching.depth;
-    }
-  }
-  delete openaiReq.cache_depth;
-
-  // Validate model
-  const modelInfo = MODEL_REGISTRY[modelName];
-  if (!modelInfo) {
-    return res.status(404).json({ error: `Model '${modelName}' not found.` });
-  }
-
-  // Remove unwanted parameters
-  const paramsToExclude = ["frequency_penalty", "presence_penalty"];
-  for (const param of paramsToExclude) {
-    delete openaiReq[param];
-  }
-
-  // Apply the endpoint's strip/pass-through/override generation policy.
-  // Metadata read only — must NOT select a key or advance rotation.
-  const endpointMeta = getEndpointMeta(modelName);
-  if (endpointMeta?.generationDefaults) {
-    applyGenerationPolicy(openaiReq, endpointMeta.generationDefaults);
-  }
-
-  // Log request start
-  const requestParams = {
-    temperature: openaiReq.temperature,
-    max_tokens: openaiReq.max_tokens,
-    streaming: isStreaming,
-  };
-  const messages = openaiReq.messages || [];
-  logRequestStart(requestId, modelName, requestParams, messages, apiKey);
-
+  const modelName = baseRequest.model;
+  const streaming = baseRequest.stream === true;
+  if (!MODEL_REGISTRY[modelName]) return res.status(404).json({ error: `Model '${modelName}' not found.` });
+  logRequestStart(requestId, modelName, { temperature: baseRequest.temperature, max_tokens: baseRequest.max_tokens, streaming }, baseRequest.messages || [], apiKey);
   try {
-    if (isStreaming) {
-      await streamFromBackend(
-        req,
-        res,
-        requestId,
-        openaiReq,
-        modelName,
-        apiKey,
-        cacheDepth,
-      );
-    } else {
-      const responseData = await makeBackendRequest(
-        requestId,
-        openaiReq,
-        modelName,
-        apiKey,
-        cacheDepth,
-      );
-      res.json(responseData);
-    }
+    if (streaming) await streamFromBackend(req, res, requestId, baseRequest, modelName, apiKey);
+    else res.json(await makeBackendRequest(requestId, baseRequest, modelName, apiKey));
   } catch (error) {
-    logRequestEnd(requestId, false, 0, 0, error.message);
-    console.error(`API [ID: ${requestId}]: Exception:`, error);
-
-    if (!res.headersSent) {
-      res.status(error.statusCode || error.response?.status || 500).json({
-        error: { message: error.message || String(error) },
-      });
-    } else if (!res.writableEnded) {
-      res.end();
+    const state = error.routingState || null;
+    const c = error.attemptContext || {};
+    logRequestEnd(requestId, false, 0, 0, error.message, "", null, 0, 0, null, routingMetadata(state, c.endpointInfo));
+    if (!error.clientAbort) {
+      persistUpstreamError({ requestId, modelName, endpointInfo: c.endpointInfo, requestHeaders: c.requestHeaders, upstreamUrl: c.upstreamUrl, error, statusCode: statusOf(error), responseBody: c.responseBody, autoModel: state?.autoModel, targetModel: state?.currentTargetModel, routingAttempts: summarizeRoutingAttempts(state) });
+      console.error(
+        `API [ID: ${requestId}]: ${error?.name || "Error"}: ${error?.message || String(error)}`,
+      );
     }
+    if (error.clientAbort) { if (!res.writableEnded) try { res.end(); } catch (_) {} }
+    else if (streaming) sendStreamError(res, requestId, modelName, error, statusOf(error) || 500);
+    else if (!res.headersSent) res.status(statusOf(error) || 500).json({ error: { message: error.message || String(error), ...(error.code ? { code: error.code } : {}) } });
+    else if (!res.writableEnded) res.end();
   }
 });
 
-async function streamFromBackend(
-  req,
-  res,
-  requestId,
-  openaiReq,
-  modelName,
-  apiKey,
-  cacheDepth = -1,
-) {
-  let accumulatedContent = "";
-  let accumulatedReasoning = "";
-
-  // Set streaming headers
+async function streamFromBackend(req, res, requestId, baseRequest, modelName, apiKey) {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
-
-  // Build adapter context for building OpenAI-shaped chunks
-  const streamCtx = {
-    requestId,
-    modelName,
-    streamId: `chatcmpl-${requestId}`,
-    streamCreated: Math.floor(Date.now() / 1000),
+  const streamCtx = { requestId, modelName, streamId: `chatcmpl-${requestId}`, streamCreated: Math.floor(Date.now() / 1000) };
+  const abortController = new AbortController();
+  let activeStream = null;
+  let clientAborted = false;
+  const abortClient = () => {
+    if (clientAborted || res.writableEnded) return;
+    clientAborted = true;
+    abortController.abort();
+    activeStream?.destroy?.();
   };
-
-  let endpointInfo = null;
-  let adapter = null;
-  let fullUrl = null;
-  let data = null;
-  let headers = {};
-  let streamSettled = false;
-
+  req.once("aborted", abortClient);
+  res.once("close", abortClient);
   try {
-    let streamUsage = null;
-    let response = null;
-
-    // Smart key selection with single-request retry across usable keys.
-    // Only 400/401/402/429 trigger a hop; any other status/error is terminal.
-    const triedHashes = new Set();
-    const maxAttempts =
-      1 + Math.max(0, parseInt(settingsManager.get("keyHopAttempts"), 10) || 0);
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      endpointInfo = getEndpointForModel(modelName, { excludeHashes: triedHashes });
-      if (!endpointInfo) {
-        const error = new Error("Can't find the model you're looking for.");
-        error.name = "EndpointResolutionError";
-        error.statusCode = 404;
-        throw error;
-      }
-      if (endpointInfo.tokenExhausted || !endpointInfo.token) {
-        throw keyStateManager.buildExhaustionError(endpointInfo.endpointKey);
-      }
-
-      const {
-        url: backendUrl,
-        token: backendToken,
-        actualModel,
-        customHeaders,
-        apiFormat,
-        endpointKey,
-        tokenHash,
-      } = endpointInfo;
-      adapter = getAdapter(apiFormat);
-      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, true, endpointInfo.appendApiSuffix);
-      let messages = openaiReq.messages || [];
-
-      // Apply Claude prompt caching if the target model is Claude and caching is enabled
-      // (only meaningful for OpenAI-compat and Anthropic formats)
-      if (isClaudeModel(actualModel) && cacheDepth !== -1) {
-        messages = applyClaudePromptCaching(messages, cacheDepth);
-        console.log(
-          `Prompt caching applied (depth=${cacheDepth}): ${
-            messages.filter((m) => {
-              const content = m.content;
-              if (Array.isArray(content))
-                return content.some((b) => b.cache_control);
-              return false;
-            }).length
-          } message(s) marked for caching`,
-        );
-      }
-
-      // Build the request body using the adapter. Codex-style adapters read
-      // per-request context ({ requestId, isStreaming }) for the cache key and
-      // ID headers; adapters that ignore the extra arg are unaffected.
-      const adapterCtx = { requestId, isStreaming: true };
-      const reqForAdapter = { ...openaiReq, messages };
-      data = adapter.transformStreamRequest(reqForAdapter, actualModel, adapterCtx);
-
-      // Build headers: custom + adapter-specific (e.g. anthropic-version) + auth
-      const extraHeaders = getExtraHeaders(apiFormat, adapterCtx);
-      headers = {
-        ...customHeaders,
-        ...extraHeaders,
-        "Content-Type": "application/json",
-      };
-
-      // Auth depends on format: gemini uses ?key=, anthropic uses x-api-key, openai uses Bearer
-      if (apiFormat === "gemini") {
-        // Auth is in the URL query param, no auth header needed
-      } else if (apiFormat === "anthropic") {
-        headers["x-api-key"] = backendToken;
-      } else {
-        headers["Authorization"] = `Bearer ${backendToken}`;
-      }
-
-      const requestUrl = apiFormat === "gemini"
-        ? `${fullUrl}?alt=sse&key=${backendToken}`
-        : fullUrl;
-
-      const resp = await axios({
-        method: "post",
-        url: requestUrl,
-        headers,
-        data,
-        responseType: "stream",
-        timeout: 180000,
-        validateStatus: () => true,
-      });
-
-      if (resp.status >= 200 && resp.status < 300) {
-        keyStateManager.recordSuccess(endpointKey, backendToken);
-        response = resp;
-        break;
-      }
-
-      // Non-2xx. Only actionable codes update key state and may trigger a hop.
-      // sideline benches the key (invalid/timeout) only when key health is on
-      // for this endpoint; when off, the failure is counted but the key stays
-      // usable and the request just hops to the next one.
-      const canRetry = attempt < maxAttempts - 1;
-      if (ACTIONABLE_CODES.has(resp.status)) {
-        const sideline = resolveKeyHealth(endpointInfo.keyHealth);
-        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
-        triedHashes.add(tokenHash);
-        if (canRetry) {
-          resp.data?.destroy?.();
-          continue;
-        }
-      }
-
-      // Terminal failure: non-actionable status, or actionable but out of hops.
-      const responseBody = await readUpstreamErrorBody(resp.data);
-      const upstreamMessage = getUpstreamErrorMessage(responseBody);
-      const error = new Error(`Error ${resp.status}: ${upstreamMessage}`);
-      error.name = "UpstreamHttpError";
-      error.statusCode = resp.status;
-
-      persistUpstreamError({
-        requestId,
-        modelName,
-        endpointInfo,
-        requestHeaders: headers,
-        upstreamUrl: fullUrl,
-        error,
-        statusCode: resp.status,
-        responseBody,
-      });
-      logRequestEnd(requestId, false, 0, 0, error.message);
-      sendStreamError(res, requestId, modelName, error, resp.status);
-      return;
+    const routed = await executeRouting(requestId, modelName, async (state, endpoint) => {
+    if (clientAborted) {
+      const error = new Error("Client aborted stream");
+      error.clientAbort = true;
+      throw error;
     }
-
-    if (!response) {
-      throw keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
+    const prepared = prepareAttempt(baseRequest, endpoint, requestId, true);
+    let response;
+    try {
+      response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, responseType: "stream", timeout: 180000, validateStatus: () => true, signal: abortController.signal });
+      activeStream = response.data;
+    } catch (error) {
+      if (clientAborted) error.clientAbort = true;
+      throw withContext(error, endpoint, prepared);
     }
-
-    let buffer = "";
-    let currentEvent = null; // track event: type for typed-event streams (anthropic, responses)
-
-    response.data.on("data", (chunk) => {
-      buffer += chunk.toString();
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Track event type for typed-event streams (Anthropic, Responses API)
-        if (trimmed.startsWith("event: ")) {
-          currentEvent = trimmed.slice(7).trim();
-          continue;
-        }
-
-        if (trimmed.startsWith("data: ")) {
-          const payload = trimmed.slice(6).trim();
-
-          // Check for [DONE] sentinel (OpenAI / OpenAI-compat streams)
-          if (adapter.isStreamEnd(payload)) {
-            res.write("data: [DONE]\n\n");
-            return;
-          }
-
-          let chunkData;
-          try {
-            chunkData = JSON.parse(payload);
-          } catch {
-            console.warn(`BACKEND [ID: ${requestId}]: Invalid JSON in stream.`);
-            continue;
-          }
-
-          try {
-            if (chunkData && typeof chunkData === "object") {
-              // Build OpenAI-compatible chunk via adapter
-              const openaiChunk = adapter.buildStreamChunk(chunkData, streamCtx);
-              if (openaiChunk) {
-                // Track accumulated content for usage estimation
-                const parsed = adapter.parseStreamChunk(chunkData, streamCtx);
-                if (parsed?.deltaContent) {
-                  accumulatedContent += parsed.deltaContent;
-                }
-                if (parsed?.deltaReasoning) {
-                  accumulatedReasoning += parsed.deltaReasoning;
-                }
-                if (parsed?.usage) {
-                  streamUsage = parsed.usage;
-                }
-                if (!res.writableEnded) {
-                  res.write(`data: ${JSON.stringify(openaiChunk)}\n\n`);
-                }
-              }
-            }
-          } catch (error) {
-            if (streamSettled) return;
-            streamSettled = true;
-            error.name = error.name || "StreamAdapterError";
-
-            // A mid-stream failure carries its own statusCode; record it so an
-            // actionable code still sidelines the key even though the upstream
-            // returned 200 before failing.
-            recordMidStreamFailure(endpointInfo, error);
-            const statusCode = error.statusCode ?? 500;
-            persistUpstreamError({
-              requestId,
-              modelName,
-              endpointInfo,
-              requestHeaders: headers,
-              upstreamUrl: fullUrl,
-              error,
-              statusCode,
-              responseBody: chunkData,
-            });
-            logRequestEnd(requestId, false, 0, 0, error.message);
-            sendStreamError(res, requestId, modelName, error, statusCode);
-            response.data.destroy();
-            return;
-          }
-          // Reset event tracker after processing data line
-          currentEvent = null;
-        }
-      }
+    if (response.status < 200 || response.status >= 300) {
+      const body = await readUpstreamErrorBody(response.data);
+      response.data?.destroy?.();
+      throw withContext(httpError(response.status, body), endpoint, prepared, body);
+    }
+    try {
+      const result = await consumeStream(response.data, res, state, prepared.adapter, streamCtx, requestId, () => clientAborted);
+      activeStream = null;
+      keyStateManager.recordSuccess(endpoint.endpointKey, endpoint.token);
+      return { ...result, endpoint };
+    } catch (error) {
+      response.data?.destroy?.();
+      activeStream = null;
+      if (clientAborted) error.clientAbort = true;
+      throw withContext(error, endpoint, prepared, error.responseBody);
+    }
     });
-
-    response.data.on("end", () => {
-      if (streamSettled) return;
-      streamSettled = true;
-
-      // Use real usage from the final chunk if available, otherwise estimate
-      const inputTokens =
-        streamUsage?.prompt_tokens ?? estimateTokens(openaiReq);
-      // Include reasoning text in the estimate — thinking models can spend
-      // many tokens on reasoning that isn't in accumulatedContent. If the
-      // upstream reported a non-zero completion_tokens we trust that;
-      // otherwise estimate from content + reasoning combined.
-      const estimatedOutput =
-        estimateTokens(accumulatedContent) +
-        estimateTokens(accumulatedReasoning);
-      const outputTokens =
-        streamUsage?.completion_tokens ?? estimatedOutput;
-      const cacheWriteTokens =
-        streamUsage?.prompt_tokens_details?.cache_creation_input_tokens
-        ?? streamUsage?.prompt_tokens_details?.cache_write_tokens
-        ?? 0;
-      const cacheReadTokens =
-        streamUsage?.prompt_tokens_details?.cached_tokens
-        ?? streamUsage?.prompt_tokens_details?.cache_read_tokens
-        ?? 0;
-      const billingTokens = normalizeBillingTokens({
-        inputTokens,
-        outputTokens,
-        cacheWriteTokens,
-        cacheReadTokens,
-        inputIncludesCache: endpointInfo?.apiFormat !== "anthropic",
-      });
-      logRequestEnd(
-        requestId,
-        true,
-        billingTokens.inputTokens,
-        billingTokens.outputTokens,
-        null,
-        accumulatedContent,
-        apiKey,
-        billingTokens.cacheWriteTokens,
-        billingTokens.cacheReadTokens,
-        billingTokens.tokenAccountingVersion,
-      );
-      // Always send [DONE] to close the stream for the client
-      if (!res.writableEnded) {
-        res.write("data: [DONE]\n\n");
-        res.end();
-      }
-    });
-
-    response.data.on("error", (error) => {
-      if (streamSettled) return;
-      streamSettled = true;
-      // Skip logging client-side stream aborts (user disconnected) — not an upstream failure.
-      if (error && typeof error.message === "string" && /abort/i.test(error.message)) {
-        console.error(`BACKEND [ID: ${requestId}]: Client aborted stream, skipping error log.`);
-        logRequestEnd(requestId, false, 0, 0, error.message);
-        if (!res.writableEnded) {
-          try { res.end(); } catch (_) {}
-        }
-        response.data.destroy();
-        return;
-      }
-      console.error(`BACKEND [ID: ${requestId}]: Stream error:`, error);
-
-      persistUpstreamError({
-        requestId,
-        modelName,
-        endpointInfo,
-        requestHeaders: headers,
-        upstreamUrl: fullUrl,
-        error,
-      });
-      logRequestEnd(requestId, false, 0, 0, error.message);
-      sendStreamError(res, requestId, modelName, error, 500);
-    });
-  } catch (error) {
-    console.error(`BACKEND [ID: ${requestId}]: Stream error:`, error);
-    const responseBody = await readUpstreamErrorBody(
-      error.responseBody ?? error.response?.data,
-    );
-    const statusCode = error.response?.status ?? error.statusCode ?? 500;
-
-    persistUpstreamError({
-      requestId,
-      modelName,
-      endpointInfo,
-      requestHeaders: headers,
-      upstreamUrl: fullUrl,
-      error,
-      statusCode,
-      responseBody,
-    });
-    logRequestEnd(requestId, false, 0, 0, error.message);
-    sendStreamError(res, requestId, modelName, error, statusCode);
+    logStreamSuccess(requestId, routed, baseRequest, routed.endpoint, apiKey, routed.routingState);
+    return routed;
+  } finally {
+    req.off("aborted", abortClient);
+    res.off("close", abortClient);
   }
 }
 
-async function makeBackendRequest(
-  requestId,
-  openaiReq,
-  modelName,
-  apiKey,
-  cacheDepth = -1,
-) {
-  let endpointInfo = null;
-  let fullUrl = null;
-  let data = null;
-  let headers = {};
-  let upstreamResponseBody = null;
-
-  try {
-    let adapter = null;
-    let response = null;
-
-    // Smart key selection with single-request retry across usable keys.
-    // Only 400/401/402/429 trigger a hop; any other status/error is terminal.
-    const triedHashes = new Set();
-    const maxAttempts =
-      1 + Math.max(0, parseInt(settingsManager.get("keyHopAttempts"), 10) || 0);
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      endpointInfo = getEndpointForModel(modelName, { excludeHashes: triedHashes });
-      if (!endpointInfo) {
-        const error = new Error("Can't find the model you're looking for.");
-        error.name = "EndpointResolutionError";
-        error.statusCode = 404;
-        throw error;
+function consumeStream(stream, res, state, adapter, streamCtx, requestId, isClientAborted) {
+  return new Promise((resolve, reject) => {
+    let settled = false, buffer = "", content = "", reasoning = "", usage = null;
+    const fail = (error) => { if (!settled) { settled = true; reject(error); } };
+    stream.on("data", (chunk) => {
+      if (settled) return;
+      buffer += chunk.toString();
+      const lines = buffer.split("\n"); buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data: ")) continue;
+        const payload = trimmed.slice(6).trim();
+        if (adapter.isStreamEnd(payload)) continue;
+        let raw;
+        try { raw = JSON.parse(payload); } catch { console.warn(`BACKEND [ID: ${requestId}]: Invalid JSON in stream.`); continue; }
+        try {
+          const eventError = inBandStreamError(raw);
+          if (eventError) throw eventError;
+          // buildStreamChunk is the adapter's authoritative parse path and may
+          // throw typed in-band failures (for example response.failed).
+          const chunkOut = adapter.buildStreamChunk(raw, streamCtx);
+          const parsed = adapter.parseStreamChunk(raw, streamCtx);
+          if (parsed?.deltaContent) content += parsed.deltaContent;
+          if (parsed?.deltaReasoning) reasoning += parsed.deltaReasoning;
+          usage = mergeUsage(usage, parsed?.usage);
+          if (chunkOut && !res.writableEnded) { markStreamOutputStarted(state); res.write(`data: ${JSON.stringify(chunkOut)}\n\n`); }
+        } catch (error) { fail(error); return; }
       }
-      if (endpointInfo.tokenExhausted || !endpointInfo.token) {
-        throw keyStateManager.buildExhaustionError(endpointInfo.endpointKey);
-      }
-
-      const {
-        url: backendUrl,
-        token: backendToken,
-        actualModel,
-        customHeaders,
-        apiFormat,
-        endpointKey,
-        tokenHash,
-      } = endpointInfo;
-      adapter = getAdapter(apiFormat);
-      fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, false, endpointInfo.appendApiSuffix);
-      let messages = openaiReq.messages || [];
-
-      // Apply Claude prompt caching if the target model is Claude and caching is enabled
-      if (isClaudeModel(actualModel) && cacheDepth !== -1) {
-        messages = applyClaudePromptCaching(messages, cacheDepth);
-        console.log(
-          `Prompt caching applied (depth=${cacheDepth}): ${
-            messages.filter((m) => {
-              const content = m.content;
-              if (Array.isArray(content))
-                return content.some((b) => b.cache_control);
-              return false;
-            }).length
-          } message(s) marked for caching`,
-        );
-      }
-
-      // Build the request body using the adapter. Codex-style adapters read
-      // per-request context ({ requestId, isStreaming }) for the cache key and
-      // ID headers; adapters that ignore the extra arg are unaffected.
-      const adapterCtx = { requestId, isStreaming: false };
-      const reqForAdapter = { ...openaiReq, messages };
-      data = adapter.transformRequest(reqForAdapter, actualModel, adapterCtx);
-
-      // Build headers: custom + adapter-specific + auth
-      const extraHeaders = getExtraHeaders(apiFormat, adapterCtx);
-      headers = {
-        ...customHeaders,
-        ...extraHeaders,
-        "Content-Type": "application/json",
-      };
-
-      if (apiFormat === "gemini") {
-        // Auth is in the URL query param
-      } else if (apiFormat === "anthropic") {
-        headers["x-api-key"] = backendToken;
-      } else {
-        headers["Authorization"] = `Bearer ${backendToken}`;
-      }
-
-      const requestUrl = apiFormat === "gemini" ? `${fullUrl}?key=${backendToken}` : fullUrl;
-
-      const resp = await axios({
-        method: "post",
-        url: requestUrl,
-        headers,
-        data,
-        timeout: 180000,
-        validateStatus: () => true,
-      });
-
-      if (resp.status >= 200 && resp.status < 300) {
-        keyStateManager.recordSuccess(endpointKey, backendToken);
-        response = resp;
-        upstreamResponseBody = resp.data;
-        break;
-      }
-
-      // Non-2xx. Only actionable codes update key state and may trigger a hop.
-      // sideline benches the key only when key health is on for this endpoint.
-      const canRetry = attempt < maxAttempts - 1;
-      const sideline = resolveKeyHealth(endpointInfo.keyHealth);
-      if (ACTIONABLE_CODES.has(resp.status) && canRetry) {
-        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
-        triedHashes.add(tokenHash);
-        continue;
-      }
-      if (ACTIONABLE_CODES.has(resp.status)) {
-        keyStateManager.recordFailure(endpointKey, backendToken, resp.status, { sideline });
-      }
-
-      // Terminal failure: non-actionable status, or actionable but out of hops.
-      upstreamResponseBody = resp.data;
-      console.error(`BACKEND [ID: ${requestId}]:`, resp.data);
-      const error = new Error(
-        `Error ${resp.status}: ${getUpstreamErrorMessage(resp.data)}`,
-      );
-      error.name = "UpstreamHttpError";
-      error.statusCode = resp.status;
-      error.responseBody = resp.data;
-      throw error;
-    }
-
-    if (!response) {
-      throw keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
-    }
-
-    const rawData = response.data;
-
-    // Parse the response using the adapter
-    const parsed = adapter.parseResponseData(rawData);
-
-    const content = parsed.content;
-    const usage = parsed.usage || {};
-    const inputTokens =
-      usage.prompt_tokens ?? estimateTokens(openaiReq);
-    const outputTokens = usage.completion_tokens ?? estimateTokens(content);
-    const cacheWriteTokens =
-      usage.prompt_tokens_details?.cache_creation_input_tokens
-      ?? usage.prompt_tokens_details?.cache_write_tokens
-      ?? 0;
-    const cacheReadTokens =
-      usage.prompt_tokens_details?.cached_tokens
-      ?? usage.prompt_tokens_details?.cache_read_tokens
-      ?? 0;
-
-    const billingTokens = normalizeBillingTokens({
-      inputTokens,
-      outputTokens,
-      cacheWriteTokens,
-      cacheReadTokens,
-      inputIncludesCache: endpointInfo?.apiFormat !== "anthropic",
     });
-    logRequestEnd(
-      requestId,
-      true,
-      billingTokens.inputTokens,
-      billingTokens.outputTokens,
-      null,
-      content,
-      apiKey,
-      billingTokens.cacheWriteTokens,
-      billingTokens.cacheReadTokens,
-      billingTokens.tokenAccountingVersion,
-    );
-
-    // Return the OpenAI-compatible response object
-    return parsed.response ?? rawData;
-  } catch (error) {
-    const responseBody = await readUpstreamErrorBody(
-      error.responseBody ?? error.response?.data ?? upstreamResponseBody,
-    );
-    const statusCode = error.response?.status ?? error.statusCode ?? null;
-
-    console.error(`BACKEND [ID: ${requestId}]: Error:`, error.message);
-    if (statusCode) {
-      console.error(`BACKEND [ID: ${requestId}]: Status:`, statusCode);
-    }
-    if (responseBody !== null) {
-      console.error(`BACKEND [ID: ${requestId}]: Response:`, responseBody);
-    }
-
-    persistUpstreamError({
-      requestId,
-      modelName,
-      endpointInfo,
-      requestHeaders: headers,
-      upstreamUrl: fullUrl,
-      error,
-      statusCode,
-      responseBody,
+    stream.on("end", () => {
+      if (settled) return; settled = true;
+      if (!res.writableEnded) { markStreamOutputStarted(state); res.write("data: [DONE]\n\n"); res.end(); }
+      resolve({ content, reasoning, usage });
     });
-    logRequestEnd(requestId, false, 0, 0, error.message);
-    throw error;
-  }
+    stream.on("error", (error) => {
+      if (isClientAborted()) error.clientAbort = true;
+      fail(error);
+    });
+  });
+}
+
+function billing(usage, input, output, endpoint) {
+  return normalizeBillingTokens({ inputTokens: usage?.prompt_tokens ?? input, outputTokens: usage?.completion_tokens ?? output, cacheWriteTokens: usage?.prompt_tokens_details?.cache_creation_input_tokens ?? usage?.prompt_tokens_details?.cache_write_tokens ?? 0, cacheReadTokens: usage?.prompt_tokens_details?.cached_tokens ?? usage?.prompt_tokens_details?.cache_read_tokens ?? 0, inputIncludesCache: endpoint.apiFormat !== "anthropic" });
+}
+
+function logStreamSuccess(requestId, result, request, endpoint, apiKey, state) {
+  const b = billing(result.usage, estimateTokens(request), estimateTokens(result.content) + estimateTokens(result.reasoning), endpoint);
+  logRequestEnd(requestId, true, b.inputTokens, b.outputTokens, null, result.content, apiKey, b.cacheWriteTokens, b.cacheReadTokens, b.tokenAccountingVersion, routingMetadata(state, endpoint));
+}
+
+async function makeBackendRequest(requestId, baseRequest, modelName, apiKey) {
+  const result = await executeRouting(requestId, modelName, async (_state, endpoint) => {
+    const prepared = prepareAttempt(baseRequest, endpoint, requestId, false);
+    let response;
+    try { response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, timeout: 180000, validateStatus: () => true }); }
+    catch (error) { throw withContext(error, endpoint, prepared); }
+    if (response.status < 200 || response.status >= 300) throw withContext(httpError(response.status, response.data), endpoint, prepared, response.data);
+    keyStateManager.recordSuccess(endpoint.endpointKey, endpoint.token);
+    return { parsed: prepared.adapter.parseResponseData(response.data), endpoint };
+  });
+  const b = billing(result.parsed.usage || {}, estimateTokens(baseRequest), estimateTokens(result.parsed.content), result.endpoint);
+  logRequestEnd(requestId, true, b.inputTokens, b.outputTokens, null, result.parsed.content, apiKey, b.cacheWriteTokens, b.cacheReadTokens, b.tokenAccountingVersion, routingMetadata(result.routingState, result.endpoint));
+  const response = result.parsed.response;
+  if (response && typeof response === "object") response.model = modelName;
+  return response;
 }
 
 export default router;

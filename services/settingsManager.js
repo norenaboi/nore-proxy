@@ -6,12 +6,7 @@
  */
 
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const SETTINGS_PATH = path.join(__dirname, "..", "settings.json");
+import { getSettingsPath } from "../utils/configPaths.js";
 
 class SettingsManager {
   constructor() {
@@ -32,8 +27,10 @@ class SettingsManager {
 
       // Smart key management
       // How many extra key hops a single request may make when a key returns an
-      // actionable code (400/401/402/429). 0 = no hop, 1 = retry once, N = up to N hops.
+      // actionable code (401/402/403/429). 0 = no hop, 1 = retry once, N = up to N hops.
       keyHopAttempts: 1,
+      // Hard upper bound for distinct concrete targets attempted by an auto model.
+      autoModelMaxTargetAttempts: 3,
       // How long a 429'd key stays timed out before auto-recovering (hours).
       keyTimeoutHours: 24,
       // Default rotation mode seeded onto new endpoints: "sticky" | "roundrobin".
@@ -57,8 +54,9 @@ class SettingsManager {
 
   _loadFromFile() {
     try {
-      if (!fs.existsSync(SETTINGS_PATH)) return {};
-      const content = fs.readFileSync(SETTINGS_PATH, "utf-8");
+      const settingsPath = getSettingsPath();
+      if (!fs.existsSync(settingsPath)) return {};
+      const content = fs.readFileSync(settingsPath, "utf-8");
       const parsed = JSON.parse(content);
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         return {};
@@ -73,7 +71,7 @@ class SettingsManager {
   _saveToFile() {
     try {
       fs.writeFileSync(
-        SETTINGS_PATH,
+        getSettingsPath(),
         JSON.stringify(this._overrides, null, 2),
       );
     } catch (err) {

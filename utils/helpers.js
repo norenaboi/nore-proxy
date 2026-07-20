@@ -6,6 +6,11 @@ import settingsManager from "../services/settingsManager.js";
 import keyStateManager from "../services/keyStateManager.js";
 import { normalizeEndpointUrl } from "./endpointPolicies.js";
 import { addModelPricing } from "./pricing.js";
+import { getModelsPath } from "./configPaths.js";
+import {
+  resetAutoRoutingCounters,
+  validateModelDefinition,
+} from "./autoRouting.js";
 
 export {
   normalizeEndpointUrl,
@@ -45,8 +50,9 @@ export function loadModelsFromFile() {
   MODEL_REGISTRY = {};
   MODEL_ALIASES = {};
   MODEL_PRICING = {};
+  resetAutoRoutingCounters();
 
-  const jsonPath = path.join(__dirname, "..", "models.json");
+  const jsonPath = getModelsPath();
 
   try {
     if (!fs.existsSync(jsonPath)) {
@@ -56,28 +62,51 @@ export function loadModelsFromFile() {
 
     const content = fs.readFileSync(jsonPath, "utf-8");
     const data = JSON.parse(content);
+    const rawModels = data.models || {};
+    const context = {
+      models: rawModels,
+      endpoints: Config.ENDPOINTS,
+      globalCeiling: settingsManager.get("autoModelMaxTargetAttempts"),
+    };
 
-    for (const [displayName, modelConfig] of Object.entries(
-      data.models || {},
-    )) {
-      // Keep pricing available for historical logs even when a model is disabled.
+    for (const [displayName, modelConfig] of Object.entries(rawModels)) {
       addModelPricing(MODEL_PRICING, displayName, modelConfig);
+      if (modelConfig.disabled === true || modelConfig.type === "auto") continue;
 
-      // Skip disabled models — they won't appear in the registry or be routable
-      if (modelConfig.disabled === true) continue;
+      const result = validateModelDefinition(displayName, modelConfig, context);
+      if (!result.valid) {
+        console.warn(`Skipping invalid model '${displayName}': ${result.errors.join("; ")}`);
+        continue;
+      }
 
-      const backendName = modelConfig.backend || displayName;
-      const version = modelConfig.version || "";
-      const actualBackend = version ? `${backendName}-${version}` : backendName;
-
+      const { backend, version } = result.definition;
+      const actualBackend = `${backend}-${version}`;
       MODEL_ALIASES[displayName] = actualBackend;
       MODEL_REGISTRY[displayName] = {
         type: "chat",
+        routingType: "concrete",
         capabilities: { outputCapabilities: {} },
         backend: actualBackend,
         version,
       };
+    }
 
+    for (const [displayName, modelConfig] of Object.entries(rawModels)) {
+      if (modelConfig.disabled === true || modelConfig.type !== "auto") continue;
+      const result = validateModelDefinition(displayName, modelConfig, context);
+      if (!result.valid) {
+        console.warn(`Skipping invalid auto model '${displayName}': ${result.errors.join("; ")}`);
+        continue;
+      }
+      const definition = result.definition;
+      MODEL_REGISTRY[displayName] = {
+        type: "chat",
+        routingType: "auto",
+        capabilities: { outputCapabilities: {} },
+        targets: definition.targets,
+        targetSelection: definition.targetSelection,
+        maxTargetAttempts: definition.maxTargetAttempts,
+      };
     }
   } catch (error) {
     console.error("Error loading models:", error);
@@ -217,7 +246,13 @@ export function estimateTokens(input) {
  * (prompt-caching depth, generation defaults) without consuming a key slot.
  * Returns null when the model has no configured endpoint.
  */
-export function getEndpointMeta(modelName) {
+export function getModelDefinition(modelName) {
+  return MODEL_REGISTRY[modelName] || null;
+}
+
+export function getConcreteModelMeta(modelName) {
+  const definition = getModelDefinition(modelName);
+  if (!definition || definition.routingType === "auto") return null;
   const actualModelName = resolveModelName(modelName);
   const match = actualModelName.match(/-v(\d+)$/);
   if (!match) return null;
@@ -233,6 +268,7 @@ export function getEndpointMeta(modelName) {
 
   return {
     url: normalizedUrl,
+    targetModel: modelName,
     actualModel,
     endpointKey,
     endpointName: endpoint.name || endpointKey,
@@ -289,8 +325,8 @@ function resolveRotationMode(endpointKeyRotation) {
  * @param {string} modelName
  * @param {{ excludeHashes?: Set<string> }} [opts]
  */
-export function getEndpointForModel(modelName, opts = {}) {
-  const meta = getEndpointMeta(modelName);
+export function getEndpointForConcreteModel(modelName, opts = {}) {
+  const meta = getConcreteModelMeta(modelName);
   if (!meta) return null;
 
   const excludeHashes = opts.excludeHashes || new Set();
@@ -333,6 +369,14 @@ export function getEndpointForModel(modelName, opts = {}) {
     tokenHash: chosen.tokenHash,
     tokenExhausted: false,
   };
+}
+
+export function getEndpointMeta(modelName) {
+  return getConcreteModelMeta(modelName);
+}
+
+export function getEndpointForModel(modelName, opts = {}) {
+  return getEndpointForConcreteModel(modelName, opts);
 }
 
 /**

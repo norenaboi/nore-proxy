@@ -7,7 +7,8 @@ import { maskKey } from "../utils/helpers.js";
 
 class APIKeyManager {
   constructor(dbFile = "api_keys.db") {
-    const dbPath = path.join(Config.LOG_DIR, dbFile);
+    const dbPath =
+      process.env.NORE_PROXY_API_KEY_DB_PATH || path.join(Config.LOG_DIR, dbFile);
     this.db = new Database(dbPath);
 
     this.db.exec(`

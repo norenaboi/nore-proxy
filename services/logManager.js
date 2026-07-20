@@ -22,6 +22,9 @@ const ERROR_LOG_COLUMNS = [
   "response_body",
   "stack_trace",
   "masked_api_key",
+  "auto_model",
+  "target_model",
+  "routing_attempts",
 ];
 
 const CREATE_ERROR_LOG_TABLE = `
@@ -43,7 +46,10 @@ const CREATE_ERROR_LOG_TABLE = `
     upstream_url TEXT,
     response_body TEXT,
     stack_trace TEXT,
-    masked_api_key TEXT
+    masked_api_key TEXT,
+    auto_model TEXT,
+    target_model TEXT,
+    routing_attempts TEXT
   )
 `;
 
@@ -79,6 +85,27 @@ function parseJson(value) {
 
 function normalizeJsonForStorage(value) {
   return serializeJson(parseJson(value));
+}
+
+const MAX_ROUTING_ATTEMPTS_BYTES = 8192;
+
+function serializeRoutingAttempts(value) {
+  const parsed = parseJson(value);
+  const serialized = serializeJson(parsed);
+  if (serialized === null || Buffer.byteLength(serialized, "utf8") <= MAX_ROUTING_ATTEMPTS_BYTES) {
+    return serialized;
+  }
+
+  if (!Array.isArray(parsed)) return JSON.stringify({ truncated: true });
+
+  const retained = [];
+  for (const attempt of parsed) {
+    const candidate = [...retained, attempt, { truncated: true }];
+    const candidateJson = serializeJson(candidate);
+    if (Buffer.byteLength(candidateJson, "utf8") > MAX_ROUTING_ATTEMPTS_BYTES) break;
+    retained.push(attempt);
+  }
+  return serializeJson([...retained, { truncated: true }]);
 }
 
 function normalizeTimestamp(value) {
@@ -175,6 +202,9 @@ function mapErrorRow(row) {
     responseBody: parseJson(row.response_body),
     stackTrace: row.stack_trace ?? null,
     maskedApiKey: row.masked_api_key ?? null,
+    autoModel: row.auto_model ?? null,
+    targetModel: row.target_model ?? null,
+    routingAttempts: parseJson(row.routing_attempts),
   };
 }
 
@@ -258,13 +288,13 @@ export class LogManager {
           endpoint_key, endpoint_name, api_format, status_code,
           error_type, error_code, error_message, request_params,
           request_headers, upstream_url, response_body, stack_trace,
-          masked_api_key
+          masked_api_key, auto_model, target_model, routing_attempts
         ) VALUES (
           @id, @timestamp, @requestId, @model, @upstreamModel,
           @endpointKey, @endpointName, @apiFormat, @statusCode,
           @errorType, @errorCode, @errorMessage, @requestParams,
           @requestHeaders, @upstreamUrl, @responseBody, @stackTrace,
-          @maskedApiKey
+          @maskedApiKey, @autoModel, @targetModel, @routingAttempts
         )
       `);
 
@@ -278,7 +308,10 @@ export class LogManager {
           "status_code",
           "statusCode",
         );
-        const numericStatus = Number(statusValue);
+        const numericStatus =
+          statusValue === undefined || statusValue === null || statusValue === ""
+            ? NaN
+            : Number(statusValue);
 
         insert.run({
           id: row.id ?? null,
@@ -377,7 +410,32 @@ export class LogManager {
             "stack_trace",
             "stackTrace",
           ),
-          maskedApiKey: null,
+          maskedApiKey: firstPresent(
+            row,
+            legacyData,
+            "masked_api_key",
+            "maskedApiKey",
+          ),
+          autoModel: firstPresent(
+            row,
+            legacyData,
+            "auto_model",
+            "autoModel",
+          ),
+          targetModel: firstPresent(
+            row,
+            legacyData,
+            "target_model",
+            "targetModel",
+          ),
+          routingAttempts: serializeRoutingAttempts(
+            firstPresent(
+              row,
+              legacyData,
+              "routing_attempts",
+              "routingAttempts",
+            ),
+          ),
         });
       }
 
@@ -417,20 +475,23 @@ export class LogManager {
 
   writeErrorLog(logEntry) {
     const statusValue = logEntry.statusCode ?? logEntry.status_code;
-    const numericStatus = Number(statusValue);
+    const numericStatus =
+      statusValue === undefined || statusValue === null || statusValue === ""
+        ? NaN
+        : Number(statusValue);
     const stmt = this.db.prepare(`
       INSERT INTO error_logs (
         timestamp, request_id, model, upstream_model,
         endpoint_key, endpoint_name, api_format, status_code,
         error_type, error_code, error_message,
         request_headers, upstream_url, response_body, stack_trace,
-        masked_api_key
+        masked_api_key, auto_model, target_model, routing_attempts
       ) VALUES (
         @timestamp, @requestId, @model, @upstreamModel,
         @endpointKey, @endpointName, @apiFormat, @statusCode,
         @errorType, @errorCode, @errorMessage,
         @requestHeaders, @upstreamUrl, @responseBody, @stackTrace,
-        @maskedApiKey
+        @maskedApiKey, @autoModel, @targetModel, @routingAttempts
       )
     `);
 
@@ -439,6 +500,9 @@ export class LogManager {
     );
     const serializedBody = serializeJson(
       logEntry.responseBody ?? logEntry.response_body,
+    );
+    const serializedAttempts = serializeRoutingAttempts(
+      logEntry.routingAttempts ?? logEntry.routing_attempts,
     );
     const rawStackTrace = logEntry.stackTrace ?? logEntry.stack_trace ?? null;
 
@@ -461,6 +525,9 @@ export class LogManager {
       responseBody: truncateText(serializedBody, 8192),
       stackTrace: truncateText(rawStackTrace, 4096),
       maskedApiKey: logEntry.maskedApiKey ?? logEntry.masked_api_key ?? null,
+      autoModel: logEntry.autoModel ?? logEntry.auto_model ?? null,
+      targetModel: logEntry.targetModel ?? logEntry.target_model ?? null,
+      routingAttempts: serializedAttempts,
     });
 
     return Number(result.lastInsertRowid);
@@ -609,16 +676,40 @@ export class LogManager {
   renameModel(oldName, newName) {
     const rename = this.db.transaction(() => {
       const requestData = this.db
-        .prepare(
-          "UPDATE request_logs SET data = json_set(data, '$.model', ?) WHERE model = ?",
-        )
-        .run(newName, oldName);
+        .prepare(`
+          UPDATE request_logs
+          SET data = json_set(
+            data,
+            '$.model', CASE WHEN json_extract(data, '$.model') = @oldName
+              THEN @newName ELSE json_extract(data, '$.model') END,
+            '$.requested_model', CASE WHEN json_extract(data, '$.requested_model') = @oldName
+              THEN @newName ELSE json_extract(data, '$.requested_model') END,
+            '$.auto_model', CASE WHEN json_extract(data, '$.auto_model') = @oldName
+              THEN @newName ELSE json_extract(data, '$.auto_model') END,
+            '$.target_model', CASE WHEN json_extract(data, '$.target_model') = @oldName
+              THEN @newName ELSE json_extract(data, '$.target_model') END
+          )
+          WHERE model = @oldName
+             OR json_extract(data, '$.model') = @oldName
+             OR json_extract(data, '$.requested_model') = @oldName
+             OR json_extract(data, '$.auto_model') = @oldName
+             OR json_extract(data, '$.target_model') = @oldName
+        `)
+        .run({ oldName, newName });
       const requestLogs = this.db
         .prepare("UPDATE request_logs SET model = ? WHERE model = ?")
         .run(newName, oldName);
       const errorLogs = this.db
-        .prepare("UPDATE error_logs SET model = ? WHERE model = ?")
-        .run(newName, oldName);
+        .prepare(`
+          UPDATE error_logs
+          SET model = CASE WHEN model = @oldName THEN @newName ELSE model END,
+              auto_model = CASE WHEN auto_model = @oldName THEN @newName ELSE auto_model END,
+              target_model = CASE WHEN target_model = @oldName THEN @newName ELSE target_model END
+          WHERE model = @oldName
+             OR auto_model = @oldName
+             OR target_model = @oldName
+        `)
+        .run({ oldName, newName });
 
       return {
         requestLogs: requestLogs.changes,
@@ -675,7 +766,8 @@ export class LogManager {
         `SELECT
           id, timestamp, request_id, model, upstream_model,
           endpoint_key, endpoint_name, api_format, status_code,
-          error_type, error_code, error_message
+          error_type, error_code, error_message,
+          auto_model, target_model, routing_attempts
         FROM error_logs${clause}
         ORDER BY timestamp DESC, id DESC
         LIMIT @limit OFFSET @offset`,

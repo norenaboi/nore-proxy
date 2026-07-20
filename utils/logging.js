@@ -69,6 +69,7 @@ export function logRequestEnd(
   cacheWriteTokens = 0,
   cacheReadTokens = 0,
   tokenAccountingVersion = null,
+  routingMetadata = null,
 ) {
   if (!realtimeStats.activeRequests.has(requestId)) {
     return;
@@ -108,6 +109,20 @@ export function logRequestEnd(
 
   // Write to log file
   const resolvedKey = apiKey || req.api_key;
+  const allowedRoutingMetadata = {};
+  if (routingMetadata && typeof routingMetadata === "object") {
+    for (const key of [
+      "requested_model",
+      "auto_model",
+      "target_model",
+      "endpoint_key",
+      "routing_attempt_count",
+    ]) {
+      if (routingMetadata[key] !== undefined) {
+        allowedRoutingMetadata[key] = routingMetadata[key];
+      }
+    }
+  }
   const logEntry = {
     type: "request_end",
     timestamp: Date.now() / 1000,
@@ -122,6 +137,7 @@ export function logRequestEnd(
     ...(tokenAccountingVersion !== null
       ? { token_accounting_version: tokenAccountingVersion }
       : {}),
+    ...allowedRoutingMetadata,
     error,
     key_name: apiKeyManager.getKeyName(resolvedKey),
     ...getSafeKeyMetadata(resolvedKey),
@@ -149,6 +165,9 @@ export function logError(
     endpointName: context.endpointName ?? null,
     apiFormat: context.apiFormat ?? null,
     maskedApiKey: context.maskedApiKey ?? null,
+    autoModel: context.autoModel ?? null,
+    targetModel: context.targetModel ?? null,
+    routingAttempts: context.routingAttempts ?? null,
     statusCode: context.statusCode ?? null,
     errorType,
     errorCode: context.errorCode ?? null,
