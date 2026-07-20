@@ -975,6 +975,28 @@ router.delete("/api/models", verifySession, async (req, res) => {
   }
 });
 
+router.patch("/api/models/visibility", verifySession, async (req, res) => {
+  try {
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    if (!name) return res.status(400).json({ error: "Model name required" });
+    const modelsPath = getModelsPath();
+    if (!fs.existsSync(modelsPath)) {
+      return res.status(404).json({ error: "Models file not found" });
+    }
+    const data = readModelsDocument();
+    const existing = data.models[name];
+    if (!existing) return res.status(404).json({ error: "Model not found" });
+
+    const hidden = existing.hidden !== true;
+    data.models[name] = { ...existing, hidden };
+    fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2));
+    loadModelsFromFile();
+    return res.json({ message: `Model ${hidden ? "hidden" : "shown"}`, hidden });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 router.patch("/api/models/toggle", verifySession, async (req, res) => {
   try {
     const name = typeof req.body.name === "string" ? req.body.name.trim() : "";

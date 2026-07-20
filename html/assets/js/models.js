@@ -193,6 +193,13 @@ function renderModelRow(model) {
         '',
         () => toggleModel(model.name)
     ));
+    actions.appendChild(makeButton(
+        `btn btn-sm ${model.hidden ? 'btn-warning' : 'btn-secondary'}`,
+        model.hidden ? 'Show in public model discovery' : 'Hide from public model discovery',
+        `fa-solid fa-eye${model.hidden ? '' : '-slash'}`,
+        '',
+        () => toggleModelVisibility(model.name)
+    ));
     actions.appendChild(makeButton('btn btn-secondary btn-sm', 'Edit model', 'fa-solid fa-pen', 'Edit', () => openEditModal(model.name)));
     actions.appendChild(makeButton('btn btn-danger btn-sm', 'Delete model', 'fa-solid fa-trash', '', () => openDeleteModal(model.name)));
     row.appendChild(actions);
@@ -507,6 +514,23 @@ async function toggleModel(modelName) {
             ? dependencyMessage(data, 'Model has active dependencies')
             : (data.error || 'Failed to toggle model'));
         showToast(data.message || 'Model updated', 'success');
+        await loadModels();
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+async function toggleModelVisibility(modelName) {
+    try {
+        const response = await fetch('/api/models/visibility', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: modelName })
+        });
+        if (response.status === 401 || response.status === 403) return logout();
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Failed to update model visibility');
+        showToast(data.message || 'Model visibility updated', 'success');
         await loadModels();
     } catch (error) {
         showToast(error.message, 'error');

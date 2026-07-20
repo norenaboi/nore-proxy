@@ -144,6 +144,7 @@ All admin endpoints require authentication.
 | `/api/models` | POST | Add new model |
 | `/api/models` | PUT | Update existing model |
 | `/api/models` | DELETE | Delete model |
+| `/api/models/visibility` | PATCH | Toggle public discovery visibility |
 | `/api/models/toggle` | PATCH | Enable/disable a model |
 | `/api/models/test` | POST | Silent model connectivity test |
 | `/api/model-usage` | GET | Get model usage statistics |
