@@ -8,6 +8,7 @@ router.get("/v1/models", async (req, res) => {
 
   try {
     for (const [modelName, modelInfo] of Object.entries(MODEL_REGISTRY)) {
+      if (modelInfo.hidden === true) continue;
       modelsData.push({
         id: modelName,
         object: "model",

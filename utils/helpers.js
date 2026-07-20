@@ -14,6 +14,7 @@ import {
 
 export {
   normalizeEndpointUrl,
+  getModelsUrl,
   getFullUrl,
   applyGenerationPolicy,
 } from "./endpointPolicies.js";
@@ -88,6 +89,7 @@ export function loadModelsFromFile() {
         capabilities: { outputCapabilities: {} },
         backend: actualBackend,
         version,
+        hidden: modelConfig.hidden === true,
       };
     }
 
@@ -106,6 +108,7 @@ export function loadModelsFromFile() {
         targets: definition.targets,
         targetSelection: definition.targetSelection,
         maxTargetAttempts: definition.maxTargetAttempts,
+        hidden: modelConfig.hidden === true,
       };
     }
   } catch (error) {

@@ -6,6 +6,14 @@ export function normalizeEndpointUrl(rawUrl, appendApiSuffix = true) {
   return url;
 }
 
+export function getModelsUrl(baseUrl, apiFormat, appendApiSuffix = true) {
+  const normalizedBaseUrl = normalizeEndpointUrl(baseUrl, appendApiSuffix);
+  const versionPrefix = appendApiSuffix
+    ? (apiFormat === "gemini" ? "/v1beta" : "/v1")
+    : "";
+  return `${normalizedBaseUrl}${versionPrefix}/models`;
+}
+
 export function getFullUrl(
   baseUrl,
   apiFormat,

@@ -78,7 +78,7 @@ function renderRequest(request) {
     addCell(row, formatTime(request.timestamp), "timestamp");
     addCell(row, request.name || request.apiKey || "Unknown", "primary-cell");
     addCell(row, request.model || "Unknown", "primary-cell");
-    addCell(row, [request.endpointName, request.endpointKey].filter(Boolean).join(" · ") || "—", "secondary-cell");
+    addCell(row, request.endpointName, "secondary-cell");
     addCell(row, Number(request.inputTokens || 0).toLocaleString(), "numeric-cell");
     addCell(row, Number(request.outputTokens || 0).toLocaleString(), "numeric-cell");
     addCell(row, Number(request.cacheWriteTokens || 0).toLocaleString(), "numeric-cell");
@@ -169,7 +169,7 @@ async function openDetail(id) {
         ]);
         renderFields("routingFields", [
             ["Requested model", routing.requestedModel], ["Target model", routing.targetModel],
-            ["Upstream model", routing.upstreamModel], ["Endpoint", [routing.endpointName, routing.endpointKey].filter(Boolean).join(" · ")],
+            ["Upstream model", routing.upstreamModel], ["Endpoint", routing.endpointName],
             ["API format", routing.apiFormat], ["Upstream URL", routing.upstreamUrl],
             ["Upstream key", routing.maskedUpstreamKey], ["Attempts", routing.attemptCount],
         ]);

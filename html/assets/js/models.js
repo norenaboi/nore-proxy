@@ -160,6 +160,7 @@ function renderModelRow(model) {
     titleRow.className = 'model-meta-row';
     appendTextElement(titleRow, 'span', 'model-name', model.name);
     if (model.disabled) appendTextElement(titleRow, 'span', 'model-badge model-badge-disabled', 'disabled');
+    if (model.hidden) appendTextElement(titleRow, 'span', 'model-badge model-badge-hidden', 'hidden');
     if (auto) {
         appendTextElement(titleRow, 'span', 'model-badge model-badge-auto', 'auto');
         appendTextElement(titleRow, 'span', 'model-badge model-badge-selection', model.targetSelection === 'roundrobin' ? 'round-robin' : 'sticky');
@@ -171,10 +172,6 @@ function renderModelRow(model) {
         appendTextElement(titleRow, 'span', 'model-badge model-badge-backend', model.backend);
     }
     meta.appendChild(titleRow);
-
-    if (auto) {
-        appendTextElement(meta, 'div', 'model-target-summary', (model.targets || []).join(' → ') || 'No targets configured');
-    }
     meta.appendChild(renderPricing(model.pricing || {}));
     info.appendChild(meta);
     row.appendChild(info);
@@ -359,6 +356,7 @@ function resetModalState() {
     editingModel = null;
     $('nameInput').value = '';
     $('modelTypeSelect').value = 'concrete';
+    $('hiddenInput').checked = false;
     resetTypeSpecificState('concrete');
     for (const id of ['pricingInputInput', 'pricingOutputInput', 'pricingCacheWriteInput', 'pricingCacheReadInput']) $(id).value = '';
     updateTypeControls();
@@ -387,6 +385,7 @@ function openEditModal(modelName) {
     $('modalSubmit').textContent = 'Save Changes';
     $('nameInput').value = model.name || '';
     $('modelTypeSelect').value = isAutoModel(model) ? 'auto' : 'concrete';
+    $('hiddenInput').checked = model.hidden === true;
     if (isAutoModel(model)) {
         selectedTargets = [...new Set(Array.isArray(model.targets) ? model.targets : [])];
         $('targetSelectionInput').value = model.targetSelection === 'roundrobin' ? 'roundrobin' : 'sticky';
@@ -445,7 +444,12 @@ async function submitModel() {
     const modelType = $('modelTypeSelect').value;
     if (!name) return showToast('Please enter a display name', 'error');
 
-    const modelData = { name, modelType, pricing: pricingPayload() };
+    const modelData = {
+        name,
+        modelType,
+        hidden: $('hiddenInput').checked,
+        pricing: pricingPayload()
+    };
     if (modelType === 'auto') {
         const uniqueTargets = [...new Set(selectedTargets)];
         if (uniqueTargets.length < 2 || uniqueTargets.length !== selectedTargets.length) {

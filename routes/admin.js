@@ -9,7 +9,7 @@ import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
 import keyStateManager from "../services/keyStateManager.js";
 import Config from "../config/index.js";
-import { loadModelsFromFile, normalizeEndpointUrl, getEndpointForModel, getFullUrl, maskKey } from "../utils/helpers.js";
+import { loadModelsFromFile, normalizeEndpointUrl, getModelsUrl, getEndpointForModel, getFullUrl, maskKey } from "../utils/helpers.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import axios from "axios";
 import { calculateCost } from "../utils/logging.js";
@@ -796,6 +796,7 @@ function normalizedModelRecord(name, config) {
     name,
     modelType: modelType(config),
     disabled: config.disabled === true,
+    hidden: config.hidden === true,
     pricing: config.pricing || { ...DEFAULT_MODEL_PRICING },
   };
   if (common.modelType === "auto") {
@@ -826,6 +827,9 @@ function buildStoredModel(definition, existing = {}) {
     ...incoming,
     pricing: incoming.pricing ?? existing.pricing ?? { ...DEFAULT_MODEL_PRICING },
     disabled: incoming.disabled ?? existing.disabled ?? false,
+    hidden: incoming.hidden !== undefined
+      ? incoming.hidden === true
+      : existing.hidden === true,
   };
   const type = modelType(stored);
   if (type === "auto") {
@@ -1549,20 +1553,28 @@ router.get("/api/endpoints/:version/models", verifySession, async (req, res) => 
       return res.status(400).json({ error: "Invalid endpoint version" });
     }
 
-    const endpointInfo = getEndpointForModel(`proxy-${version}`, { ignoreState: true });
-    if (!endpointInfo) {
+    const endpoint = Config.ENDPOINTS[version];
+    if (!endpoint) {
       return res.status(404).json({ error: `Endpoint ${version} not found` });
     }
 
-    const { url: backendUrl, token: backendToken, customHeaders, apiFormat } = endpointInfo;
+    const backendToken = endpoint.tokens?.[0] || endpoint.token;
+    if (!backendToken) {
+      return res.status(400).json({ error: `Endpoint ${version} has no configured token` });
+    }
 
-    let requestUrl;
-    let requestHeaders = { ...customHeaders };
+    const apiFormat = endpoint.apiFormat || "openai";
+    let requestUrl = getModelsUrl(
+      endpoint.url,
+      apiFormat,
+      endpoint.appendApiSuffix !== false,
+    );
+    let requestHeaders = { ...(endpoint.headers || {}) };
     let extractModels = (data) => [];
 
     if (apiFormat === 'gemini') {
       // Gemini: key goes in query string, no Authorization header
-      requestUrl = `${backendUrl}/v1beta/models?key=${encodeURIComponent(backendToken)}`;
+      requestUrl += `?key=${encodeURIComponent(backendToken)}`;
       extractModels = (data) => {
         const list = Array.isArray(data.models) ? data.models : [];
         return list
@@ -1575,7 +1587,6 @@ router.get("/api/endpoints/:version/models", verifySession, async (req, res) => 
       };
     } else if (apiFormat === 'anthropic') {
       // Anthropic: x-api-key header, optional anthropic-version
-      requestUrl = `${backendUrl}/v1/models`;
       requestHeaders = {
         ...requestHeaders,
         'Content-Type': 'application/json',
@@ -1590,7 +1601,6 @@ router.get("/api/endpoints/:version/models", verifySession, async (req, res) => 
       };
     } else {
       // OpenAI-compatible (default)
-      requestUrl = `${backendUrl}/v1/models`;
       requestHeaders = {
         ...requestHeaders,
         'Content-Type': 'application/json',
