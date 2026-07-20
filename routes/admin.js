@@ -93,7 +93,7 @@ function computeCostsFromLogs(logs) {
 
   for (const log of logs) {
     if (log.type !== "request_end" || log.status !== "success") continue;
-    const costs = calculateCost(
+    const calculated = calculateCost(
       log.model || "unknown",
       log.input_tokens || 0,
       log.output_tokens || 0,
@@ -101,6 +101,24 @@ function computeCostsFromLogs(logs) {
       log.cache_read_tokens || 0,
       log.token_accounting_version ?? null,
     );
+    const recorded = log.billing?.costs;
+    const costs = {
+      totalCost: Number.isFinite(recorded?.total)
+        ? recorded.total
+        : calculated.totalCost,
+      inputCost: Number.isFinite(recorded?.input)
+        ? recorded.input
+        : calculated.inputCost,
+      outputCost: Number.isFinite(recorded?.output)
+        ? recorded.output
+        : calculated.outputCost,
+      cacheWriteCost: Number.isFinite(recorded?.cache_write)
+        ? recorded.cache_write
+        : calculated.cacheWriteCost,
+      cacheReadCost: Number.isFinite(recorded?.cache_read)
+        ? recorded.cache_read
+        : calculated.cacheReadCost,
+    };
     totalCost += costs.totalCost;
     totalInputCost += costs.inputCost;
     totalOutputCost += costs.outputCost;
@@ -164,7 +182,7 @@ function addRequestToAggregate(aggregate, request) {
   aggregate.cache_write_tokens += request.cacheWriteTokens;
   aggregate.cache_read_tokens += request.cacheReadTokens;
   if (request.status === "success") {
-    const costs = calculateCost(
+    const calculated = calculateCost(
       request.model,
       request.inputTokens,
       request.outputTokens,
@@ -172,11 +190,12 @@ function addRequestToAggregate(aggregate, request) {
       request.cacheReadTokens,
       request.tokenAccountingVersion,
     );
-    aggregate.input_cost += costs.inputCost;
-    aggregate.output_cost += costs.outputCost;
-    aggregate.cache_write_cost += costs.cacheWriteCost;
-    aggregate.cache_read_cost += costs.cacheReadCost;
-    aggregate.estimated_cost += costs.totalCost;
+    const costs = request.recordedCosts;
+    aggregate.input_cost += costs?.input ?? calculated.inputCost;
+    aggregate.output_cost += costs?.output ?? calculated.outputCost;
+    aggregate.cache_write_cost += costs?.cacheWrite ?? calculated.cacheWriteCost;
+    aggregate.cache_read_cost += costs?.cacheRead ?? calculated.cacheReadCost;
+    aggregate.estimated_cost += costs?.total ?? calculated.totalCost;
   }
 }
 
@@ -457,8 +476,17 @@ router.get("/api/requests", verifySession, (req, res) => {
         request.cacheReadTokens,
         request.tokenAccountingVersion,
       );
-      const { tokenAccountingVersion, ...safeRequest } = request;
-      return { ...safeRequest, estimatedCost: costs.totalCost };
+      const {
+        tokenAccountingVersion,
+        recordedCost,
+        recordedCosts,
+        ...safeRequest
+      } = request;
+      return {
+        ...safeRequest,
+        estimatedCost: recordedCost ?? costs.totalCost,
+        costSource: recordedCost === null ? "current-pricing-estimate" : "recorded",
+      };
     });
 
     return res.json({
@@ -468,6 +496,62 @@ router.get("/api/requests", verifySession, (req, res) => {
     });
   } catch (error) {
     console.error("Error loading request history:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.get("/api/requests/:id", verifySession, (req, res) => {
+  const id = parseRequestInteger(
+    req.params.id,
+    null,
+    1,
+    Number.MAX_SAFE_INTEGER,
+  );
+  if (id === null) {
+    return res.status(400).json({ error: "Invalid request ID" });
+  }
+
+  try {
+    const request = logManager.getRequestHistoryById(id);
+    if (!request) {
+      return res.status(404).json({ error: "Request not found" });
+    }
+
+    let billing = request.billing;
+    let costSource = "recorded";
+    if (!billing) {
+      const costs = calculateCost(
+        request.model,
+        request.inputTokens,
+        request.outputTokens,
+        request.cacheWriteTokens,
+        request.cacheReadTokens,
+        request.tokenAccountingVersion,
+      );
+      billing = {
+        accounting_version: request.tokenAccountingVersion,
+        input_tokens: request.inputTokens,
+        output_tokens: request.outputTokens,
+        cache_write_tokens: request.cacheWriteTokens,
+        cache_read_tokens: request.cacheReadTokens,
+        pricing_per_million: null,
+        costs: {
+          input: costs.inputCost,
+          output: costs.outputCost,
+          cache_write: costs.cacheWriteCost,
+          cache_read: costs.cacheReadCost,
+          total: costs.totalCost,
+        },
+      };
+      costSource = "current-pricing-estimate";
+    }
+
+    const relatedError = logManager.getLatestErrorForRequestId(request.requestId);
+    return res.json({
+      request: { ...request, billing, costSource, relatedError },
+    });
+  } catch (error) {
+    console.error("Error loading request detail:", error);
     return res.status(500).json({ error: "Internal server error" });
   }
 });

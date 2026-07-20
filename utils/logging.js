@@ -1,10 +1,11 @@
 import logManager from "../services/logManager.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import realtimeStats from "../services/realtimeStats.js";
-import { getModelPricing } from "./helpers.js";
+import { getModelPricing, maskKey } from "./helpers.js";
 import { getSafeKeyMetadata } from "./keyIdentity.js";
-import { calculateModelCost } from "./pricing.js";
+import { calculateModelCost, normalizeModelPricing } from "./pricing.js";
 import { sanitizeHeadersForLogging } from "./errorLogging.js";
+import { sanitizeUpstreamUrl } from "./upstreamErrors.js";
 
 export { sanitizeHeadersForLogging } from "./errorLogging.js";
 export { normalizeBillingTokens, TOKEN_ACCOUNTING_VERSION } from "./pricing.js";
@@ -34,6 +35,7 @@ export function logRequestStart(
   params,
   messages = [],
   apiKey = null,
+  requestContext = null,
 ) {
   const requestInfo = {
     id: requestId,
@@ -43,6 +45,10 @@ export function logRequestStart(
     params,
     messages: messages || [],
     api_key: apiKey,
+    request_context:
+      requestContext && typeof requestContext === "object"
+        ? { ...requestContext }
+        : null,
   };
 
   realtimeStats.activeRequests.set(requestId, requestInfo);
@@ -115,14 +121,54 @@ export function logRequestEnd(
       "requested_model",
       "auto_model",
       "target_model",
+      "upstream_model",
       "endpoint_key",
+      "endpoint_name",
+      "api_format",
+      "upstream_status",
+      "proxy_status",
       "routing_attempt_count",
+      "routing_attempts",
     ]) {
       if (routingMetadata[key] !== undefined) {
         allowedRoutingMetadata[key] = routingMetadata[key];
       }
     }
+    if (routingMetadata.upstream_url !== undefined) {
+      allowedRoutingMetadata.upstream_url = sanitizeUpstreamUrl(
+        routingMetadata.upstream_url,
+      );
+    }
+    if (routingMetadata.upstream_token) {
+      allowedRoutingMetadata.masked_upstream_key = maskKey(
+        routingMetadata.upstream_token,
+      );
+    }
   }
+  const pricing = normalizeModelPricing(getModelPricing(req.model));
+  const costs = calculateModelCost(
+    pricing,
+    inputTokens,
+    outputTokens,
+    cacheWriteTokens,
+    cacheReadTokens,
+    tokenAccountingVersion,
+  );
+  const billing = {
+    accounting_version: tokenAccountingVersion,
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    cache_write_tokens: cacheWriteTokens,
+    cache_read_tokens: cacheReadTokens,
+    pricing_per_million: pricing,
+    costs: {
+      input: costs.inputCost,
+      output: costs.outputCost,
+      cache_write: costs.cacheWriteCost,
+      cache_read: costs.cacheReadCost,
+      total: costs.totalCost,
+    },
+  };
   const logEntry = {
     type: "request_end",
     timestamp: Date.now() / 1000,
@@ -137,6 +183,10 @@ export function logRequestEnd(
     ...(tokenAccountingVersion !== null
       ? { token_accounting_version: tokenAccountingVersion }
       : {}),
+    request_context: req.request_context
+      ? { ...req.request_context, params: req.params || null }
+      : { params: req.params || null },
+    billing,
     ...allowedRoutingMetadata,
     error,
     key_name: apiKeyManager.getKeyName(resolvedKey),

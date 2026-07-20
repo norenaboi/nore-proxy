@@ -226,12 +226,20 @@ export function summarizeRoutingAttempts(state) {
   return (state?.attempts || []).map((attempt) => ({ ...attempt }));
 }
 
-export function routingMetadata(state, endpointInfo = null) {
+export function routingMetadata(state, endpointInfo = null, execution = {}) {
   return {
     requested_model: state?.requestedModel ?? null,
     auto_model: state?.autoModel ?? null,
     target_model: state?.currentTargetModel ?? endpointInfo?.targetModel ?? null,
+    upstream_model: endpointInfo?.actualModel ?? null,
     endpoint_key: endpointInfo?.endpointKey ?? null,
+    endpoint_name: endpointInfo?.endpointName ?? null,
+    api_format: endpointInfo?.apiFormat ?? null,
+    upstream_url: execution.upstreamUrl ?? null,
+    upstream_token: endpointInfo?.token ?? null,
+    upstream_status: execution.upstreamStatus ?? null,
+    proxy_status: execution.proxyStatus ?? null,
     routing_attempt_count: state?.attempts?.length ?? 0,
+    routing_attempts: summarizeRoutingAttempts(state),
   };
 }

@@ -1,124 +1,82 @@
 <!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="icon" type="image/x-icon" href="favicon.ico" />
-        <title>Live Logs</title>
-        <link
-            href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
-            rel="stylesheet"
-        />
-        <link
-            rel="stylesheet"
-            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
-            crossorigin="anonymous"
-            referrerpolicy="no-referrer"
-        />
-        <link rel="stylesheet" href="shared.css" />
-        <script src="theme.js"></script>
-        <link rel="stylesheet" href="css/logs.css" />
-        <link rel="stylesheet" href="css/admin-editorial.css" />
-    </head>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <title>Request Logs - Admin Panel</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
+    <link rel="stylesheet" href="shared.css">
+    <script src="theme.js"></script>
+    <link rel="stylesheet" href="css/logs.css">
+    <link rel="stylesheet" href="css/admin-editorial.css">
+</head>
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <aside class="sidebar">
+        <div class="logo"><img class="logo-icon" src="/favicon.ico" alt=""><span class="logo-text">Nore Proxy</span></div>
+        <nav class="nav-menu" aria-label="Admin navigation">
+            <a class="nav-item" href="/admin/dashboard"><i class="fa-brands fa-quinscape"></i><span>Dashboard</span></a>
+            <a class="nav-item" href="/admin/model-usage"><i class="fa-solid fa-chart-line"></i><span>Model Usage</span></a>
+            <a class="nav-item" href="/admin/users"><i class="fa-solid fa-users"></i><span>Users</span></a>
+            <a class="nav-item" href="/admin/keys"><i class="fa-solid fa-key"></i><span>API Keys</span></a>
+            <a class="nav-item" href="/admin/endpoints"><i class="fa-solid fa-hexagon-nodes"></i><span>Endpoints</span></a>
+            <a class="nav-item" href="/admin/models"><i class="fa-solid fa-comment-nodes"></i><span>Models</span></a>
+            <a class="nav-item" href="/admin/console"><i class="fa-solid fa-terminal"></i><span>Console</span></a>
+            <a class="nav-item active" aria-current="page"><i class="fa-solid fa-clock-rotate-left"></i><span>Logs</span></a>
+            <a class="nav-item" href="/admin/errors"><i class="fa-solid fa-triangle-exclamation"></i><span>Errors</span></a>
+            <a class="nav-item" href="/admin/settings"><i class="fa-solid fa-sliders"></i><span>Settings</span></a>
+        </nav>
+        <button class="logout" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i><span>Logout</span></button>
+    </aside>
 
-    <body>
-        <a class="skip-link" href="#main">Skip to content</a>
-        <aside class="sidebar">
-            <div class="logo">
-                <img class="logo-icon" src="/favicon.ico" alt="">
-                <span class="logo-text">Nore Proxy</span>
+    <main class="main-content" id="main">
+        <header class="header">
+            <div class="title-group"><h1>Request Logs</h1><p>Browse completed proxy requests and inspect routing, token accounting, and cost details.</p></div>
+            <div class="header-actions"><button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme"><span class="theme-toggle-slider"><i class="fa-solid fa-sun"></i></span></button></div>
+        </header>
+
+        <section class="toolbar" aria-label="Request filters">
+            <div class="filters">
+                <div class="filter-field"><label for="apiKeyFilter">API key</label><select id="apiKeyFilter"><option value="">All keys</option></select></div>
+                <div class="filter-field"><label for="modelFilter">Model</label><select id="modelFilter"><option value="">All models</option></select></div>
+                <div class="filter-field"><label for="statusFilter">Status</label><select id="statusFilter"><option value="">All statuses</option><option value="success">Success</option><option value="failed">Failed</option></select></div>
+                <div class="filter-field"><label for="timeFilter">Time range</label><select id="timeFilter"><option value="">All time</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></div>
             </div>
-
-            <nav class="nav-menu" aria-label="Admin navigation">
-                <a class="nav-item" href="/admin/dashboard">
-                    <i class="fa-brands fa-quinscape"></i>
-                    <span>Dashboard</span>
-                </a>
-                <a class="nav-item" href="/admin/model-usage">
-                    <i class="fa-solid fa-chart-line"></i>
-                    <span>Model Usage</span>
-                </a>
-                <a class="nav-item" href="/admin/users">
-                    <i class="fa-solid fa-users"></i>
-                    <span>Users</span>
-                </a>
-                <a class="nav-item" href="/admin/keys">
-                    <i class="fa-solid fa-key"></i>
-                    <span>API Keys</span>
-                </a>
-                <a class="nav-item" href="/admin/endpoints">
-                    <i class="fa-solid fa-hexagon-nodes"></i>
-                    <span>Endpoints</span>
-                </a>
-                <a class="nav-item" href="/admin/models">
-                    <i class="fa-solid fa-comment-nodes"></i>
-                    <span>Models</span>
-                </a>
-                <a class="nav-item active" aria-current="page">
-                    <i class="fa-solid fa-terminal"></i>
-                    <span>Logs</span>
-                </a>
-                <a class="nav-item" href="/admin/errors">
-                    <i class="fa-solid fa-triangle-exclamation"></i>
-                    <span>Errors</span>
-                </a>
-                <a class="nav-item" href="/admin/settings">
-                    <i class="fa-solid fa-sliders"></i>
-                    <span>Settings</span>
-                </a>
-            </nav>
-
-            <button class="logout" onclick="logout()">
-                <i class="fa-solid fa-right-from-bracket"></i>
-                <span>Logout</span>
-            </button>
-        </aside>
-
-        <main class="main-content" id="main">
-            <header class="header">
-                <h1>Live Terminal Logs</h1>
-
-                <div class="header-actions">
-                    <button
-                        class="theme-toggle"
-                        onclick="toggleTheme()"
-                        aria-label="Toggle theme"
-                    >
-                        <span class="theme-toggle-slider">
-                            <i class="fa-solid fa-sun"></i>
-                        </span>
-                    </button>
-                </div>
-            </header>
-
-            <div class="controls-section">
-                <div class="controls">
-                    <div class="status">
-                        <div id="statusDot" class="status-dot"></div>
-                        <span id="statusText">Disconnected</span>
-                    </div>
-
-                    <button class="btn btn-danger" onclick="clearLogs()">
-                        <i class="fa-solid fa-trash"></i>
-                        Clear Logs
-                    </button>
-                </div>
+            <div class="toolbar-actions">
+                <button id="resetButton" class="btn btn-secondary"><i class="fa-solid fa-filter-circle-xmark"></i>Reset</button>
+                <button id="refreshButton" class="btn btn-primary"><i class="fa-solid fa-rotate"></i>Refresh</button>
             </div>
+        </section>
 
-
-            <div class="logs-container">
-                <div class="logs-header">
-                    <span>
-                        <i class="fa-solid fa-terminal"></i>
-                        Real-time Server Output
-                    </span>
-                </div>
-
-                <div id="logsTerminal" class="logs-terminal"></div>
+        <section class="logs-card">
+            <div class="card-header"><div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i>Completed requests</div><span id="requestCount" class="count-pill">0 loaded</span></div>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Time</th><th>Caller</th><th>Model</th><th>Endpoint</th><th>Input</th><th>Output</th><th>Cache write</th><th>Cache read</th><th>Duration</th><th>Cost</th><th>Status</th></tr></thead>
+                    <tbody id="requestsTableBody"></tbody>
+                </table>
             </div>
-        </main>
+            <div id="requestHistoryState" class="request-history-state" aria-live="polite"></div>
+            <div id="requestHistorySentinel" aria-hidden="true"></div>
+        </section>
+    </main>
 
-        <script src="shared.js"></script>
-        <script src="js/logs.js"></script>
-    </body>
+    <div id="detailBackdrop" class="detail-backdrop" role="dialog" aria-modal="true" aria-labelledby="detailTitle" onclick="closeDetailFromBackdrop(event)">
+        <article class="detail-panel">
+            <header class="detail-header"><div class="detail-heading"><h2 id="detailTitle">Request details</h2><p id="detailSubtitle">Loading stored context…</p></div><button class="icon-button" onclick="closeDetail()" aria-label="Close request details"><i class="fa-solid fa-xmark"></i></button></header>
+            <div class="detail-body">
+                <section class="detail-section"><h3><i class="fa-solid fa-fingerprint"></i>Request</h3><div id="requestFields" class="detail-grid"></div></section>
+                <section class="detail-section"><h3><i class="fa-solid fa-route"></i>Routing</h3><div id="routingFields" class="detail-grid"></div><pre id="detailAttempts" class="code-block"></pre></section>
+                <section class="detail-section"><h3><i class="fa-solid fa-circle-check"></i>Outcome</h3><div id="outcomeFields" class="detail-grid"></div></section>
+                <section class="detail-section"><h3><i class="fa-solid fa-coins"></i>Token accounting and cost</h3><div id="billingFields" class="detail-grid"></div><pre id="detailCostFormula" class="code-block"></pre></section>
+                <section id="relatedErrorSection" class="detail-section" hidden><h3><i class="fa-solid fa-triangle-exclamation"></i>Related upstream error</h3><p id="relatedErrorSummary"></p><a id="relatedErrorLink" class="btn btn-secondary" href="#"><i class="fa-solid fa-arrow-up-right-from-square"></i>Open error details</a></section>
+            </div>
+        </article>
+    </div>
+
+    <script src="shared.js"></script>
+    <script src="js/logs.js"></script>
+</body>
 </html>

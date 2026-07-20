@@ -324,13 +324,18 @@ function setKeyFilter(maskedKey) {
 }
 
 async function init() {
-    const deepLinkKey = new URLSearchParams(window.location.search).get("key");
+    const params = new URLSearchParams(window.location.search);
+    const deepLinkKey = params.get("key");
+    const deepLinkError = params.get("error");
     await loadFilters();
     if (deepLinkKey) {
         setKeyFilter(deepLinkKey);
         state.offset = 0;
     }
     await loadErrors();
+    if (deepLinkError && /^\d+$/.test(deepLinkError)) {
+        await openDetail(Number(deepLinkError));
+    }
 }
 
 init().catch((error) => {

@@ -111,6 +111,10 @@ router.get("/admin/model-usage", verifySessionOrRedirect, (req, res) => {
   serveAdmin(res, "model-usage.html");
 });
 
+router.get("/admin/console", verifySessionOrRedirect, (req, res) => {
+  serveAdmin(res, "console.html");
+});
+
 router.get("/admin/logs", verifySessionOrRedirect, (req, res) => {
   serveAdmin(res, "logs.html");
 });

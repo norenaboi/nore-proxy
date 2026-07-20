@@ -177,6 +177,68 @@ function normalizeRequestRow(row) {
     cacheReadTokens: nonNegativeNumber(data.cache_read_tokens),
     tokenAccountingVersion: data.token_accounting_version ?? null,
     duration: nonNegativeNumber(data.duration),
+    endpointKey: data.endpoint_key ?? null,
+    endpointName: data.endpoint_name ?? null,
+    recordedCost:
+      typeof data.billing?.costs?.total === "number"
+        ? nonNegativeNumber(data.billing.costs.total)
+        : null,
+    recordedCosts:
+      data.billing?.costs && typeof data.billing.costs === "object"
+        ? {
+            input: nonNegativeNumber(data.billing.costs.input),
+            output: nonNegativeNumber(data.billing.costs.output),
+            cacheWrite: nonNegativeNumber(data.billing.costs.cache_write),
+            cacheRead: nonNegativeNumber(data.billing.costs.cache_read),
+            total: nonNegativeNumber(data.billing.costs.total),
+          }
+        : null,
+  };
+}
+
+function normalizeRequestDetail(row) {
+  if (!row) return null;
+  const summary = normalizeRequestRow(row);
+  const parsed = parseJson(row.data);
+  const data = parsed && typeof parsed === "object" ? parsed : {};
+  const context =
+    data.request_context && typeof data.request_context === "object"
+      ? data.request_context
+      : {};
+  const billing =
+    data.billing && typeof data.billing === "object" ? data.billing : null;
+
+  return {
+    ...summary,
+    request: {
+      clientIp: context.client_ip ?? null,
+      protocol: context.protocol ?? null,
+      method: context.method ?? null,
+      path: context.path ?? null,
+      streaming: context.streaming ?? null,
+      params: context.params ?? null,
+    },
+    routing: {
+      requestedModel: data.requested_model ?? summary.model,
+      autoModel: data.auto_model ?? null,
+      targetModel: data.target_model ?? null,
+      upstreamModel: data.upstream_model ?? null,
+      endpointKey: data.endpoint_key ?? null,
+      endpointName: data.endpoint_name ?? null,
+      apiFormat: data.api_format ?? null,
+      upstreamUrl: data.upstream_url ?? null,
+      maskedUpstreamKey: data.masked_upstream_key ?? null,
+      attemptCount: nonNegativeNumber(data.routing_attempt_count),
+      attempts: Array.isArray(data.routing_attempts)
+        ? data.routing_attempts
+        : null,
+    },
+    outcome: {
+      upstreamStatus: data.upstream_status ?? null,
+      proxyStatus: data.proxy_status ?? null,
+      error: data.error ?? null,
+    },
+    billing,
   };
 }
 
@@ -625,6 +687,39 @@ export class LogManager {
       hasMore,
       nextCursor:
         hasMore && requests.length ? requests[requests.length - 1].id : null,
+    };
+  }
+
+  getRequestHistoryById(id) {
+    const row = this.db
+      .prepare(
+        `SELECT id, timestamp, model, data
+         FROM request_logs
+         WHERE id = ? AND type = 'request_end'`,
+      )
+      .get(id);
+    return normalizeRequestDetail(row);
+  }
+
+  getLatestErrorForRequestId(requestId) {
+    if (!requestId) return null;
+    const row = this.db
+      .prepare(
+        `SELECT id, timestamp, status_code, error_type, error_code, error_message
+         FROM error_logs
+         WHERE request_id = ?
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get(requestId);
+    if (!row) return null;
+    return {
+      id: row.id,
+      timestamp: row.timestamp,
+      statusCode: row.status_code ?? null,
+      errorType: row.error_type ?? null,
+      errorCode: row.error_code ?? null,
+      errorMessage: row.error_message ?? null,
     };
   }
 

@@ -6,7 +6,7 @@ import apiKeyManager from "../services/apiKeyManager.js";
 import settingsManager from "../services/settingsManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
 import { logRequestStart, logRequestEnd, logError, normalizeBillingTokens } from "../utils/logging.js";
-import { MODEL_REGISTRY, getEndpointForConcreteModel, getFullUrl, estimateTokens, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, resolveKeyHealth } from "../utils/helpers.js";
+import { MODEL_REGISTRY, getEndpointForConcreteModel, getFullUrl, estimateTokens, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, resolveKeyHealth, getClientIp } from "../utils/helpers.js";
 import keyStateManager, { ACTIONABLE_CODES } from "../services/keyStateManager.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import { buildUpstreamErrorContext, getUpstreamErrorMessage, readUpstreamErrorBody } from "../utils/upstreamErrors.js";
@@ -42,6 +42,7 @@ function withContext(error, endpointInfo, prepared = {}, responseBody) {
       requestHeaders: prepared.headers,
       upstreamUrl: prepared.fullUrl,
       responseBody: error.responseBody ?? responseBody ?? null,
+      upstreamStatus: statusOf(error),
     },
     configurable: true,
   });
@@ -202,14 +203,43 @@ router.post("/v1/chat/completions", verifyApiKey, async (req, res) => {
   const modelName = baseRequest.model;
   const streaming = baseRequest.stream === true;
   if (!MODEL_REGISTRY[modelName]) return res.status(404).json({ error: `Model '${modelName}' not found.` });
-  logRequestStart(requestId, modelName, { temperature: baseRequest.temperature, max_tokens: baseRequest.max_tokens, streaming }, baseRequest.messages || [], apiKey);
+  logRequestStart(
+    requestId,
+    modelName,
+    { temperature: baseRequest.temperature, max_tokens: baseRequest.max_tokens, streaming },
+    baseRequest.messages || [],
+    apiKey,
+    {
+      client_ip: getClientIp(req),
+      protocol: "openai-chat-completions",
+      method: req.method,
+      path: req.path,
+      streaming,
+    },
+  );
   try {
     if (streaming) await streamFromBackend(req, res, requestId, baseRequest, modelName, apiKey);
     else res.json(await makeBackendRequest(requestId, baseRequest, modelName, apiKey));
   } catch (error) {
     const state = error.routingState || null;
     const c = error.attemptContext || {};
-    logRequestEnd(requestId, false, 0, 0, error.message, "", null, 0, 0, null, routingMetadata(state, c.endpointInfo));
+    logRequestEnd(
+      requestId,
+      false,
+      0,
+      0,
+      error.message,
+      "",
+      null,
+      0,
+      0,
+      null,
+      routingMetadata(state, c.endpointInfo, {
+        upstreamUrl: c.upstreamUrl,
+        upstreamStatus: c.upstreamStatus ?? statusOf(error),
+        proxyStatus: error.clientAbort ? null : statusOf(error) || 500,
+      }),
+    );
     if (!error.clientAbort) {
       persistUpstreamError({ requestId, modelName, endpointInfo: c.endpointInfo, requestHeaders: c.requestHeaders, upstreamUrl: c.upstreamUrl, error, statusCode: statusOf(error), responseBody: c.responseBody, autoModel: state?.autoModel, targetModel: state?.currentTargetModel, routingAttempts: summarizeRoutingAttempts(state) });
       console.error(
@@ -265,7 +295,12 @@ async function streamFromBackend(req, res, requestId, baseRequest, modelName, ap
       const result = await consumeStream(response.data, res, state, prepared.adapter, streamCtx, requestId, () => clientAborted);
       activeStream = null;
       keyStateManager.recordSuccess(endpoint.endpointKey, endpoint.token);
-      return { ...result, endpoint };
+      return {
+        ...result,
+        endpoint,
+        upstreamUrl: prepared.requestUrl,
+        upstreamStatus: response.status,
+      };
     } catch (error) {
       response.data?.destroy?.();
       activeStream = null;
@@ -328,7 +363,23 @@ function billing(usage, input, output, endpoint) {
 
 function logStreamSuccess(requestId, result, request, endpoint, apiKey, state) {
   const b = billing(result.usage, estimateTokens(request), estimateTokens(result.content) + estimateTokens(result.reasoning), endpoint);
-  logRequestEnd(requestId, true, b.inputTokens, b.outputTokens, null, result.content, apiKey, b.cacheWriteTokens, b.cacheReadTokens, b.tokenAccountingVersion, routingMetadata(state, endpoint));
+  logRequestEnd(
+    requestId,
+    true,
+    b.inputTokens,
+    b.outputTokens,
+    null,
+    result.content,
+    apiKey,
+    b.cacheWriteTokens,
+    b.cacheReadTokens,
+    b.tokenAccountingVersion,
+    routingMetadata(state, endpoint, {
+      upstreamUrl: result.upstreamUrl,
+      upstreamStatus: result.upstreamStatus,
+      proxyStatus: 200,
+    }),
+  );
 }
 
 async function makeBackendRequest(requestId, baseRequest, modelName, apiKey) {
@@ -339,10 +390,31 @@ async function makeBackendRequest(requestId, baseRequest, modelName, apiKey) {
     catch (error) { throw withContext(error, endpoint, prepared); }
     if (response.status < 200 || response.status >= 300) throw withContext(httpError(response.status, response.data), endpoint, prepared, response.data);
     keyStateManager.recordSuccess(endpoint.endpointKey, endpoint.token);
-    return { parsed: prepared.adapter.parseResponseData(response.data), endpoint };
+    return {
+      parsed: prepared.adapter.parseResponseData(response.data),
+      endpoint,
+      upstreamUrl: prepared.requestUrl,
+      upstreamStatus: response.status,
+    };
   });
   const b = billing(result.parsed.usage || {}, estimateTokens(baseRequest), estimateTokens(result.parsed.content), result.endpoint);
-  logRequestEnd(requestId, true, b.inputTokens, b.outputTokens, null, result.parsed.content, apiKey, b.cacheWriteTokens, b.cacheReadTokens, b.tokenAccountingVersion, routingMetadata(result.routingState, result.endpoint));
+  logRequestEnd(
+    requestId,
+    true,
+    b.inputTokens,
+    b.outputTokens,
+    null,
+    result.parsed.content,
+    apiKey,
+    b.cacheWriteTokens,
+    b.cacheReadTokens,
+    b.tokenAccountingVersion,
+    routingMetadata(result.routingState, result.endpoint, {
+      upstreamUrl: result.upstreamUrl,
+      upstreamStatus: result.upstreamStatus,
+      proxyStatus: 200,
+    }),
+  );
   const response = result.parsed.response;
   if (response && typeof response === "object") response.model = modelName;
   return response;

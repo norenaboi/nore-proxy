@@ -4,7 +4,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <link rel="icon" type="image/x-icon" href="favicon.ico" />
-        <title>Model Usage - Admin Panel</title>
+        <title>Console - Admin Panel</title>
         <link
             href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
             rel="stylesheet"
@@ -17,9 +17,10 @@
         />
         <link rel="stylesheet" href="shared.css" />
         <script src="theme.js"></script>
-        <link rel="stylesheet" href="css/model-usage.css" />
+        <link rel="stylesheet" href="css/console.css" />
         <link rel="stylesheet" href="css/admin-editorial.css" />
     </head>
+
     <body>
         <a class="skip-link" href="#main">Skip to content</a>
         <aside class="sidebar">
@@ -33,7 +34,7 @@
                     <i class="fa-brands fa-quinscape"></i>
                     <span>Dashboard</span>
                 </a>
-                <a class="nav-item active" aria-current="page">
+                <a class="nav-item" href="/admin/model-usage">
                     <i class="fa-solid fa-chart-line"></i>
                     <span>Model Usage</span>
                 </a>
@@ -53,7 +54,7 @@
                     <i class="fa-solid fa-comment-nodes"></i>
                     <span>Models</span>
                 </a>
-                <a class="nav-item" href="/admin/console">
+                <a class="nav-item active" aria-current="page">
                     <i class="fa-solid fa-terminal"></i>
                     <span>Console</span>
                 </a>
@@ -79,7 +80,8 @@
 
         <main class="main-content" id="main">
             <header class="header">
-                <h1>Model Usage Statistics</h1>
+                <h1>Live Server Console</h1>
+
                 <div class="header-actions">
                     <button
                         class="theme-toggle"
@@ -93,79 +95,34 @@
                 </div>
             </header>
 
-            <div class="loading" id="loading">
-                <div class="loading-spinner"></div>
+            <div class="controls-section">
+                <div class="controls">
+                    <div class="status">
+                        <div id="statusDot" class="status-dot"></div>
+                        <span id="statusText">Disconnected</span>
+                    </div>
+
+                    <button class="btn btn-danger" onclick="clearLogs()">
+                        <i class="fa-solid fa-trash"></i>
+                        Clear Logs
+                    </button>
+                </div>
             </div>
 
-            <div id="content" style="display: none">
-                <div class="models-table-card">
-                    <div class="table-header">
-                        <h2>
-                            <i class="fa-solid fa-chart-bar"></i> Models by
-                            Usage
-                        </h2>
-                    </div>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th style="width: 60px">Rank</th>
-                                <th
-                                    class="sortable sorted-desc"
-                                    onclick="sortTable('model')"
-                                >
-                                    Model
-                                </th>
-                                <th
-                                    class="sortable"
-                                    onclick="sortTable('requests')"
-                                >
-                                    Requests
-                                </th>
-                                <th
-                                    class="sortable"
-                                    onclick="sortTable('input_tokens')"
-                                >
-                                    Input Tokens
-                                </th>
-                                <th
-                                    class="sortable"
-                                    onclick="sortTable('output_tokens')"
-                                >
-                                    Output Tokens
-                                </th>
-                                <th
-                                    class="sortable"
-                                    onclick="sortTable('cache_tokens')"
-                                >
-                                    Cache Tokens
-                                </th>
-                                <th
-                                    class="sortable"
-                                    onclick="sortTable('total_tokens')"
-                                >
-                                    Total Tokens
-                                </th>
-                                <th
-                                    class="sortable"
-                                    onclick="sortTable('cost')"
-                                >
-                                    Cost
-                                </th>
-                                <th
-                                    class="sortable"
-                                    onclick="sortTable('errors')"
-                                >
-                                    Errors
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody id="modelsTableBody"></tbody>
-                    </table>
+
+            <div class="logs-container">
+                <div class="logs-header">
+                    <span>
+                        <i class="fa-solid fa-terminal"></i>
+                        Real-time Server Output
+                    </span>
                 </div>
+
+                <div id="logsTerminal" class="logs-terminal"></div>
             </div>
         </main>
 
         <script src="shared.js"></script>
-        <script src="js/model-usage.js"></script>
+        <script src="js/console.js"></script>
     </body>
 </html>

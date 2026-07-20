@@ -19,6 +19,7 @@ import {
   estimateTokens,
   applyGenerationPolicy,
   resolveKeyHealth,
+  getClientIp,
 } from "../utils/helpers.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import { openAIResponseToAnthropic } from "../utils/responseFormats.js";
@@ -233,6 +234,7 @@ function withAttemptContext(error, endpointInfo, headers, fullUrl, responseBody)
       requestHeaders: headers,
       upstreamUrl: fullUrl,
       responseBody: error.responseBody ?? responseBody ?? null,
+      upstreamStatus: statusOf(error),
     },
     configurable: true,
   });
@@ -366,8 +368,12 @@ async function executeMessagesRouting(requestId, requestedModel, runAttempt) {
   throw error;
 }
 
-function successfulRoutingMetadata(state, endpointInfo = null) {
-  const metadata = routingMetadata(state, endpointInfo);
+function successfulRoutingMetadata(
+  state,
+  endpointInfo = null,
+  execution = {},
+) {
+  const metadata = routingMetadata(state, endpointInfo, execution);
   metadata.routing_attempt_count += 1;
   return metadata;
 }
@@ -440,7 +446,20 @@ router.post("/v1/messages", verifyApiKey, async (req, res) => {
     max_tokens: anthropicReq.max_tokens,
     streaming: isStreaming,
   };
-  logRequestStart(requestId, modelName, requestParams, openaiMessages, apiKey);
+  logRequestStart(
+    requestId,
+    modelName,
+    requestParams,
+    openaiMessages,
+    apiKey,
+    {
+      client_ip: getClientIp(req),
+      protocol: "anthropic-messages",
+      method: req.method,
+      path: req.path,
+      streaming: isStreaming,
+    },
+  );
 
   try {
     if (isStreaming) {
@@ -452,7 +471,23 @@ router.post("/v1/messages", verifyApiKey, async (req, res) => {
   } catch (error) {
     const state = error.routingState || null;
     const context = error.attemptContext || {};
-    logRequestEnd(requestId, false, 0, 0, error.message, "", null, 0, 0, null, routingMetadata(state, context.endpointInfo));
+    logRequestEnd(
+      requestId,
+      false,
+      0,
+      0,
+      error.message,
+      "",
+      null,
+      0,
+      0,
+      null,
+      routingMetadata(state, context.endpointInfo, {
+        upstreamUrl: context.upstreamUrl,
+        upstreamStatus: context.upstreamStatus ?? statusOf(error),
+        proxyStatus: error.clientAbort ? null : statusOf(error) || 500,
+      }),
+    );
     const statusCode = statusOf(error) || 500;
     if (!error.clientAbort) {
       persistUpstreamError({
@@ -518,6 +553,8 @@ async function makeMessagesAttempt(
   }
   let endpointInfo = null;
   let fullUrl = null;
+  let requestUrl = null;
+  let responseStatus = null;
   let data = null;
   let headers = {};
   let upstreamResponseBody = null;
@@ -608,7 +645,7 @@ async function makeMessagesAttempt(
         }
       }
 
-      const requestUrl = apiFormat === "gemini" ? `${fullUrl}?key=${backendToken}` : fullUrl;
+      requestUrl = apiFormat === "gemini" ? `${fullUrl}?key=${backendToken}` : fullUrl;
 
       const resp = await axios({
         method: "post",
@@ -619,6 +656,7 @@ async function makeMessagesAttempt(
         validateStatus: () => true,
       });
 
+      responseStatus = resp.status;
       if (resp.status >= 200 && resp.status < 300) {
         keyStateManager.recordSuccess(endpointKey, backendToken);
         response = resp;
@@ -697,7 +735,11 @@ async function makeMessagesAttempt(
       billingTokens.cacheWriteTokens,
       billingTokens.cacheReadTokens,
       billingTokens.tokenAccountingVersion,
-      successfulRoutingMetadata(routingState, endpointInfo),
+      successfulRoutingMetadata(routingState, endpointInfo, {
+        upstreamUrl: requestUrl,
+        upstreamStatus: responseStatus,
+        proxyStatus: 200,
+      }),
     );
 
     return anthropicResponse;
@@ -774,6 +816,7 @@ async function streamMessagesAttempt(
   let accumulatedContent = "";
   let endpointInfo = null;
   let fullUrl = null;
+  let requestUrl = null;
   let headers = {};
 
   res.setHeader("Content-Type", "text/event-stream");
@@ -868,7 +911,7 @@ async function streamMessagesAttempt(
         }
       }
 
-      const requestUrl = apiFormat === "gemini"
+      requestUrl = apiFormat === "gemini"
         ? `${fullUrl}?alt=sse&key=${backendToken}`
         : fullUrl;
 
@@ -906,9 +949,15 @@ async function streamMessagesAttempt(
     const consume = apiFormat === "anthropic"
       ? streamAnthropicPassthrough
       : streamOpenAIToAnthropic;
+    const execution = {
+      endpointInfo,
+      upstreamUrl: requestUrl,
+      upstreamStatus: response.status,
+      proxyStatus: 200,
+    };
     const args = apiFormat === "anthropic"
-      ? [res, response.data, requestId, modelName, apiKey, openaiMessages, routingState]
-      : [res, response.data, requestId, modelName, apiKey, openaiMessages, apiFormat, routingState];
+      ? [res, response.data, requestId, modelName, apiKey, openaiMessages, routingState, execution]
+      : [res, response.data, requestId, modelName, apiKey, openaiMessages, apiFormat, routingState, execution];
     const streamPromise = consume(...args);
     setAttemptCancel(streamPromise.cancel);
     await streamPromise;
@@ -934,6 +983,7 @@ function streamAnthropicPassthrough(
   apiKey,
   openaiMessages,
   routingState,
+  execution,
 ) {
   let cancel;
   const promise = new Promise((resolve, reject) => {
@@ -1011,7 +1061,7 @@ function streamAnthropicPassthrough(
         cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
         inputIncludesCache: false,
       });
-      logRequestEnd(requestId, true, billingTokens.inputTokens, billingTokens.outputTokens, null, accumulatedContent, apiKey, billingTokens.cacheWriteTokens, billingTokens.cacheReadTokens, billingTokens.tokenAccountingVersion, successfulRoutingMetadata(routingState));
+      logRequestEnd(requestId, true, billingTokens.inputTokens, billingTokens.outputTokens, null, accumulatedContent, apiKey, billingTokens.cacheWriteTokens, billingTokens.cacheReadTokens, billingTokens.tokenAccountingVersion, successfulRoutingMetadata(routingState, execution.endpointInfo, execution));
       if (!res.writableEnded) res.end();
       settle();
     };
@@ -1029,7 +1079,17 @@ function streamAnthropicPassthrough(
 }
 
 // Convert an OpenAI-style SSE stream into Anthropic SSE events
-function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, openaiMessages, apiFormat, routingState) {
+function streamOpenAIToAnthropic(
+  res,
+  stream,
+  requestId,
+  modelName,
+  apiKey,
+  openaiMessages,
+  apiFormat,
+  routingState,
+  execution,
+) {
   let cancel;
   const promise = new Promise((resolve, reject) => {
   let settled = false;
@@ -1327,7 +1387,7 @@ function streamOpenAIToAnthropic(res, stream, requestId, modelName, apiKey, open
       billingTokens.cacheWriteTokens,
       billingTokens.cacheReadTokens,
       billingTokens.tokenAccountingVersion,
-      successfulRoutingMetadata(routingState),
+      successfulRoutingMetadata(routingState, execution.endpointInfo, execution),
     );
 
     if (!res.writableEnded) {

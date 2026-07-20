@@ -1,0 +1,161 @@
+.controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--card-bg);
+    padding: 10px 14px;
+    border-radius: 10px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--danger);
+}
+
+.status-dot.connected {
+    background: var(--success);
+    box-shadow: 0 0 10px var(--success-alpha-06);
+}
+
+.btn {
+    border: none;
+    padding: 10px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.btn-danger {
+    background: var(--danger);
+    color: white;
+}
+
+.logs-container {
+    --terminal-bg: #19151e;
+    --terminal-header: #231d2a;
+    --terminal-text: #eee8f3;
+    --terminal-muted: #a99bb5;
+    --terminal-border: #403449;
+    background: var(--terminal-bg);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.logs-header {
+    background: var(--terminal-header);
+    color: var(--text-primary);
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--terminal-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logs-terminal {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--card-bg);
+    color: var(--terminal-text);
+    padding: 20px;
+    font-family: "SF Mono", Monaco, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.log-entry {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    animation: fadeIn 0.2s ease;
+    word-break: break-word;
+}
+
+.log-entry:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.log-time {
+    color: var(--terminal-muted);
+    white-space: nowrap;
+}
+
+.log-level {
+    min-width: 60px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.log-level.info {
+    color: #60a5fa;
+}
+
+.log-level.warn {
+    color: var(--warning);
+}
+
+.log-level.error {
+    color: var(--danger);
+}
+
+.log-message {
+    flex: 1;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.controls-section {
+    margin-bottom: 24px;
+}
+
+.controls-section .controls {
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+
+.controls-section .btn {
+    flex: 0 0 auto;
+    align-self: center;
+}
+
+@media (max-width: 560px) {
+    .controls-section .controls {
+        align-items: center;
+    }
+
+    .log-entry {
+        display: grid;
+        grid-template-columns: auto 1fr;
+    }
+
+    .log-message {
+        grid-column: 1 / -1;
+    }
+}
