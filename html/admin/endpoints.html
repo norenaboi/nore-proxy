@@ -162,7 +162,8 @@
                                     <textarea id="bulkTokenInput" class="form-input" rows="3" wrap="off"
                                         placeholder="Paste many tokens, one per line, then click Import"
                                         style="font-family: monospace; font-size: 13px; resize: vertical; width:100%; box-sizing:border-box; white-space: pre; overflow-x: auto; overflow-wrap: normal;"></textarea>
-                                    <div style="display:flex;justify-content:flex-end;margin-top:6px;">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;">
+                                        <button type="button" id="bulkDeleteBtn" class="btn btn-danger btn-sm" onclick="openBulkDeleteModal()" style="white-space:nowrap;"><i class="fa-solid fa-trash"></i> Delete all keys</button>
                                         <button type="button" class="btn btn-secondary btn-sm" onclick="importBulkTokens()" style="white-space:nowrap;"><i class="fa-solid fa-file-import"></i> Import lines</button>
                                     </div>
                                     <p class="form-hint">One token per line. Blank lines, duplicates, and masked placeholders are skipped.</p>
@@ -280,6 +281,25 @@
                     <div class="modal-footer">
                         <button class="btn btn-secondary" onclick="closeDeleteModal()">Cancel</button>
                         <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="bulkDeleteModal" class="modal-overlay" style="z-index: 1100;">
+                <div class="modal" style="max-width: 480px;">
+                    <div class="modal-header">
+                        <span class="modal-title">Delete All Keys</span>
+                        <button class="modal-close" onclick="closeBulkDeleteModal()">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Remove <strong id="bulkDeleteCount"></strong> from this endpoint?</p>
+                        <p style="color: var(--gray-500); margin-top: 8px; font-size: 14px;">This clears every key from the editor. Nothing is saved until you submit the endpoint form.</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="closeBulkDeleteModal()">Cancel</button>
+                        <button class="btn btn-danger" onclick="confirmBulkDeleteTokens()">Delete all keys</button>
                     </div>
                 </div>
             </div>

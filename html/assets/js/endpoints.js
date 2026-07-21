@@ -139,6 +139,14 @@ function renderTokenPills() {
     const badge = document.getElementById('tokenCountBadge');
     badge.textContent = pendingTokens.length > 0 ? `(${pendingTokens.length})` : '';
 
+    const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+    if (bulkDeleteBtn) {
+        const hasTokens = pendingTokens.length > 0;
+        bulkDeleteBtn.disabled = !hasTokens;
+        bulkDeleteBtn.style.opacity = hasTokens ? '' : '0.5';
+        bulkDeleteBtn.style.cursor = hasTokens ? '' : 'not-allowed';
+    }
+
     if (pendingTokens.length === 0) {
         list.innerHTML = '<span style="color:var(--gray-400);font-size:13px;padding:4px;">No tokens added yet</span>';
         return;
@@ -224,6 +232,29 @@ function importBulkTokens() {
     pendingDeleteConfirm.clear();
     renderTokenPills();
     showToast(`Imported ${toAdd.length} token${toAdd.length !== 1 ? 's' : ''}${skipped > 0 ? ` (${skipped} skipped)` : ''}`, 'success');
+}
+
+function openBulkDeleteModal() {
+    if (pendingTokens.length === 0) {
+        showToast('No keys to delete', 'error');
+        return;
+    }
+    const n = pendingTokens.length;
+    document.getElementById('bulkDeleteCount').textContent = `all ${n} key${n !== 1 ? 's' : ''}`;
+    document.getElementById('bulkDeleteModal').classList.add('active');
+}
+
+function closeBulkDeleteModal() {
+    document.getElementById('bulkDeleteModal').classList.remove('active');
+}
+
+function confirmBulkDeleteTokens() {
+    const removed = pendingTokens.length;
+    pendingTokens = [];
+    pendingDeleteConfirm.clear();
+    renderTokenPills();
+    closeBulkDeleteModal();
+    showToast(`Removed ${removed} key${removed !== 1 ? 's' : ''}`, 'success');
 }
 
 function removeToken(idx) {
