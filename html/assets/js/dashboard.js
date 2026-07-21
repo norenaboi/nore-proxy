@@ -2,6 +2,7 @@ const dashboardState = {
     range: "24h",
     generation: 0,
     data: null,
+    loading: false,
 };
 
 const rangeLabels = {
@@ -31,6 +32,8 @@ function redirectIfUnauthorized(response) {
 }
 
 async function loadDashboard() {
+    if (dashboardState.loading || document.hidden) return;
+    dashboardState.loading = true;
     const generation = ++dashboardState.generation;
     try {
         const response = await fetch("/api/logs");
@@ -86,6 +89,8 @@ async function loadDashboard() {
         document.getElementById("loading").style.display = "none";
         document.getElementById("error").style.display = "block";
         document.getElementById("error").textContent = error.message;
+    } finally {
+        dashboardState.loading = false;
     }
 }
 
@@ -149,7 +154,6 @@ function initializeDashboardRange() {
                 item.setAttribute("aria-pressed", String(item === button));
             });
             if (dashboardState.data) renderDashboardRange(dashboardState.data);
-            loadDashboard();
         });
     });
 }
@@ -314,3 +318,6 @@ initializeDashboardRange();
 loadDashboard();
 initializeRequestHistory();
 setInterval(loadDashboard, 30000);
+document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) loadDashboard();
+});

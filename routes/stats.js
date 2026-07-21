@@ -13,82 +13,28 @@ export function setStartupTime(time) {
 }
 
 router.get("/api/summary", async (req, res) => {
-  const currentTime = Date.now() / 1000;
-  const dayAgo = currentTime - 86400;
-
-  const logs = logManager.readRequestLogs(10000);
-  const recent24hLogs = logs.filter((log) => (log.timestamp || 0) > dayAgo);
-
-  const totalRequests = logs.length;
-  const dailyRequests = recent24hLogs.length;
-  const allTime = logManager.getRequestTotals();
-
-  const successful = recent24hLogs.filter(
-    (log) => log.status === "success",
-  ).length;
-  const failed = recent24hLogs.length - successful;
-
-  const totalInputTokens = logs.reduce(
-    (sum, log) => sum + (log.input_tokens || 0),
-    0,
-  );
-  const totalOutputTokens = logs.reduce(
-    (sum, log) => sum + (log.output_tokens || 0),
-    0,
-  );
-  const totalCacheWriteTokens = logs.reduce(
-    (sum, log) => sum + (log.cache_write_tokens || 0),
-    0,
-  );
-  const totalCacheReadTokens = logs.reduce(
-    (sum, log) => sum + (log.cache_read_tokens || 0),
-    0,
-  );
-
-  const dailyInputTokens = recent24hLogs.reduce(
-    (sum, log) => sum + (log.input_tokens || 0),
-    0,
-  );
-  const dailyOutputTokens = recent24hLogs.reduce(
-    (sum, log) => sum + (log.output_tokens || 0),
-    0,
-  );
-  const dailyCacheWriteTokens = recent24hLogs.reduce(
-    (sum, log) => sum + (log.cache_write_tokens || 0),
-    0,
-  );
-  const dailyCacheReadTokens = recent24hLogs.reduce(
-    (sum, log) => sum + (log.cache_read_tokens || 0),
-    0,
-  );
-
-  const durations = recent24hLogs
-    .map((log) => log.duration || 0)
-    .filter((d) => d > 0);
-  const avgDuration =
-    durations.length > 0
-      ? durations.reduce((a, b) => a + b, 0) / durations.length
-      : 0;
-
+  const dayAgo = Date.now() / 1000 - 86400;
+  const allTime = logManager.getRequestAggregates();
+  const daily = logManager.getRequestAggregates({ from: dayAgo });
   const allApiKeys = Object.keys(apiKeyManager.keys);
 
   res.json({
-    total_requests: totalRequests,
-    daily_requests: dailyRequests,
+    total_requests: allTime.total,
+    daily_requests: daily.total,
     all_time_requests: allTime.total,
     all_time_successful: allTime.successful,
-    successful,
-    failed,
-    total_input_tokens: totalInputTokens,
-    total_output_tokens: totalOutputTokens,
-    total_cache_write_tokens: totalCacheWriteTokens,
-    total_cache_read_tokens: totalCacheReadTokens,
-    daily_input_tokens: dailyInputTokens,
-    daily_output_tokens: dailyOutputTokens,
-    daily_cache_write_tokens: dailyCacheWriteTokens,
-    daily_cache_read_tokens: dailyCacheReadTokens,
-    avg_duration: avgDuration,
-    success_rate: recent24hLogs.length > 0 ? (successful / recent24hLogs.length) * 100 : 0,
+    successful: daily.successful,
+    failed: daily.failed,
+    total_input_tokens: allTime.inputTokens,
+    total_output_tokens: allTime.outputTokens,
+    total_cache_write_tokens: allTime.cacheWriteTokens,
+    total_cache_read_tokens: allTime.cacheReadTokens,
+    daily_input_tokens: daily.inputTokens,
+    daily_output_tokens: daily.outputTokens,
+    daily_cache_write_tokens: daily.cacheWriteTokens,
+    daily_cache_read_tokens: daily.cacheReadTokens,
+    avg_duration: daily.avgDuration,
+    success_rate: daily.total > 0 ? (daily.successful / daily.total) * 100 : 0,
     uptime: Date.now() / 1000 - startupTime,
     total_api_keys: allApiKeys.length,
   });

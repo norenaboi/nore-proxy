@@ -4,6 +4,7 @@ import Config from "../config/index.js";
 import logManager from "./logManager.js";
 import settingsManager from "./settingsManager.js";
 import { maskKey } from "../utils/helpers.js";
+import { getApiKeyId } from "../utils/keyIdentity.js";
 
 class APIKeyManager {
   constructor(dbFile = "api_keys.db") {
@@ -262,60 +263,37 @@ class APIKeyManager {
     }
   }
 
-  getUsageStats(apiKey) {
-    const logs = logManager.readRequestLogs(10000);
-    const currentTime = Date.now() / 1000;
-    const dayAgo = currentTime - 86400;
-
-    // Logs store a masked version of the key — apply the same mask before comparing
-    const maskedKey = maskKey(apiKey);
-
-    const apiKeyLogs24h = logs.filter(
-      (log) => log.api_key === maskedKey && (log.timestamp || 0) > dayAgo,
-    );
-
-    const apiKeyLogsAll = logs.filter((log) => log.api_key === maskedKey);
-
+  getUsageStats(apiKey, aggregate = null) {
+    const keyData = this.keys[apiKey];
+    let stats = aggregate;
+    if (!stats) {
+      const mask = maskKey(apiKey);
+      const maskMatches = Object.keys(this.keys).filter((key) => maskKey(key) === mask);
+      const identity = {
+        apiKey: getApiKeyId(apiKey),
+        ...(maskMatches.length === 1 ? { legacyMask: mask } : {}),
+      };
+      const allTime = logManager.getRequestAggregates(identity);
+      const daily = logManager.getRequestAggregates({
+        ...identity,
+        from: Date.now() / 1000 - 86400,
+      });
+      stats = {
+        ...allTime,
+        dailyInputTokens: daily.inputTokens,
+        dailyOutputTokens: daily.outputTokens,
+        dailyCacheWriteTokens: daily.cacheWriteTokens,
+        dailyCacheReadTokens: daily.cacheReadTokens,
+      };
+    }
     return {
-      name: this.keys[apiKey]?.name || "",
-      daily_requests: this.keys[apiKey]?.usage_today || 0,
-      total_requests: apiKeyLogsAll.length || 0,
-      total_input_tokens: apiKeyLogsAll.reduce(
-        (sum, log) => sum + (log.input_tokens || 0),
-        0,
-      ),
-      total_output_tokens: apiKeyLogsAll.reduce(
-        (sum, log) => sum + (log.output_tokens || 0),
-        0,
-      ),
-      total_cache_write_tokens: apiKeyLogsAll.reduce(
-        (sum, log) => sum + (log.cache_write_tokens || 0),
-        0,
-      ),
-      total_cache_read_tokens: apiKeyLogsAll.reduce(
-        (sum, log) => sum + (log.cache_read_tokens || 0),
-        0,
-      ),
-      daily_input_tokens: apiKeyLogs24h.reduce(
-        (sum, log) => sum + (log.input_tokens || 0),
-        0,
-      ),
-      daily_output_tokens: apiKeyLogs24h.reduce(
-        (sum, log) => sum + (log.output_tokens || 0),
-        0,
-      ),
-      daily_cache_write_tokens: apiKeyLogs24h.reduce(
-        (sum, log) => sum + (log.cache_write_tokens || 0),
-        0,
-      ),
-      daily_cache_read_tokens: apiKeyLogs24h.reduce(
-        (sum, log) => sum + (log.cache_read_tokens || 0),
-        0,
-      ),
-      rate_limit: this.keys[apiKey]?.rpd || 0,
-      rate_limit_rpm: this.keys[apiKey]?.rpm || 0,
-      max_context_size: this.keys[apiKey]?.max_context_size ?? 0,
-      active: this.keys[apiKey]?.active || false,
+      name: keyData?.name || "", daily_requests: keyData?.usage_today || 0,
+      total_requests: stats.total || 0, total_input_tokens: stats.inputTokens || 0, total_output_tokens: stats.outputTokens || 0,
+      total_cache_write_tokens: stats.cacheWriteTokens || 0, total_cache_read_tokens: stats.cacheReadTokens || 0,
+      daily_input_tokens: stats.dailyInputTokens || 0, daily_output_tokens: stats.dailyOutputTokens || 0,
+      daily_cache_write_tokens: stats.dailyCacheWriteTokens || 0, daily_cache_read_tokens: stats.dailyCacheReadTokens || 0,
+      rate_limit: keyData?.rpd || 0, rate_limit_rpm: keyData?.rpm || 0,
+      max_context_size: keyData?.max_context_size ?? 0, active: keyData?.active || false,
     };
   }
 }
