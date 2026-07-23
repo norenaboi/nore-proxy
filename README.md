@@ -17,12 +17,12 @@ A unified OpenAI API proxy server
 - **Bounded failover**: retry distinct usable keys within a concrete target first, then fall back across targets for rate limits, upstream 5xx responses, key exhaustion, network failures, and timeouts. Streaming never retries after client-visible output.
 - **Dependency-safe model management**: renames update automatic target references atomically, while disabling/deleting referenced models or endpoints is blocked with actionable dependency details.
 - **Cost tracking**: calculate input, output, cache-read, and cache-write costs using pricing attached to the requested public model.
-- **Usage dashboards**: view per-user and per-model request, token, and cost breakdowns.
+- **Usage dashboards**: view per-user and per-model request, token, and cost breakdowns, with persisted request history and detailed routing and billing diagnostics.
 - **Self-service usage**: API key holders can view their own usage from the public usage page.
 - **Upstream error inspection**: persistent, sanitized error logs with filtering and a dedicated admin page.
 - **Persistent admin sessions**: SQLite-backed sessions survive restarts and expire automatically.
 - **Live configuration reload**: update endpoints, models, and runtime settings without restarting the server.
-- **Operational controls**: model health checks, silent connectivity testing, soft disable/enable, and live request logs via SSE.
+- **Operational controls**: model health checks, silent connectivity testing, soft disable/enable, filterable request history, and a live SSE admin console at `/admin/console`.
 - **Access control**: per-API-key RPD/RPM/context-size limits managed from the admin panel.
 
 ## Quick Start
@@ -70,6 +70,15 @@ npm install
 ```bash
 npm start
 ```
+
+Once the server is running, open:
+
+- Public UI: `http://localhost:8741`
+- Admin login: `http://localhost:8741/admin/login`
+- Models: `http://localhost:8741/models`
+- Usage: `http://localhost:8741/usage`
+
+For development, use `npm run dev` for automatic restarts and `npm run typecheck` to run the TypeScript compiler without emitting files.
 
 ### Docker (Recommended)
 
@@ -157,11 +166,16 @@ All admin endpoints require authentication.
 | `/api/reload` | POST | Reload/Update configuration |
 | `/api/logs/stream` | GET | SSE endpoint for live logs |
 | `/api/logs/clear` | POST | Clear request logs |
+| `/api/requests/filters` | GET | Get request-history filter options |
+| `/api/requests` | GET | List and filter paginated request history |
+| `/api/requests/:id` | GET | Inspect request routing, token, and cost details |
+| `/api/errors/filters` | GET | Get upstream-error filter options |
 | `/api/errors` | GET | List upstream error logs |
 | `/api/errors/:id` | GET | Get error log details |
 | `/api/errors` | DELETE | Clear error logs |
 | `/api/endpoints/:version/keys` | GET | Get per-key health and stats |
 | `/api/endpoints/:version/keys/reset` | POST | Re-enable a sidelined key |
+| `/api/endpoints/:version/keys/reset-stats` | POST | Reset per-key usage and failure statistics |
 | `/api/endpoints/:version/keys/disable` | POST | Manually disable a key |
 | `/api/users` | GET | Get all users' usage stats |
 | `/api/users/:apiKey` | GET | Get individual user details |
@@ -181,8 +195,8 @@ All admin endpoints require authentication.
 
 ### Tech Stack
 
-- Frontend: Javascript
-- Backend: Node.js + Express
+- Frontend: JavaScript
+- Backend: TypeScript + Node.js + Express (ESM, executed with `tsx`)
 - Storage: Better-SQLite3
 
 ## License
