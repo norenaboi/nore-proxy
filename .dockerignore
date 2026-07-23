@@ -10,6 +10,7 @@ endpoints.json
 settings.json
 
 # Dev / docs
+.claude/
 *.sh
 *.md
 .gitignore
