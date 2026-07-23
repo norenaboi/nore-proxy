@@ -4,26 +4,15 @@ A unified OpenAI API proxy server
 
 ## Features
 
-- **Unified API gateway**: `/v1/chat/completions` (OpenAI format) and `/v1/messages` (Anthropic format), both routing to multiple upstream backends.
-- **Claude Code support**: `/v1/messages` accepts the Anthropic Messages API natively and translates to any upstream backend.
-- **Multi-provider backends**: OpenAI, Anthropic, Gemini, OpenAI-Responses, and OpenAI-Codex adapters with streaming normalization.
-- **Reasoning support**: preserve reasoning and thinking content across all backend adapters.
-- **Endpoint management**: JSON-backed endpoint config with auto-reload, custom headers, and per-endpoint API format selection.
-- **Key rotation**: round-robin or sticky rotation across multiple keys per endpoint.
-- **Key health tracking**: failing keys are sidelined automatically and requests hop to the next healthy key.
-- **Per-endpoint generation policies**: strip, pass through, or override client `temperature`, `top_p`, and `max_tokens` values.
-- **Prompt caching for Claude**: optional Claude cache breakpoints with cache-read and cache-write token accounting.
-- **Model registry and automatic routing**: map display names to concrete upstream models or ordered automatic target groups, with sticky-priority or round-robin initial selection.
-- **Bounded failover**: retry distinct usable keys within a concrete target first, then fall back across targets for rate limits, upstream 5xx responses, key exhaustion, network failures, and timeouts. Streaming never retries after client-visible output.
-- **Dependency-safe model management**: renames update automatic target references atomically, while disabling/deleting referenced models or endpoints is blocked with actionable dependency details.
-- **Cost tracking**: calculate input, output, cache-read, and cache-write costs using pricing attached to the requested public model.
-- **Usage dashboards**: view per-user and per-model request, token, and cost breakdowns.
-- **Self-service usage**: API key holders can view their own usage from the public usage page.
-- **Upstream error inspection**: persistent, sanitized error logs with filtering and a dedicated admin page.
-- **Persistent admin sessions**: SQLite-backed sessions survive restarts and expire automatically.
-- **Live configuration reload**: update endpoints, models, and runtime settings without restarting the server.
-- **Operational controls**: model health checks, silent connectivity testing, soft disable/enable, and live request logs via SSE.
-- **Access control**: per-API-key RPD/RPM/context-size limits managed from the admin panel.
+- **Unified API gateway**: use OpenAI-compatible `/v1/chat/completions` or Anthropic-compatible `/v1/messages`, including Claude Code support.
+- **Multi-provider support**: route requests to OpenAI, Anthropic, Gemini, OpenAI Responses, and OpenAI Codex backends.
+- **Flexible model routing**: map public model names to specific backends or automatic target groups with fallback across models and providers.
+- **Reliable key rotation**: distribute requests across API keys and automatically skip unhealthy or rate-limited keys.
+- **Normalized responses**: preserve streaming, reasoning, and thinking content across supported formats.
+- **Live management**: configure endpoints, models, headers, API formats, and runtime settings without restarting the server.
+- **Request controls**: set per-endpoint generation policies and per-key request, token, and context limits.
+- **Usage and cost tracking**: monitor requests, tokens, cache usage, and costs by user and model.
+- **Admin dashboard**: manage configuration, test model connectivity, inspect request history and upstream errors, and view live logs.
 
 ## Quick Start
 
@@ -70,6 +59,15 @@ npm install
 ```bash
 npm start
 ```
+
+Once the server is running, open:
+
+- Public UI: `http://localhost:8741`
+- Admin login: `http://localhost:8741/admin/login`
+- Models: `http://localhost:8741/models`
+- Usage: `http://localhost:8741/usage`
+
+For development, use `npm run dev` for automatic restarts and `npm run typecheck` to run the TypeScript compiler without emitting files.
 
 ### Docker (Recommended)
 
@@ -157,11 +155,16 @@ All admin endpoints require authentication.
 | `/api/reload` | POST | Reload/Update configuration |
 | `/api/logs/stream` | GET | SSE endpoint for live logs |
 | `/api/logs/clear` | POST | Clear request logs |
+| `/api/requests/filters` | GET | Get request-history filter options |
+| `/api/requests` | GET | List and filter paginated request history |
+| `/api/requests/:id` | GET | Inspect request routing, token, and cost details |
+| `/api/errors/filters` | GET | Get upstream-error filter options |
 | `/api/errors` | GET | List upstream error logs |
 | `/api/errors/:id` | GET | Get error log details |
 | `/api/errors` | DELETE | Clear error logs |
 | `/api/endpoints/:version/keys` | GET | Get per-key health and stats |
 | `/api/endpoints/:version/keys/reset` | POST | Re-enable a sidelined key |
+| `/api/endpoints/:version/keys/reset-stats` | POST | Reset per-key usage and failure statistics |
 | `/api/endpoints/:version/keys/disable` | POST | Manually disable a key |
 | `/api/users` | GET | Get all users' usage stats |
 | `/api/users/:apiKey` | GET | Get individual user details |
@@ -181,8 +184,8 @@ All admin endpoints require authentication.
 
 ### Tech Stack
 
-- Frontend: Javascript
-- Backend: Node.js + Express
+- Frontend: JavaScript
+- Backend: TypeScript + Node.js + Express (ESM, executed with `tsx`)
 - Storage: Better-SQLite3
 
 ## License
