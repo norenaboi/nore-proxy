@@ -21,6 +21,7 @@ import statsRoutes, { setStartupTime } from "./routes/stats.js";
 import adminRoutes from "./routes/admin.js";
 import pagesRoutes from "./routes/pages.js";
 import logsRoutes from "./routes/logs.js";
+import { initializeFrontend, renderFrontend } from "./frontend/server/frontendHost.js";
 
 const app = express();
 
@@ -29,11 +30,11 @@ app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
-        // Page CSS/JS lives in external files under html/assets (css/, js/, shared.js);
-        // styleSrc keeps 'unsafe-inline' for style="" attributes still used in markup
+        // styleSrc keeps 'unsafe-inline' for style="" attributes still used in Svelte markup
         defaultSrc: ["'self'"],
         scriptSrc: [
           "'self'",
+          "'sha256-CZUk6RPDjaVhQWzg4c26BkvXUL2q5OnvD9yf3mCOe5w='",
           "https://cdnjs.cloudflare.com",
           "https://cdn.jsdelivr.net",
           "https://static.cloudflareinsights.com",
@@ -58,7 +59,7 @@ app.use(
           "https://cdn.simpleicons.org",
           "https://avatars.githubusercontent.com",
         ],
-        // Allow inline event handlers (onsubmit, onclick, etc.) used throughout the HTML pages
+        // Retain compatibility with inline script attributes during the frontend migration
         scriptSrcAttr: ["'unsafe-inline'"],
         connectSrc: ["'self'", "https://cloudflareinsights.com"],
       },
@@ -158,6 +159,8 @@ function stopBackgroundTasks(): void {
   backgroundTasks.clear();
 }
 
+await initializeFrontend(app);
+
 // Routes
 app.use(chatRoutes);
 app.use(messagesRoutes);
@@ -173,7 +176,12 @@ app.get("/health", (_req: Request, res: Response) => {
 });
 
 // 404 handler
-app.use((_req: Request, res: Response) => {
+app.use(async (req: Request, res: Response) => {
+  if (req.method === "GET" && req.accepts(["html", "json"]) === "html") {
+    res.status(404);
+    await renderFrontend(req, res, "public.html");
+    return;
+  }
   res.status(404).json({ error: "Not found" });
 });
 

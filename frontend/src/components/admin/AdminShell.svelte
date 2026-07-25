@@ -1,0 +1,81 @@
+<script lang="ts">
+  import type { Snippet } from "svelte";
+  import { logout } from "$frontend/lib/api/admin";
+  import { toast, theme } from "$frontend/lib/stores";
+
+  let {
+    activePath,
+    title,
+    eyebrow = "Administration",
+    children,
+    actions,
+  }: { activePath: string; title: string; eyebrow?: string; children: Snippet; actions?: Snippet } = $props();
+
+  const navItems = [
+    { href: "/admin/dashboard", icon: "fa-brands fa-quinscape", label: "Dashboard" },
+    { href: "/admin/model-usage", icon: "fa-solid fa-chart-line", label: "Model Usage" },
+    { href: "/admin/users", icon: "fa-solid fa-users", label: "Users" },
+    { href: "/admin/keys", icon: "fa-solid fa-key", label: "API Keys" },
+    { href: "/admin/endpoints", icon: "fa-solid fa-hexagon-nodes", label: "Endpoints" },
+    { href: "/admin/models", icon: "fa-solid fa-comment-nodes", label: "Models" },
+    { href: "/admin/console", icon: "fa-solid fa-terminal", label: "Console" },
+    { href: "/admin/logs", icon: "fa-solid fa-clock-rotate-left", label: "Logs" },
+    { href: "/admin/errors", icon: "fa-solid fa-triangle-exclamation", label: "Errors" },
+    { href: "/admin/settings", icon: "fa-solid fa-sliders", label: "Settings" },
+  ];
+</script>
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<aside class="sidebar">
+  <div class="logo">
+    <img class="logo-icon" src="/favicon.ico" alt="" />
+    <span class="logo-text">Nore Proxy</span>
+  </div>
+  <nav class="nav-menu" aria-label="Admin navigation">
+    {#each navItems as item}
+      <a
+        class="nav-item"
+        href={item.href}
+        aria-current={activePath === item.href ? "page" : undefined}
+      >
+        <i class={item.icon}></i>
+        <span>{item.label}</span>
+      </a>
+    {/each}
+  </nav>
+  <div class="sidebar-theme-control">
+    <span>Theme Toggle</span>
+    <button
+      class="theme-toggle"
+      type="button"
+      aria-label="Toggle theme"
+      onclick={() => theme.toggle()}
+    >
+      <span class="theme-toggle-slider"><i class="fa-solid fa-sun"></i></span>
+    </button>
+  </div>
+  <button class="logout" type="button" onclick={logout}>
+    <i class="fa-solid fa-right-from-bracket"></i>
+    <span>Logout</span>
+  </button>
+</aside>
+
+<main class="main-content" id="main">
+  <header class="header">
+    <div>
+      <p class="header-eyebrow">{eyebrow}</p>
+      <h1>{title}</h1>
+    </div>
+    {#if actions}<div class="header-tools">{@render actions()}</div>{/if}
+  </header>
+
+  {@render children()}
+</main>
+
+{#each $toast as t (t.id)}
+  <div class="toast show {t.type}" role="status" aria-live="polite">
+    <i class="fa-solid fa-{t.type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
+    {t.message}
+  </div>
+{/each}

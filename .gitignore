@@ -23,6 +23,9 @@ pids/
 # Coverage & Testing
 coverage/
 .nyc_output/
+playwright-report/
+test-results/
+.vite/
 
 # Build output
 dist/

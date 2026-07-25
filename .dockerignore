@@ -1,4 +1,9 @@
 node_modules
+dist/
+coverage/
+.vite/
+playwright-report/
+test-results/
 
 # Secrets and config — pass these at runtime via env vars / Docker secrets
 .env

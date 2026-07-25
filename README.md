@@ -32,24 +32,6 @@ cd nore-proxy
 cp .env.example .env
 ```
 
-Edit .env
-```
-# Server
-PORT=8741
-
-# Masterkey used for admin authentication (recommended 32 chars)
-MASTER_KEY=mypasswordissafe
-
-# Admin rate limiting (attempts per minute per IP)
-ADMIN_MAX_ATTEMPTS=100
-
-# Session lifetime in hours
-SESSION_TTL_HOURS=24
-
-# CORS origin restriction (leave empty or remove to allow all origins)
-CORS_ORIGIN=*
-```
-
 3. Install dependencies:
 ```bash
 npm install
@@ -82,39 +64,7 @@ cd nore-proxy
 cp .env.example .env
 ```
 
-Edit .env
-
-```
-# Server
-PORT=8741
-
-# Masterkey used for admin authentication (recommended 32 chars)
-MASTER_KEY=mypasswordissafe
-
-# Admin rate limiting (attempts per minute per IP)
-ADMIN_MAX_ATTEMPTS=100
-
-# Session lifetime in hours
-SESSION_TTL_HOURS=24
-
-# CORS origin restriction (leave empty or remove to allow all origins)
-CORS_ORIGIN=*
-
-# Leave DATABASE_URL unset to use the default SQLite files under ./logs.
-# Set it to any reachable external PostgreSQL server to use PostgreSQL instead.
-# DATABASE_URL=postgresql://nore_proxy:change-me@db.example.com:5432/nore_proxy
-
-LOG_DB_PATH=./logs/logs.db
-API_KEY_DB_PATH=./logs/api_keys.db
-KEY_STATE_DB_PATH=./logs/key_states.db
-SESSION_DB_PATH=./logs/sessions.db
-```
-
-3. Choose the database in `.env`:
-   - Leave `DATABASE_URL` unset or blank to use SQLite.
-   - Set `DATABASE_URL` to any PostgreSQL server that the container can reach to use PostgreSQL. The database may be hosted externally; it does not need to run in this Compose project.
-
-4. Deploy:
+3. Deploy:
 ```bash
 docker compose up -d --build
 ```
@@ -205,9 +155,11 @@ All admin endpoints require authentication.
 
 ### Tech Stack
 
-- Frontend: JavaScript
-- Backend: TypeScript + Node.js + Express (ESM, executed with `tsx`)
-- Storage: Better-SQLite3 by default, with opt-in PostgreSQL
+- **Frontend:** Svelte 5 + TypeScript, bundled with Vite
+- **Backend:** Node.js + Express + TypeScript (ESM, executed with `tsx`)
+- **Storage:** Better-SQLite3 by default, with optional PostgreSQL
+- **Testing:** Vitest for frontend unit tests and Node.js Test Runner for backend tests
+- **Deployment:** Multi-stage Docker build with compiled frontend assets
 
 ## License
 MIT License - see LICENSE file for details
