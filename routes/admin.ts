@@ -38,7 +38,7 @@ const router = express.Router();
 router.use(adminRateLimit);
 
 // POST /admin/login — validate master key and issue a session cookie
-router.post("/admin/login", (req: any, res: any) => {
+router.post("/admin/login", async (req: any, res: any) => {
   const provided = (req.body.masterKey || "").toString();
   const expected = Config.MASTER_KEY;
   let valid = false;
@@ -52,7 +52,7 @@ router.post("/admin/login", (req: any, res: any) => {
     return res.status(403).json({ error: "Invalid master key" });
   }
 
-  const sessionId = createSession();
+  const sessionId = await createSession();
   const isProduction = process.env.NODE_ENV === "production";
   res.cookie("adminSession", sessionId, {
     httpOnly: true,
@@ -65,9 +65,9 @@ router.post("/admin/login", (req: any, res: any) => {
 });
 
 // POST /admin/logout — delete the session and clear the cookie
-router.post("/admin/logout", (req: any, res: any) => {
+router.post("/admin/logout", async (req: any, res: any) => {
   const sessionId = req.cookies?.adminSession;
-  deleteSession(sessionId);
+  await deleteSession(sessionId);
   res.clearCookie("adminSession", { httpOnly: true, sameSite: "strict" });
   res.json({ success: true });
 });
@@ -264,15 +264,15 @@ function buildDashboardRanges(requests: any[], configuredKeys: Record<string, Dy
 }
 
 router.get("/api/logs", verifySession, async (req: any, res: any) => {
-  const allApiKeys = apiKeyManager.keys;
+  const allApiKeys = await apiKeyManager.getKeyMap();
   const dashboardData = [];
 
-  const allLogs = logManager.readRequestLogs(10000);
+  const allLogs = await logManager.readRequestLogs(10000);
   const currentTime = Date.now() / 1000;
   const dayAgo = currentTime - 86400;
 
   for (const apiKey of Object.keys(allApiKeys)) {
-    const stats = apiKeyManager.getUsageStats(apiKey);
+    const stats = await apiKeyManager.getUsageStats(apiKey);
 
     // Compute masked key used in logs for this API key
     const maskedKey = maskKey(apiKey);
@@ -281,7 +281,7 @@ router.get("/api/logs", verifySession, async (req: any, res: any) => {
     const { total_cost, daily_cost } = computeCostsFromLogs(keyLogs);
 
     dashboardData.push({
-      name: apiKeyManager.getKeyName(apiKey),
+      name: await apiKeyManager.getKeyName(apiKey),
       total_requests: stats.total_requests,
       daily_requests: stats.daily_requests || 0,
       total_input_tokens: stats.total_input_tokens || 0,
@@ -301,11 +301,11 @@ router.get("/api/logs", verifySession, async (req: any, res: any) => {
   dashboardData.sort((a: any, b: any) => b.daily_requests - a.daily_requests);
 
   // Get recent logs
-  const logs = logManager.readRequestLogs(100);
+  const logs = await logManager.readRequestLogs(100);
 
-  const formattedLogs = logs
+  const formattedLogs = (await Promise.all(logs
     .filter((log: any) => log.type === "request_end" && log.status === "success")
-    .map((log: any) => {
+    .map(async (log: any) => {
       const apiKey = log.api_key || "Unknown";
       const model = log.model || "Unknown";
       const costs = calculateCost(
@@ -321,7 +321,7 @@ router.get("/api/logs", verifySession, async (req: any, res: any) => {
         request_id: log.request_id || "",
         name:
           log.key_name ||
-          (apiKey !== "Unknown" ? apiKeyManager.getKeyName(apiKey) : "Unknown"),
+          (apiKey !== "Unknown" ? await apiKeyManager.getKeyName(apiKey) : "Unknown"),
         api_key: apiKey.length > 5 ? apiKey.substring(0, 5) + "..." : apiKey,
         model,
         input_tokens: log.input_tokens || 0,
@@ -334,7 +334,7 @@ router.get("/api/logs", verifySession, async (req: any, res: any) => {
         duration: log.duration || 0,
         cost: costs.totalCost,
       };
-    })
+    })))
     .sort((a: any, b: any) => b.timestamp - a.timestamp)
     .slice(0, 50);
 
@@ -389,7 +389,7 @@ router.get("/api/logs", verifySession, async (req: any, res: any) => {
   };
 
   const ranges = buildDashboardRanges(
-    logManager.getDashboardRequestLogs(),
+    await logManager.getDashboardRequestLogs(),
     allApiKeys,
   );
 
@@ -411,16 +411,16 @@ function parseRequestInteger(value: any, fallback: any, minimum: any, maximum: a
   return parsed;
 }
 
-router.get("/api/requests/filters", verifySession, (_req: any, res: any) => {
+router.get("/api/requests/filters", verifySession, async (_req: any, res: any) => {
   try {
-    return res.json(logManager.getRequestHistoryFilters());
+    return res.json(await logManager.getRequestHistoryFilters());
   } catch (error: any) {
     console.error("Error loading request filters:", error);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-router.get("/api/requests", verifySession, (req: any, res: any) => {
+router.get("/api/requests", verifySession, async (req: any, res: any) => {
   const limit = parseRequestInteger(req.query.limit, 50, 1, 50);
   const cursor = parseRequestInteger(
     req.query.cursor,
@@ -464,7 +464,7 @@ router.get("/api/requests", verifySession, (req: any, res: any) => {
   }
 
   try {
-    const result = logManager.getRequestHistory({
+    const result = await logManager.getRequestHistory({
       limit,
       cursor,
       apiKey: (req.query.apiKey as QueryValue)?.trim() || null,
@@ -506,7 +506,7 @@ router.get("/api/requests", verifySession, (req: any, res: any) => {
   }
 });
 
-router.get("/api/requests/:id", verifySession, (req: any, res: any) => {
+router.get("/api/requests/:id", verifySession, async (req: any, res: any) => {
   const id = parseRequestInteger(
     req.params.id,
     null,
@@ -518,7 +518,7 @@ router.get("/api/requests/:id", verifySession, (req: any, res: any) => {
   }
 
   try {
-    const request = logManager.getRequestHistoryById(id);
+    const request = await logManager.getRequestHistoryById(id);
     if (!request) {
       return res.status(404).json({ error: "Request not found" });
     }
@@ -552,7 +552,7 @@ router.get("/api/requests/:id", verifySession, (req: any, res: any) => {
       costSource = "current-pricing-estimate";
     }
 
-    const relatedError = logManager.getLatestErrorForRequestId(request.requestId);
+    const relatedError = await logManager.getLatestErrorForRequestId(request.requestId);
     return res.json({
       request: { ...request, billing, costSource, relatedError },
     });
@@ -563,7 +563,7 @@ router.get("/api/requests/:id", verifySession, (req: any, res: any) => {
 });
 
 // List stored upstream errors with exact-match filters and pagination.
-router.get("/api/errors", verifySession, (req: any, res: any) => {
+router.get("/api/errors", verifySession, async (req: any, res: any) => {
   try {
     const parseInteger = (value: any, fallback: any, minimum: any, maximum: any) => {
       if (value === undefined) return fallback;
@@ -610,8 +610,10 @@ router.get("/api/errors", verifySession, (req: any, res: any) => {
       key: (req.query.key as QueryValue)?.trim() || null,
       statusCode,
     };
-    const errors = logManager.getErrorLogs(filters);
-    const total = logManager.getErrorLogCount(filters);
+    const [errors, total] = await Promise.all([
+      logManager.getErrorLogs(filters),
+      logManager.getErrorLogCount(filters),
+    ]);
 
     return res.json({ errors, total, limit, offset });
   } catch (error: any) {
@@ -621,22 +623,22 @@ router.get("/api/errors", verifySession, (req: any, res: any) => {
 });
 
 // Filter values must be declared before /api/errors/:id.
-router.get("/api/errors/filters", verifySession, (_req: any, res: any) => {
+router.get("/api/errors/filters", verifySession, async (_req: any, res: any) => {
   try {
-    return res.json(logManager.getErrorLogFilters());
+    return res.json(await logManager.getErrorLogFilters());
   } catch (error: any) {
     console.error("Error loading error filters:", error);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-router.get("/api/errors/:id", verifySession, (req: any, res: any) => {
+router.get("/api/errors/:id", verifySession, async (req: any, res: any) => {
   if (!/^\d+$/.test(req.params.id) || Number(req.params.id) < 1) {
     return res.status(400).json({ error: "Invalid error ID" });
   }
 
   try {
-    const errorLog = logManager.getErrorLogById(req.params.id);
+    const errorLog = await logManager.getErrorLogById(req.params.id);
     if (!errorLog) {
       return res.status(404).json({ error: "Error log not found" });
     }
@@ -647,9 +649,9 @@ router.get("/api/errors/:id", verifySession, (req: any, res: any) => {
   }
 });
 
-router.delete("/api/errors", verifySession, (_req: any, res: any) => {
+router.delete("/api/errors", verifySession, async (_req: any, res: any) => {
   try {
-    const deleted = logManager.clearErrorLogs();
+    const deleted = await logManager.clearErrorLogs();
     return res.json({ success: true, deleted });
   } catch (error: any) {
     console.error("Error clearing stored errors:", error);
@@ -664,7 +666,7 @@ router.delete("/api/errors", verifySession, (_req: any, res: any) => {
 // Get all API keys
 router.get("/api/keys", verifySession, async (req: any, res: any) => {
   try {
-    const keys = apiKeyManager.getKeys();
+    const keys = await apiKeyManager.getKeys();
     res.json({ keys });
   } catch (error: any) {
     console.error("Error loading keys:", error);
@@ -688,11 +690,11 @@ router.post("/api/keys", verifySession, async (req: any, res: any) => {
       return res.status(400).json({ error: "API key and name are required" });
     }
 
-    if (apiKeyManager.keys[apiKey]) {
+    if (await apiKeyManager.validateKey(apiKey).then(() => true).catch(() => false)) {
       return res.status(400).json({ error: "API key already exists" });
     }
 
-    apiKeyManager.addKey(apiKey, name, rpd, rpm, max_context_size);
+    await apiKeyManager.addKey(apiKey, name, rpd, rpm, max_context_size);
     console.log(`Added new API key: ${name}`);
 
     res.json({ message: "API key added successfully" });
@@ -725,7 +727,7 @@ router.put("/api/keys", verifySession, async (req: any, res: any) => {
       return res.status(400).json({ error: "RPM is required" });
     }
 
-    apiKeyManager.updateKey(
+    await apiKeyManager.updateKey(
       apiKey,
       newName,
       rpd,
@@ -745,7 +747,7 @@ router.delete("/api/keys", verifySession, async (req: any, res: any) => {
   try {
     const apiKey = (req.body.api_key || "").trim();
 
-    apiKeyManager.removeKey(apiKey);
+    await apiKeyManager.removeKey(apiKey);
     console.log(`Deleted API key: ${apiKey}`);
 
     res.json({ message: "API key deleted successfully" });
@@ -941,7 +943,7 @@ router.put("/api/models", verifySession, async (req: any, res: any) => {
     data.models = candidateModels;
     fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2));
     try {
-      if (nameChanged) logManager.renameModel(oldName, name);
+      if (nameChanged) await logManager.renameModel(oldName, name);
     } catch (error: any) {
       fs.writeFileSync(modelsPath, originalContent);
       throw error;
@@ -1057,7 +1059,7 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
 
     // ignoreState selects the endpoint's first configured token without advancing
     // endpoint key rotation or consulting mutable key health state.
-    const endpointInfo = getEndpointForModel(name, { ignoreState: true });
+    const endpointInfo = await getEndpointForModel(name, { ignoreState: true });
     if (!endpointInfo) {
       return res.status(400).json({ ok: false, error: `No endpoint configured for model '${name}'` });
     }
@@ -1679,7 +1681,7 @@ function readEndpointTokens(version: any) {
 
 // GET /api/endpoints/:version/keys — per-key health + usage for the admin modal.
 // Returns masked/hashed data only, never raw tokens.
-router.get("/api/endpoints/:version/keys", verifySession, (req: any, res: any) => {
+router.get("/api/endpoints/:version/keys", verifySession, async (req: any, res: any) => {
   try {
     const version = req.params.version;
     if (!/^\d+$/.test(version)) {
@@ -1691,7 +1693,7 @@ router.get("/api/endpoints/:version/keys", verifySession, (req: any, res: any) =
       return res.status(404).json({ error: `Endpoint v${version} not found` });
     }
 
-    const keys = keyStateManager.getStatesForEndpoint(`v${version}`, tokens);
+    const keys = await keyStateManager.getStatesForEndpoint(`v${version}`, tokens);
     res.json({ keys });
   } catch (error: any) {
     console.error("Error loading key states:", error);
@@ -1701,7 +1703,7 @@ router.get("/api/endpoints/:version/keys", verifySession, (req: any, res: any) =
 
 // POST /api/endpoints/:version/keys/reset — re-enable a key (invalid/timeout →
 // active), or all keys when { all: true }. Body: { tokenHash } | { all: true }.
-router.post("/api/endpoints/:version/keys/reset", verifySession, (req: any, res: any) => {
+router.post("/api/endpoints/:version/keys/reset", verifySession, async (req: any, res: any) => {
   try {
     const version = req.params.version;
     if (!/^\d+$/.test(version)) {
@@ -1717,7 +1719,7 @@ router.post("/api/endpoints/:version/keys/reset", verifySession, (req: any, res:
       return res.status(400).json({ error: "tokenHash or all:true required" });
     }
 
-    const changes = keyStateManager.resetKey(`v${version}`, { tokenHash, all });
+    const changes = await keyStateManager.resetKey(`v${version}`, { tokenHash, all });
     res.json({ message: "Key state reset", changes });
   } catch (error: any) {
     console.error("Error resetting key state:", error);
@@ -1728,7 +1730,7 @@ router.post("/api/endpoints/:version/keys/reset", verifySession, (req: any, res:
 // POST /api/endpoints/:version/keys/disable — manually disable a key so it is
 // skipped during rotation until re-enabled. Body: { tokenHash }. The raw token
 // is resolved server-side from the tokenHash and never leaves the server.
-router.post("/api/endpoints/:version/keys/disable", verifySession, (req: any, res: any) => {
+router.post("/api/endpoints/:version/keys/disable", verifySession, async (req: any, res: any) => {
   try {
     const version = req.params.version;
     if (!/^\d+$/.test(version)) {
@@ -1753,7 +1755,7 @@ router.post("/api/endpoints/:version/keys/disable", verifySession, (req: any, re
       return res.status(404).json({ error: "Key not found for this endpoint" });
     }
 
-    keyStateManager.disableKey(endpointKey, token);
+    await keyStateManager.disableKey(endpointKey, token);
     res.json({ message: "Key disabled" });
   } catch (error: any) {
     console.error("Error disabling key:", error);
@@ -1763,7 +1765,7 @@ router.post("/api/endpoints/:version/keys/disable", verifySession, (req: any, re
 
 // POST /api/endpoints/:version/keys/reset-stats — zero request/failure counters
 // for a key, or all keys when { all: true }. Body: { tokenHash } | { all: true }.
-router.post("/api/endpoints/:version/keys/reset-stats", verifySession, (req: any, res: any) => {
+router.post("/api/endpoints/:version/keys/reset-stats", verifySession, async (req: any, res: any) => {
   try {
     const version = req.params.version;
     if (!/^\d+$/.test(version)) {
@@ -1779,7 +1781,7 @@ router.post("/api/endpoints/:version/keys/reset-stats", verifySession, (req: any
       return res.status(400).json({ error: "tokenHash or all:true required" });
     }
 
-    keyStateManager.resetStats(`v${version}`, { tokenHash, all });
+    await keyStateManager.resetStats(`v${version}`, { tokenHash, all });
     res.json({ message: "Key stats reset" });
   } catch (error: any) {
     console.error("Error resetting key stats:", error);
@@ -1888,9 +1890,9 @@ router.post("/api/reload", verifySession, async (req: any, res: any) => {
   // Config and model validation consume runtime settings, so refresh those first.
   settingsManager.reload();
   Config.reload();
-  apiKeyManager.loadKeys();
+  await apiKeyManager.loadKeys();
   loadModelsFromFile();
-  apiKeyManager.resetDaily();
+  await apiKeyManager.resetDaily();
 
   res.json({
     status: "success",
@@ -1905,11 +1907,11 @@ router.post("/api/reload", verifySession, async (req: any, res: any) => {
 // Get all users (API keys with usage stats)
 router.get("/api/users", verifySession, async (req: any, res: any) => {
   try {
-    const allApiKeys = apiKeyManager.keys;
+    const allApiKeys = await apiKeyManager.getKeyMap();
     const users = [];
 
     for (const apiKey of Object.keys(allApiKeys)) {
-      const stats = apiKeyManager.getUsageStats(apiKey);
+      const stats = await apiKeyManager.getUsageStats(apiKey);
       users.push({
         name: stats.name || "Unnamed",
         api_key: apiKey.length > 5 ? apiKey.substring(0, 5) + "..." : apiKey,
@@ -1944,12 +1946,12 @@ router.get("/api/users/:apiKey", verifySession, async (req: any, res: any) => {
     const fullApiKey = req.params.apiKey;
 
     // Validate that the key exists
-    if (!apiKeyManager.keys[fullApiKey]) {
+    if (!(await apiKeyManager.validateKey(fullApiKey).then(() => true).catch(() => false))) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const stats = apiKeyManager.getUsageStats(fullApiKey);
-    const logs = logManager.readRequestLogs(10000);
+    const stats = await apiKeyManager.getUsageStats(fullApiKey);
+    const logs = await logManager.readRequestLogs(10000);
 
     // Get masked key for log filtering
     const maskedKey =
@@ -2028,11 +2030,7 @@ router.get("/api/users/:apiKey", verifySession, async (req: any, res: any) => {
 // Get model usage statistics from database
 router.get("/api/model-usage", verifySession, async (req: any, res: any) => {
   try {
-    const rows = logManager.db
-      .prepare(
-        "SELECT data FROM request_logs WHERE type = 'request_end' AND model IS NOT NULL",
-      )
-      .all();
+    const rows = await logManager.getModelUsageRows();
     const modelsByName = new Map();
 
     for (const row of rows) {

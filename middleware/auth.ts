@@ -6,11 +6,11 @@ import { validateSession } from "../services/sessionManager.js";
  * Bearer-token auth for OpenAI-format endpoints (/v1/chat/completions).
  * Expects: Authorization: Bearer <token>
  */
-export function verifyApiKey(
+export async function verifyApiKey(
   req: Request,
   res: Response,
   next: NextFunction,
-): void | Response {
+): Promise<void | Response> {
   const authorization = req.headers.authorization;
 
   if (!authorization || !authorization.startsWith("Bearer ")) {
@@ -25,37 +25,46 @@ export function verifyApiKey(
   const apiKey = authorization.replace("Bearer ", "");
 
   try {
-    apiKeyManager.validateKey(apiKey);
+    await apiKeyManager.validateKey(apiKey);
     req.apiKey = apiKey;
     next();
   } catch (error: unknown) {
     const authError = error as { statusCode?: number; message?: string };
-    return res.status(authError.statusCode || 401).json({
+    if (!authError.statusCode) return next(error);
+    return res.status(authError.statusCode).json({
       error: { message: authError.message || "Invalid or missing API key" },
     });
   }
 }
 
-export function verifySession(
+export async function verifySession(
   req: Request,
   res: Response,
   next: NextFunction,
-): void | Response {
+): Promise<void | Response> {
   const sessionId = req.cookies?.adminSession;
-  if (!validateSession(sessionId)) {
-    return res.status(401).json({ error: "Unauthorized. Please log in." });
+  try {
+    if (!(await validateSession(sessionId))) {
+      return res.status(401).json({ error: "Unauthorized. Please log in." });
+    }
+    next();
+  } catch (error) {
+    next(error);
   }
-  next();
 }
 
-export function verifySessionOrRedirect(
+export async function verifySessionOrRedirect(
   req: Request,
   res: Response,
   next: NextFunction,
-): void | Response {
+): Promise<void | Response> {
   const sessionId = req.cookies?.adminSession;
-  if (!validateSession(sessionId)) {
-    return res.redirect("/admin/login");
+  try {
+    if (!(await validateSession(sessionId))) {
+      return res.redirect("/admin/login");
+    }
+    next();
+  } catch (error) {
+    next(error);
   }
-  next();
 }

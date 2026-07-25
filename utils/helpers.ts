@@ -345,7 +345,7 @@ function resolveRotationMode(endpointKeyRotation: any) {
  * @param {string} modelName
  * @param {{ excludeHashes?: Set<string> }} [opts]
  */
-export function getEndpointForConcreteModel(
+export async function getEndpointForConcreteModel(
   modelName: string,
   opts: ModelLoadOptions = {},
 ) {
@@ -368,7 +368,7 @@ export function getEndpointForConcreteModel(
     };
   }
 
-  const usable = keyStateManager.getUsableTokens(meta.endpointKey, allTokens, {
+  const usable = await keyStateManager.getUsableTokens(meta.endpointKey, allTokens, {
     excludeHashes,
   });
 
@@ -398,11 +398,11 @@ export function getEndpointMeta(modelName: any) {
   return getConcreteModelMeta(modelName);
 }
 
-export function getEndpointForModel(
+export async function getEndpointForModel(
   modelName: string,
   opts: ModelLoadOptions = {},
 ) {
-  return getEndpointForConcreteModel(modelName, opts);
+  return await getEndpointForConcreteModel(modelName, opts);
 }
 
 /**

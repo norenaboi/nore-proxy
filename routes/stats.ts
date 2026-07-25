@@ -14,9 +14,9 @@ export function setStartupTime(time: number): void {
 
 router.get("/api/summary", async (_req: Request, res: Response) => {
   const dayAgo = Date.now() / 1000 - 86400;
-  const allTime = logManager.getRequestAggregates();
-  const daily = logManager.getRequestAggregates({ from: dayAgo });
-  const allApiKeys = Object.keys(apiKeyManager.keys);
+  const allTime = await logManager.getRequestAggregates();
+  const daily = await logManager.getRequestAggregates({ from: dayAgo });
+  const allApiKeys = await apiKeyManager.getKeys();
 
   res.json({
     total_requests: allTime.total,
@@ -51,7 +51,7 @@ router.post(
     return res.status(400).json({ error: "API key required" });
   }
 
-  const stats = apiKeyManager.getUsageStats(apiKey);
+  const stats = await apiKeyManager.getUsageStats(apiKey);
 
   res.json({ usage: stats });
   },

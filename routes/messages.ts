@@ -270,7 +270,7 @@ async function executeMessagesRouting(requestId: string, requestedModel: string,
       const excluded = endpointKey
         ? attemptedKeyHashes(state, endpointKey)
         : new Set<string>();
-      const endpointInfo = getEndpointForConcreteModel(target, {
+      const endpointInfo = await getEndpointForConcreteModel(target, {
         excludeHashes: excluded,
       });
       if (!endpointInfo) {
@@ -295,7 +295,7 @@ async function executeMessagesRouting(requestId: string, requestedModel: string,
 
       if (endpointInfo.tokenExhausted || !endpointInfo.token) {
         lastError = withAttemptContext(
-          keyStateManager.buildExhaustionError(String(endpointKey)),
+          await keyStateManager.buildExhaustionError(String(endpointKey)),
           endpointInfo,
         );
         const decision = classifyUpstreamFailure({ keyExhausted: true });
@@ -350,7 +350,7 @@ async function executeMessagesRouting(requestId: string, requestedModel: string,
         });
         if (endpointInfo.tokenHash) tried.add(endpointInfo.tokenHash);
         if (endpointInfo.token && ACTIONABLE_CODES.has(Number(statusCode))) {
-          keyStateManager.recordFailure(
+          await keyStateManager.recordFailure(
             endpointKey,
             endpointInfo.token,
             Number(statusCode),
@@ -431,7 +431,7 @@ router.post("/v1/messages", verifyApiKey, async (req: any, res: any) => {
   const contextTokens = estimateTokens(openaiMessages);
 
   try {
-    apiKeyManager.checkForGeneration(apiKey, rateLimiter, contextTokens);
+    await apiKeyManager.checkForGeneration(apiKey, rateLimiter, contextTokens);
   } catch (error: any) {
     return res.status(error.statusCode || 500).json({
       type: "error",
@@ -454,7 +454,7 @@ router.post("/v1/messages", verifyApiKey, async (req: any, res: any) => {
     max_tokens: anthropicReq.max_tokens,
     streaming: isStreaming,
   };
-  (logRequestStart as any)(
+  await logRequestStart(
     requestId,
     modelName,
     requestParams,
@@ -479,7 +479,7 @@ router.post("/v1/messages", verifyApiKey, async (req: any, res: any) => {
   } catch (error: any) {
     const state = error.routingState || null;
     const context = error.attemptContext || {};
-    logRequestEnd(
+    await logRequestEnd(
       requestId,
       false,
       0,
@@ -498,7 +498,7 @@ router.post("/v1/messages", verifyApiKey, async (req: any, res: any) => {
     );
     const statusCode = statusOf(error) || 500;
     if (!error.clientAbort) {
-      persistUpstreamError({
+      await persistUpstreamError({
         requestId,
         modelName,
         endpointInfo: context.endpointInfo,
@@ -579,7 +579,7 @@ async function makeMessagesAttempt(
       : 1 + Math.max(0, parseInt(String(settingsManager.get("keyHopAttempts")), 10) || 0);
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      endpointInfo = endpointOverride || getEndpointForConcreteModel(modelName, { excludeHashes: triedHashes });
+      endpointInfo = endpointOverride || await getEndpointForConcreteModel(modelName, { excludeHashes: triedHashes });
       if (!endpointInfo) {
         const error = new Error("Can't find the model you're looking for.");
         error.name = "EndpointResolutionError";
@@ -587,7 +587,7 @@ async function makeMessagesAttempt(
         throw error;
       }
       if (endpointInfo.tokenExhausted || !endpointInfo.token) {
-        throw keyStateManager.buildExhaustionError(endpointInfo.endpointKey);
+        throw await keyStateManager.buildExhaustionError(endpointInfo.endpointKey);
       }
 
       const {
@@ -666,7 +666,7 @@ async function makeMessagesAttempt(
 
       responseStatus = resp.status;
       if (resp.status >= 200 && resp.status < 300) {
-        keyStateManager.recordSuccess(endpointKey, backendToken);
+        await keyStateManager.recordSuccess(endpointKey, backendToken);
         response = resp;
         upstreamResponseBody = resp.data;
         break;
@@ -681,7 +681,7 @@ async function makeMessagesAttempt(
     }
 
     if (!response) {
-      throw keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
+      throw await keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
     }
 
     const rawData = response.data;
@@ -732,7 +732,7 @@ async function makeMessagesAttempt(
       cacheReadTokens,
       inputIncludesCache: apiFormat !== "anthropic",
     });
-    logRequestEnd(
+    await logRequestEnd(
       requestId,
       true,
       billingTokens.inputTokens,
@@ -844,7 +844,7 @@ async function streamMessagesAttempt(
       : 1 + Math.max(0, parseInt(String(settingsManager.get("keyHopAttempts")), 10) || 0);
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      endpointInfo = endpointOverride || getEndpointForConcreteModel(modelName, { excludeHashes: triedHashes });
+      endpointInfo = endpointOverride || await getEndpointForConcreteModel(modelName, { excludeHashes: triedHashes });
       if (!endpointInfo) {
         const error = new Error("Can't find the model you're looking for.");
         error.name = "EndpointResolutionError";
@@ -852,7 +852,7 @@ async function streamMessagesAttempt(
         throw error;
       }
       if (endpointInfo.tokenExhausted || !endpointInfo.token) {
-        throw keyStateManager.buildExhaustionError(endpointInfo.endpointKey);
+        throw await keyStateManager.buildExhaustionError(endpointInfo.endpointKey);
       }
 
       const {
@@ -951,7 +951,7 @@ async function streamMessagesAttempt(
     }
 
     if (!response) {
-      throw keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
+      throw await keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
     }
 
     const consume = apiFormat === "anthropic"
@@ -971,7 +971,7 @@ async function streamMessagesAttempt(
     await streamPromise;
     setAttemptCancel(undefined);
     setActiveStream(null);
-    keyStateManager.recordSuccess(endpointInfo.endpointKey, endpointInfo.token);
+    await keyStateManager.recordSuccess(endpointInfo.endpointKey, endpointInfo.token);
     return { streamed: true };
   } catch (error: any) {
     if (isClientAborted()) error.clientAbort = true;
@@ -1062,6 +1062,10 @@ function streamAnthropicPassthrough(
     };
     const onEnd = () => {
       if (settled) return;
+      // An upstream stream may emit close immediately after end. Mark this
+      // request complete before an asynchronous log write can yield so that
+      // close is not mistaken for a failed stream.
+      settle();
       const billingTokens = normalizeBillingTokens({
         inputTokens: usage?.input_tokens ?? estimateTokens(openaiMessages),
         outputTokens: usage?.output_tokens ?? estimateTokens(accumulatedContent),
@@ -1069,9 +1073,15 @@ function streamAnthropicPassthrough(
         cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
         inputIncludesCache: false,
       });
-      logRequestEnd(requestId, true, billingTokens.inputTokens, billingTokens.outputTokens, null, accumulatedContent, apiKey, billingTokens.cacheWriteTokens, billingTokens.cacheReadTokens, String(billingTokens.tokenAccountingVersion), successfulRoutingMetadata(routingState, execution.endpointInfo, execution));
-      if (!res.writableEnded) res.end();
-      settle();
+      void (async () => {
+        try {
+          await logRequestEnd(requestId, true, billingTokens.inputTokens, billingTokens.outputTokens, null, accumulatedContent, apiKey, billingTokens.cacheWriteTokens, billingTokens.cacheReadTokens, String(billingTokens.tokenAccountingVersion), successfulRoutingMetadata(routingState, execution.endpointInfo, execution));
+        } catch (error) {
+          console.error("Failed to log completed message stream:", error);
+        } finally {
+          if (!res.writableEnded) res.end();
+        }
+      })();
     };
     const onError = (error: any) => settle(error);
     const onClose = () => {
@@ -1369,6 +1379,10 @@ function streamOpenAIToAnthropic(
 
   const onEnd = () => {
     if (settled) return;
+    // An upstream stream may emit close immediately after end. Mark this
+    // request complete before an asynchronous log write can yield so that
+    // close is not mistaken for a failed stream.
+    settle();
     const inputTokens = streamUsage?.prompt_tokens ?? estimateTokens(openaiMessages);
     const outputTokens = streamUsage?.completion_tokens ??
       (estimateTokens(accumulatedContent) + estimateTokens(accumulatedReasoning));
@@ -1384,24 +1398,29 @@ function streamOpenAIToAnthropic(
       inputIncludesCache: apiFormat !== "anthropic",
     });
 
-    logRequestEnd(
-      requestId,
-      true,
-      billingTokens.inputTokens,
-      billingTokens.outputTokens,
-      null,
-      accumulatedContent,
-      apiKey,
-      billingTokens.cacheWriteTokens,
-      billingTokens.cacheReadTokens,
-      String(billingTokens.tokenAccountingVersion),
-      successfulRoutingMetadata(routingState, execution.endpointInfo, execution),
-    );
-
-    if (!res.writableEnded) {
-      res.end();
-    }
-    settle();
+    void (async () => {
+      try {
+        await logRequestEnd(
+          requestId,
+          true,
+          billingTokens.inputTokens,
+          billingTokens.outputTokens,
+          null,
+          accumulatedContent,
+          apiKey,
+          billingTokens.cacheWriteTokens,
+          billingTokens.cacheReadTokens,
+          String(billingTokens.tokenAccountingVersion),
+          successfulRoutingMetadata(routingState, execution.endpointInfo, execution),
+        );
+      } catch (error) {
+        console.error("Failed to log completed message stream:", error);
+      } finally {
+        if (!res.writableEnded) {
+          res.end();
+        }
+      }
+    })();
   };
   const onError = (error: any) => settle(error);
   const onClose = () => {

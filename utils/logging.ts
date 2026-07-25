@@ -30,7 +30,7 @@ export function calculateCost(model: any, inputTokens: any, outputTokens: any, c
   );
 }
 
-export function logRequestStart(requestId: any, model: any, params: any, messages = [], apiKey = null, requestContext = null, ) {
+export async function logRequestStart(requestId: any, model: any, params: any, messages: any[] = [], apiKey: string | null = null, requestContext: Record<string, unknown> | null = null) {
   const requestInfo = {
     id: requestId,
     model,
@@ -55,10 +55,10 @@ export function logRequestStart(requestId: any, model: any, params: any, message
     ...getSafeKeyMetadata(apiKey),
   };
 
-  logManager.writeRequestLog(logEntry);
+  await logManager.writeRequestLog(logEntry);
 }
 
-export function logRequestEnd(
+export async function logRequestEnd(
   requestId: string,
   success: boolean,
   inputTokens: number = 0,
@@ -186,15 +186,15 @@ export function logRequestEnd(
     billing,
     ...allowedRoutingMetadata,
     error,
-    key_name: apiKeyManager.getKeyName(typeof resolvedKey === "string" ? resolvedKey : ""),
+    key_name: await apiKeyManager.getKeyName(typeof resolvedKey === "string" ? resolvedKey : ""),
     ...getSafeKeyMetadata(typeof resolvedKey === "string" ? resolvedKey : null),
   };
-  logManager.writeRequestLog(logEntry);
+  await logManager.writeRequestLog(logEntry);
 
   realtimeStats.activeRequests.delete(requestId);
 }
 
-export function logError(
+export async function logError(
   requestId: string,
   errorType: string,
   errorMessage: string,

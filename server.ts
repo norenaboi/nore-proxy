@@ -7,6 +7,9 @@ import Config from "./config/index.js";
 import settingsManager from "./services/settingsManager.js";
 import { loadModelsFromFile, MODEL_REGISTRY } from "./utils/helpers.js";
 import apiKeyManager from "./services/apiKeyManager.js";
+import keyStateManager from "./services/keyStateManager.js";
+import logManager from "./services/logManager.js";
+import { closeSessionManager, cleanupExpiredSessions, initializeSessionManager } from "./services/sessionManager.js";
 import realtimeStats from "./services/realtimeStats.js";
 
 // Import routes
@@ -93,6 +96,12 @@ const backgroundTasks = new Set<NodeJS.Timeout>();
 
 // Initialize
 async function initialize(): Promise<void> {
+  // Run all persistence migrations before accepting traffic.
+  await initializeSessionManager();
+  await apiKeyManager.initialize();
+  await keyStateManager.initialize();
+  await logManager.initialize();
+
   // Load endpoints from environment
   Config.loadEndpoints();
 
@@ -112,10 +121,18 @@ function startBackgroundTasks(): void {
     if (SHUTTING_DOWN) return;
 
     // Check if we need to reset (new day)
-    apiKeyManager.resetDaily();
+    void apiKeyManager.resetDaily().catch((error) => console.error("Error resetting API key usage:", error));
   }, 3600000); // Check every hour
 
   backgroundTasks.add(dailyResetTask);
+
+  const sessionCleanupTask = setInterval(() => {
+    if (SHUTTING_DOWN) return;
+    void cleanupExpiredSessions().catch((error) =>
+      console.error("Error cleaning expired sessions:", error),
+    );
+  }, 60 * 60 * 1000);
+  backgroundTasks.add(sessionCleanupTask);
 
   // Cleanup task
   const cleanupTask = setInterval(() => {
@@ -181,10 +198,24 @@ function gracefulShutdown(signal: string): void {
 
   stopBackgroundTasks();
 
-  server.close(() => {
-    console.log("HTTP server closed.");
+  const closePersistence = async (): Promise<void> => {
+    await Promise.allSettled([
+      apiKeyManager.close(),
+      keyStateManager.close(),
+      logManager.close(),
+      closeSessionManager(),
+    ]);
     process.exit(0);
-  });
+  };
+
+  if (server) {
+    server.close(async () => {
+      console.log("HTTP server closed.");
+      await closePersistence();
+    });
+  } else {
+    void closePersistence();
+  }
 
   // Force close after 10 seconds
   setTimeout(() => {
@@ -198,10 +229,12 @@ function gracefulShutdown(signal: string): void {
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
-// Start server
-const server: Server = app.listen(Config.PORT, async () => {
-  await initialize();
+let server: Server | undefined;
 
+// Start only after persistence initialization and migrations complete.
+async function startServer(): Promise<void> {
+  await initialize();
+  server = app.listen(Config.PORT, () => {
   const datetime = new Date().toISOString().replace("T", " ").slice(0, 19);
 
   console.log("\n" + "=".repeat(60));
@@ -221,6 +254,20 @@ const server: Server = app.listen(Config.PORT, async () => {
   console.log("=".repeat(60));
   console.log("=".repeat(60));
   console.log(" ".repeat(60));
+  });
+}
+
+void startServer().catch(async (error) => {
+  console.error("Failed to initialize persistence:", error);
+  SHUTTING_DOWN = true;
+  stopBackgroundTasks();
+  await Promise.allSettled([
+    apiKeyManager.close(),
+    keyStateManager.close(),
+    logManager.close(),
+    closeSessionManager(),
+  ]);
+  process.exitCode = 1;
 });
 
 export default app;

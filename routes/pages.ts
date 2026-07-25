@@ -76,8 +76,8 @@ router.get("/admin", (req: any, res: any) => {
   res.redirect("/admin/login");
 });
 
-router.get("/admin/login", (req: any, res: any) => {
-  if (validateSession(req.cookies?.adminSession)) {
+router.get("/admin/login", async (req: any, res: any) => {
+  if (await validateSession(req.cookies?.adminSession)) {
     return res.redirect("/admin/dashboard");
   }
   serveAdmin(res, "login.html");

@@ -99,13 +99,29 @@ SESSION_TTL_HOURS=24
 
 # CORS origin restriction (leave empty or remove to allow all origins)
 CORS_ORIGIN=*
+
+# Leave DATABASE_URL unset to use the default SQLite files under ./logs.
+# Set it to any reachable external PostgreSQL server to use PostgreSQL instead.
+# DATABASE_URL=postgresql://nore_proxy:change-me@db.example.com:5432/nore_proxy
+
+LOG_DB_PATH=./logs/logs.db
+API_KEY_DB_PATH=./logs/api_keys.db
+KEY_STATE_DB_PATH=./logs/key_states.db
+SESSION_DB_PATH=./logs/sessions.db
 ```
 
-3. Deploy on Docker Compose:
+3. Choose the database in `.env`:
+   - Leave `DATABASE_URL` unset or blank to use SQLite.
+   - Set `DATABASE_URL` to any PostgreSQL server that the container can reach to use PostgreSQL. The database may be hosted externally; it does not need to run in this Compose project.
+
+4. Deploy:
 ```bash
-docker compose build
-docker compose up -d
+docker compose up -d --build
 ```
+
+When PostgreSQL is selected, nore-proxy connects to the configured server and runs its schema migrations before accepting traffic. Ensure the database exists and that the configured user can create and alter tables and indexes.
+
+Compose uses bridge networking. Services running directly on the Docker host must use `host.docker.internal` instead of `localhost` in `DATABASE_URL` or `endpoints.json` (for example, `postgresql://user:password@host.docker.internal:5432/nore_proxy`). Internet-hosted database names work normally.
 
 ## Configuration
 
@@ -118,6 +134,11 @@ Environment variables configure server-level behavior that cannot be changed at 
 | `ADMIN_MAX_ATTEMPTS` | Admin login attempts per minute per IP | 100 |
 | `SESSION_TTL_HOURS` | Admin session lifetime | 24 |
 | `CORS_ORIGIN` | Allowed CORS origin(s) | `*` |
+| `DATABASE_URL` | Optional PostgreSQL URL. Only `postgres://` or `postgresql://` selects PostgreSQL; blank/unset uses SQLite. | unset |
+| `LOG_DB_PATH` | SQLite request/error log and analytics database | `./logs/logs.db` |
+| `API_KEY_DB_PATH` | SQLite client API-key database | `./logs/api_keys.db` |
+| `KEY_STATE_DB_PATH` | SQLite upstream key-state database | `./logs/key_states.db` |
+| `SESSION_DB_PATH` | SQLite admin-session database | `./logs/sessions.db` |
 
 ### Runtime settings
 
@@ -186,7 +207,7 @@ All admin endpoints require authentication.
 
 - Frontend: JavaScript
 - Backend: TypeScript + Node.js + Express (ESM, executed with `tsx`)
-- Storage: Better-SQLite3
+- Storage: Better-SQLite3 by default, with opt-in PostgreSQL
 
 ## License
 MIT License - see LICENSE file for details

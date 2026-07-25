@@ -3,12 +3,21 @@ services:
     build: .
     container_name: nore-proxy
     restart: always
-    network_mode: "host"
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./endpoints.json:/app/endpoints.json
       - ./models.json:/app/models.json
       - ./settings.json:/app/settings.json
       - ./logs:/app/logs
-      - ./.env:/app/.env
     ports:
       - "8741:8741"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - nore-proxy-network
+
+networks:
+  nore-proxy-network:
+    driver: bridge

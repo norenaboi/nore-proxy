@@ -108,9 +108,9 @@ function prepareAttempt(baseRequest: any, endpoint: any, requestId: any, isStrea
   return { adapter, data, headers, fullUrl, requestUrl };
 }
 
-function recordKeyFailure(endpoint: any, status: any) {
+async function recordKeyFailure(endpoint: any, status: any) {
   if (!endpoint?.token || !ACTIONABLE_CODES.has(Number(status))) return;
-  keyStateManager.recordFailure(endpoint.endpointKey, endpoint.token, Number(status), { sideline: resolveKeyHealth(endpoint.keyHealth) });
+  await keyStateManager.recordFailure(endpoint.endpointKey, endpoint.token, Number(status), { sideline: resolveKeyHealth(endpoint.keyHealth) });
 }
 
 function noteAttempt(state: any, endpoint: any, keyAttempt: any, outcome: any, decision: any, statusCode: any) {
@@ -162,7 +162,7 @@ async function executeRouting(requestId: string, requestedModel: string, runAtte
     let endpointKey = null;
     for (let keyAttempt = 1; keyAttempt <= maxKeyAttempts; keyAttempt++) {
       const excluded: Set<string> = endpointKey ? attemptedKeyHashes(state, endpointKey) ?? new Set<string>() : new Set<string>();
-      const endpoint = getEndpointForConcreteModel(target, { excludeHashes: excluded });
+      const endpoint = await getEndpointForConcreteModel(target, { excludeHashes: excluded });
       if (!endpoint) {
         const error = new Error("Can't find the model you're looking for.");
         error.name = "EndpointResolutionError";
@@ -172,7 +172,7 @@ async function executeRouting(requestId: string, requestedModel: string, runAtte
       endpointKey = endpoint.endpointKey;
       const tried = attemptedKeyHashes(state, endpointKey) ?? new Set<string>();
       if (endpoint.tokenExhausted || !endpoint.token) {
-        lastError = withContext(keyStateManager.buildExhaustionError(String(endpointKey)), endpoint);
+        lastError = withContext(await keyStateManager.buildExhaustionError(String(endpointKey)), endpoint);
         const decision = classifyUpstreamFailure({ keyExhausted: true });
         noteAttempt(state, endpoint, keyAttempt, "key_exhausted", decision, 404);
         fallback = true;
@@ -194,7 +194,7 @@ async function executeRouting(requestId: string, requestedModel: string, runAtte
         const status = statusOf(error);
         const decision = classifyUpstreamFailure({ statusCode: status, error, streamOutputStarted: state.streamOutputStarted });
         noteAttempt(state, endpoint, keyAttempt, "failure", decision, status);
-        recordKeyFailure(endpoint, status);
+        await recordKeyFailure(endpoint, status);
         if (endpoint.tokenHash) tried.add(endpoint.tokenHash);
         if (decision.retryKey && keyAttempt < maxKeyAttempts) continue;
         fallback = decision.fallbackTarget;
@@ -217,14 +217,14 @@ async function executeRouting(requestId: string, requestedModel: string, runAtte
 router.post("/v1/chat/completions", verifyApiKey, async (req: any, res: any) => {
   const apiKey = req.apiKey;
   const baseRequest = clone(req.body);
-  try { apiKeyManager.checkForGeneration(apiKey, rateLimiter, estimateTokens(baseRequest.messages || [])); }
+  try { await apiKeyManager.checkForGeneration(apiKey, rateLimiter, estimateTokens(baseRequest.messages || [])); }
   catch (error: any) { return res.status(error.statusCode || 500).json({ error: { message: error.message } }); }
 
   const requestId = uuidv4();
   const modelName = baseRequest.model;
   const streaming = baseRequest.stream === true;
   if (!MODEL_REGISTRY[modelName]) return res.status(404).json({ error: `Model '${modelName}' not found.` });
-  (logRequestStart as any)(
+  await logRequestStart(
     requestId,
     modelName,
     { temperature: baseRequest.temperature, max_tokens: baseRequest.max_tokens, streaming },
@@ -244,7 +244,7 @@ router.post("/v1/chat/completions", verifyApiKey, async (req: any, res: any) => 
   } catch (error: any) {
     const state = error.routingState || null;
     const c = error.attemptContext || {};
-    logRequestEnd(
+    await logRequestEnd(
       requestId,
       false,
       0,
@@ -262,7 +262,7 @@ router.post("/v1/chat/completions", verifyApiKey, async (req: any, res: any) => 
       }),
     );
     if (!error.clientAbort) {
-      persistUpstreamError({ requestId, modelName, endpointInfo: c.endpointInfo, requestHeaders: c.requestHeaders, upstreamUrl: c.upstreamUrl, error, statusCode: statusOf(error), responseBody: c.responseBody, autoModel: state?.autoModel, targetModel: state?.currentTargetModel, routingAttempts: summarizeRoutingAttempts(state) });
+      await persistUpstreamError({ requestId, modelName, endpointInfo: c.endpointInfo, requestHeaders: c.requestHeaders, upstreamUrl: c.upstreamUrl, error, statusCode: statusOf(error), responseBody: c.responseBody, autoModel: state?.autoModel, targetModel: state?.currentTargetModel, routingAttempts: summarizeRoutingAttempts(state) });
       console.error(
         `API [ID: ${requestId}]: ${error?.name || "Error"}: ${error?.message || String(error)}`,
       );
@@ -315,7 +315,7 @@ async function streamFromBackend(req: Request, res: Response, requestId: string,
     try {
       const result = await consumeStream(response.data, res, state, prepared.adapter, streamCtx, requestId, () => clientAborted);
       activeStream = null;
-      keyStateManager.recordSuccess(endpoint.endpointKey, endpoint.token);
+      await keyStateManager.recordSuccess(endpoint.endpointKey, endpoint.token);
       return {
         ...result,
         endpoint,
@@ -329,7 +329,7 @@ async function streamFromBackend(req: Request, res: Response, requestId: string,
       throw withContext(error, endpoint, prepared, error.responseBody);
     }
     });
-    logStreamSuccess(requestId, routed, baseRequest, routed.endpoint, apiKey, routed.routingState);
+    await logStreamSuccess(requestId, routed, baseRequest, routed.endpoint, apiKey, routed.routingState);
     return routed;
   } finally {
     req.off("aborted", abortClient);
@@ -382,9 +382,9 @@ function billing(usage: any, input: any, output: any, endpoint: any) {
   return normalizeBillingTokens({ inputTokens: usage?.prompt_tokens ?? input, outputTokens: usage?.completion_tokens ?? output, cacheWriteTokens: usage?.prompt_tokens_details?.cache_creation_input_tokens ?? usage?.prompt_tokens_details?.cache_write_tokens ?? 0, cacheReadTokens: usage?.prompt_tokens_details?.cached_tokens ?? usage?.prompt_tokens_details?.cache_read_tokens ?? 0, inputIncludesCache: endpoint.apiFormat !== "anthropic" });
 }
 
-function logStreamSuccess(requestId: any, result: any, request: any, endpoint: any, apiKey: any, state: any) {
+async function logStreamSuccess(requestId: any, result: any, request: any, endpoint: any, apiKey: any, state: any) {
   const b = billing(result.usage, estimateTokens(request), estimateTokens(result.content) + estimateTokens(result.reasoning), endpoint);
-  logRequestEnd(
+  await logRequestEnd(
     requestId,
     true,
     b.inputTokens,
@@ -410,7 +410,7 @@ async function makeBackendRequest(requestId: string, baseRequest: DynamicRecord,
     try { response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, timeout: 180000, validateStatus: () => true }); }
     catch (error: any) { throw withContext(error, endpoint, prepared); }
     if (response.status < 200 || response.status >= 300) throw withContext(httpError(response.status, response.data), endpoint, prepared, response.data);
-    keyStateManager.recordSuccess(endpoint.endpointKey, endpoint.token);
+    await keyStateManager.recordSuccess(endpoint.endpointKey, endpoint.token);
     return {
       parsed: prepared.adapter.parseResponseData(response.data),
       endpoint,
@@ -419,7 +419,7 @@ async function makeBackendRequest(requestId: string, baseRequest: DynamicRecord,
     };
   });
   const b = billing(result.parsed.usage || {}, estimateTokens(baseRequest), estimateTokens(result.parsed.content), result.endpoint);
-  logRequestEnd(
+  await logRequestEnd(
     requestId,
     true,
     b.inputTokens,

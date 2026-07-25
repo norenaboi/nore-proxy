@@ -2,6 +2,7 @@ import path from "path";
 import { createRequire } from "module";
 const Database: any = createRequire(import.meta.url)("better-sqlite3");
 import Config from "../config/index.js";
+import { DatabaseFacade } from "./database.js";
 import { calculateCost } from "../utils/logging.js";
 import fs from "fs";
 
@@ -313,18 +314,32 @@ function firstPresent(row: Record<string, any>, legacyData: Record<string, any>,
 
 export class LogManager {
   [key: string]: any;
+  private readonly dbPath: string;
+  private db: any;
+
   constructor(
     dbPath =
-      process.env.NORE_PROXY_LOG_DB_PATH ||
+      process.env.LOG_DB_PATH ||
       path.join(Config.LOG_DIR, "logs.db"),
   ) {
-    if (dbPath !== ":memory:") {
-      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    }
+    this.dbPath = dbPath;
+  }
 
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.initializeSchema();
+  async initialize(): Promise<void> {
+    if (this.db) return;
+    if (this.dbPath !== ":memory:") {
+      fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
+    }
+    const database = new Database(this.dbPath);
+    try {
+      database.pragma("journal_mode = WAL");
+      this.db = database;
+      this.initializeSchema();
+    } catch (error) {
+      this.db = undefined;
+      if (database.open) database.close();
+      throw error;
+    }
   }
 
   initializeSchema() {
@@ -1024,6 +1039,12 @@ export class LogManager {
     return rows.map((row: { data: string }) => JSON.parse(row.data));
   }
 
+  async getModelUsageRows(): Promise<Array<{ data: string }>> {
+    return this.db.prepare(
+      "SELECT data FROM request_logs WHERE type = 'request_end' AND model IS NOT NULL",
+    ).all();
+  }
+
   getRequestTotals() {
     const totals = this.aggregateRequests();
     return { total: totals.total, successful: totals.successful };
@@ -1290,9 +1311,308 @@ export class LogManager {
   }
 
   close() {
-    if (this.db?.open) this.db.close();
+    const database = this.db;
+    this.db = undefined;
+    if (database?.open) database.close();
   }
 }
 
-const logManager = new LogManager();
+class PostgresLogManager {
+  private database: DatabaseFacade | null = null;
+
+  private get db(): DatabaseFacade {
+    if (!this.database) throw new Error("Log manager is not initialized");
+    return this.database;
+  }
+
+  async initialize(): Promise<void> {
+    if (this.database) return;
+    const database = new DatabaseFacade("logs.db");
+    this.database = database;
+    try {
+      await database.exec(`
+      CREATE TABLE IF NOT EXISTS request_logs (
+        id BIGSERIAL PRIMARY KEY, timestamp TEXT, type TEXT, model TEXT, data JSONB,
+        projection_version INTEGER NOT NULL DEFAULT 0, occurred_at DOUBLE PRECISION,
+        request_id TEXT, request_model TEXT, status TEXT, api_key_id TEXT, key_name TEXT,
+        api_key_masked TEXT, legacy_key INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER,
+        output_tokens INTEGER, cache_write_tokens INTEGER, cache_read_tokens INTEGER,
+        token_accounting_version TEXT, duration DOUBLE PRECISION, endpoint_key TEXT, endpoint_name TEXT,
+        recorded_cost_input DOUBLE PRECISION, recorded_cost_output DOUBLE PRECISION,
+        recorded_cost_cache_write DOUBLE PRECISION, recorded_cost_cache_read DOUBLE PRECISION,
+        recorded_cost_total DOUBLE PRECISION, recorded_cost_mask INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS error_logs (
+        id BIGSERIAL PRIMARY KEY, timestamp TEXT NOT NULL, request_id TEXT, model TEXT,
+        upstream_model TEXT, endpoint_key TEXT, endpoint_name TEXT, api_format TEXT,
+        status_code INTEGER, error_type TEXT, error_code TEXT, error_message TEXT,
+        request_params TEXT, request_headers TEXT, upstream_url TEXT, response_body TEXT,
+        stack_trace TEXT, masked_api_key TEXT, auto_model TEXT, target_model TEXT, routing_attempts TEXT
+      );
+    `);
+      await this.migrateSchema();
+    } catch (error) {
+      this.database = null;
+      await database.close();
+      throw error;
+    }
+  }
+
+  private async migrateSchema() {
+    const columns: Record<string, Record<string, string>> = {
+      request_logs: {
+        timestamp: "TEXT", type: "TEXT", model: "TEXT", data: "JSONB",
+        projection_version: "INTEGER NOT NULL DEFAULT 0", occurred_at: "DOUBLE PRECISION", request_id: "TEXT", request_model: "TEXT", status: "TEXT", api_key_id: "TEXT", key_name: "TEXT", api_key_masked: "TEXT", legacy_key: "INTEGER NOT NULL DEFAULT 0", input_tokens: "INTEGER", output_tokens: "INTEGER", cache_write_tokens: "INTEGER", cache_read_tokens: "INTEGER", token_accounting_version: "TEXT", duration: "DOUBLE PRECISION", endpoint_key: "TEXT", endpoint_name: "TEXT", recorded_cost_input: "DOUBLE PRECISION", recorded_cost_output: "DOUBLE PRECISION", recorded_cost_cache_write: "DOUBLE PRECISION", recorded_cost_cache_read: "DOUBLE PRECISION", recorded_cost_total: "DOUBLE PRECISION", recorded_cost_mask: "INTEGER NOT NULL DEFAULT 0",
+      },
+      error_logs: {
+        timestamp: "TEXT", request_id: "TEXT", model: "TEXT", upstream_model: "TEXT", endpoint_key: "TEXT", endpoint_name: "TEXT", api_format: "TEXT", status_code: "INTEGER", error_type: "TEXT", error_code: "TEXT", error_message: "TEXT", request_params: "TEXT", request_headers: "TEXT", upstream_url: "TEXT", response_body: "TEXT", stack_trace: "TEXT", masked_api_key: "TEXT", auto_model: "TEXT", target_model: "TEXT", routing_attempts: "TEXT",
+      },
+    };
+
+    for (const [table, expected] of Object.entries(columns)) {
+      const found = await this.db.all<{ column_name: string }>(
+        "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?",
+        [table],
+      );
+      const existing = new Set(found.map((column) => column.column_name));
+      for (const [column, definition] of Object.entries(expected)) {
+        if (!existing.has(column)) {
+          await this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+        }
+      }
+    }
+
+    await this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_request_end_occurred ON request_logs(type, occurred_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_request_end_model_time ON request_logs(type, request_model, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_request_end_key_time ON request_logs(type, api_key_id, api_key_masked, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_request_end_status_time ON request_logs(type, status, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_error_logs_timestamp ON error_logs(timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_error_logs_model ON error_logs(model);
+      CREATE INDEX IF NOT EXISTS idx_error_logs_endpoint_name ON error_logs(endpoint_name);
+      CREATE INDEX IF NOT EXISTS idx_error_logs_status_code ON error_logs(status_code);
+    `);
+  }
+
+  private requestProjectionValues(logEntry: any) {
+    const normalized = normalizeRequestRow({ data: serializeJson(logEntry), model: logEntry.model });
+    return {
+      projection_version: 2, occurred_at: normalized.timestamp, request_id: normalized.requestId,
+      request_model: normalized.model === "Unknown" ? null : normalized.model,
+      status: normalized.status === "unknown" ? null : normalized.status, api_key_id: normalized.apiKeyId,
+      key_name: normalized.name === "Unknown" ? null : normalized.name,
+      api_key_masked: normalized.apiKey === "Unknown" ? null : normalized.apiKey,
+      legacy_key: normalized.legacyKey ? 1 : 0, input_tokens: normalized.inputTokens,
+      output_tokens: normalized.outputTokens, cache_write_tokens: normalized.cacheWriteTokens,
+      cache_read_tokens: normalized.cacheReadTokens, token_accounting_version: normalized.tokenAccountingVersion,
+      duration: normalized.duration, endpoint_key: normalized.endpointKey, endpoint_name: normalized.endpointName,
+      recorded_cost_input: normalized.recordedCosts?.input ?? null,
+      recorded_cost_output: normalized.recordedCosts?.output ?? null,
+      recorded_cost_cache_write: normalized.recordedCosts?.cacheWrite ?? null,
+      recorded_cost_cache_read: normalized.recordedCosts?.cacheRead ?? null,
+      recorded_cost_total: normalized.recordedCosts?.total ?? null, recorded_cost_mask: normalized.recordedCostMask,
+    };
+  }
+
+  async writeRequestLog(logEntry: any) {
+    const timestamp = logEntry.timestamp || new Date().toISOString();
+    const projection = logEntry.type === "request_end"
+      ? this.requestProjectionValues({ ...logEntry, timestamp }) : null;
+    const p = projection ?? { projection_version: 0, occurred_at: null, request_id: null, request_model: null,
+      status: null, api_key_id: null, key_name: null, api_key_masked: null, legacy_key: 0, input_tokens: null,
+      output_tokens: null, cache_write_tokens: null, cache_read_tokens: null, token_accounting_version: null,
+      duration: null, endpoint_key: null, endpoint_name: null, recorded_cost_input: null, recorded_cost_output: null,
+      recorded_cost_cache_write: null, recorded_cost_cache_read: null, recorded_cost_total: null, recorded_cost_mask: 0 };
+    return this.db.transaction(async (tx) => {
+      const row = await tx.get<{ id: number }>(`INSERT INTO request_logs (
+        timestamp,type,model,data,projection_version,occurred_at,request_id,request_model,status,api_key_id,key_name,
+        api_key_masked,legacy_key,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,token_accounting_version,
+        duration,endpoint_key,endpoint_name,recorded_cost_input,recorded_cost_output,recorded_cost_cache_write,
+        recorded_cost_cache_read,recorded_cost_total,recorded_cost_mask
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, [
+        timestamp, logEntry.type, logEntry.model ?? null, serializeJson(logEntry), p.projection_version, p.occurred_at,
+        p.request_id, p.request_model, p.status, p.api_key_id, p.key_name, p.api_key_masked, p.legacy_key,
+        p.input_tokens, p.output_tokens, p.cache_write_tokens, p.cache_read_tokens, p.token_accounting_version,
+        p.duration, p.endpoint_key, p.endpoint_name, p.recorded_cost_input, p.recorded_cost_output,
+        p.recorded_cost_cache_write, p.recorded_cost_cache_read, p.recorded_cost_total, p.recorded_cost_mask,
+      ]);
+      return Number(row?.id);
+    });
+  }
+
+  async writeErrorLog(logEntry: any) {
+    const status = Number(logEntry.statusCode ?? logEntry.status_code);
+    const row = await this.db.get<{ id: number }>(`INSERT INTO error_logs (
+      timestamp,request_id,model,upstream_model,endpoint_key,endpoint_name,api_format,status_code,error_type,error_code,
+      error_message,request_headers,request_params,upstream_url,response_body,stack_trace,masked_api_key,auto_model,target_model,routing_attempts
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, [
+      normalizeTimestamp(logEntry.timestamp), logEntry.requestId ?? logEntry.request_id ?? null, logEntry.model ?? null,
+      logEntry.upstreamModel ?? logEntry.upstream_model ?? null, logEntry.endpointKey ?? logEntry.endpoint_key ?? null,
+      logEntry.endpointName ?? logEntry.endpoint_name ?? null, logEntry.apiFormat ?? logEntry.api_format ?? null,
+      Number.isInteger(status) ? status : null, logEntry.errorType ?? logEntry.error_type ?? null,
+      logEntry.errorCode ?? logEntry.error_code ?? null, logEntry.errorMessage ?? logEntry.error_message ?? null,
+      truncateText(serializeJson(logEntry.requestHeaders ?? logEntry.request_headers), 8192),
+      truncateText(serializeJson(logEntry.requestParams ?? logEntry.request_params), 8192), logEntry.upstreamUrl ?? logEntry.upstream_url ?? null,
+      truncateText(serializeJson(logEntry.responseBody ?? logEntry.response_body), 8192), truncateText(logEntry.stackTrace ?? logEntry.stack_trace ?? null, 4096),
+      logEntry.maskedApiKey ?? logEntry.masked_api_key ?? null, logEntry.autoModel ?? logEntry.auto_model ?? null,
+      logEntry.targetModel ?? logEntry.target_model ?? null, serializeRoutingAttempts(logEntry.routingAttempts ?? logEntry.routing_attempts),
+    ]);
+    return Number(row?.id);
+  }
+
+  private async requestRows(filters: any = {}, limit?: number) {
+    const clauses = ["type = 'request_end'", "projection_version >= 2"];
+    const values: unknown[] = [];
+    const add = (sql: string, value: unknown) => { values.push(value); clauses.push(sql.replace("?", `$${values.length}`)); };
+    if (filters.cursor) add("id < ?", filters.cursor);
+    if (filters.model) add("request_model = ?", filters.model);
+    if (filters.apiKey) { values.push(filters.apiKey, filters.legacyMask ?? filters.apiKeyMask ?? ""); clauses.push(`(api_key_id = $${values.length - 1} OR (legacy_key = 1 AND api_key_masked = $${values.length}))`); }
+    if (filters.status) add("status = ?", filters.status);
+    if (filters.endpoint) add("endpoint_name = ?", filters.endpoint);
+    if (filters.from != null) add("occurred_at >= ?", filters.from);
+    if (filters.to != null) add("occurred_at <= ?", filters.to);
+    let sql = `SELECT * FROM request_logs WHERE ${clauses.join(" AND ")} ORDER BY id DESC`;
+    if (limit != null) { values.push(limit); sql += ` LIMIT $${values.length}`; }
+    return this.db.all(sql.replace(/\$\$(\d+)/g, "$$1"), values);
+  }
+
+  async readRequestLogs(limit = 100, offset = 0, model: string | null = null) {
+    const rows = await this.db.all(`SELECT data FROM request_logs WHERE type = ?${model ? " AND model = ?" : ""} ORDER BY id DESC LIMIT ? OFFSET ?`, model ? ["request_end", model, limit, offset] : ["request_end", limit, offset]);
+    return rows.map((r: any) => parseJson(r.data));
+  }
+  async getModelUsageRows(): Promise<Array<{ data: string }>> { return this.db.all("SELECT data FROM request_logs WHERE type = 'request_end' AND model IS NOT NULL") as any; }
+  async getDashboardRequestLogs() { return (await this.requestRows()).map(normalizeRequestRow); }
+  async getRequestHistory(filters: any = {}) { const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 50); const rows = await this.requestRows(filters, limit + 1); const visible = rows.slice(0, limit).map(normalizeRequestRow); return { requests: visible, hasMore: rows.length > limit, nextCursor: rows.length > limit && visible.length ? visible.at(-1)?.id : null }; }
+  async getRequestHistoryById(id: unknown) { return normalizeRequestDetail(await this.db.get("SELECT * FROM request_logs WHERE id = ? AND type = 'request_end'", [id])); }
+  async getRequestHistoryFilters() { const models = await this.db.all("SELECT DISTINCT request_model AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND request_model IS NOT NULL AND request_model != '' ORDER BY value"); const apiKeys = await this.db.all("SELECT api_key_id, api_key_masked, key_name FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND api_key_id IS NOT NULL GROUP BY api_key_id, api_key_masked, key_name ORDER BY key_name, api_key_masked"); return { models: models.map((r: any) => r.value), apiKeys: apiKeys.map((r: any) => ({ value: r.api_key_id, label: r.key_name ? `${r.key_name} · ${r.api_key_masked}` : r.api_key_masked })), statuses: ["success", "failed"] }; }
+
+  async getRequestAggregates(filters: any = {}) { const rows = await this.requestRows(filters); return this.aggregate(rows); }
+  async getRequestRangeAggregates(ranges: any[] = []) { return Promise.all(ranges.map(async (range) => ({ ...range, ...await this.getRequestAggregates(range) }))); }
+  private aggregate(rows: any[]) {
+    const successful = rows.filter((row: any) => row.status === "success");
+    const durations = rows.filter((row: any) => nonNegativeNumber(row.duration) > 0);
+    const sum = (field: string, source = rows) => source.reduce(
+      (total: number, row: any) => total + nonNegativeNumber(row[field]),
+      0,
+    );
+    return {
+      total: rows.length,
+      successful: successful.length,
+      failed: rows.filter((row: any) => row.status === "failed").length,
+      inputTokens: sum("input_tokens"),
+      outputTokens: sum("output_tokens"),
+      cacheWriteTokens: sum("cache_write_tokens"),
+      cacheReadTokens: sum("cache_read_tokens"),
+      avgDuration: durations.length ? sum("duration", durations) / durations.length : 0,
+      recordedCosts: {
+        input: sum("recorded_cost_input", successful),
+        output: sum("recorded_cost_output", successful),
+        cacheWrite: sum("recorded_cost_cache_write", successful),
+        cacheRead: sum("recorded_cost_cache_read", successful),
+        total: sum("recorded_cost_total", successful),
+        count: successful.filter((row: any) => row.recorded_cost_total != null).length,
+      },
+    };
+  }
+  async getRequestTotals() { const total = await this.getRequestAggregates(); return { total: total.total, successful: total.successful }; }
+  async getBulkApiKeyAggregates(filters: any = {}) { return this.getGroupedAggregates(filters, "key"); }
+  async getBulkModelAggregates(filters: any = {}) { return this.getGroupedAggregates(filters, "model"); }
+  async getApiKeyAggregates(filters: any = {}) { return this.getBulkApiKeyAggregates(filters); }
+  async getModelAggregates(filters: any = {}) { return this.getBulkModelAggregates(filters); }
+  async getBulkDashboardAggregates(ranges: any[] = []) { return Promise.all(ranges.map(async range => ({ ...range, total: await this.getGroupedAggregates(range), keys: await this.getGroupedAggregates(range, "key") }))); }
+  private async getGroupedAggregates(filters: any, group: "key" | "model" = "model") {
+    const rows = await this.requestRows(filters); const groups = new Map<string, any[]>();
+    for (const row of rows) { const key = group === "key" ? `${row.api_key_id}|${row.api_key_masked}|${row.request_model}|${row.token_accounting_version}|${row.recorded_cost_mask}` : `${row.request_model}|${row.token_accounting_version}|${row.recorded_cost_mask}`; groups.set(key, [...(groups.get(key) ?? []), row]); }
+    return [...groups.values()].map(rows => {
+      const first: any = rows[0]; const successful = rows.filter(r => r.status === "success");
+      const sum = (field: string, source = successful) => source.reduce((n, r) => n + nonNegativeNumber(r[field]), 0);
+      const unrecorded = successful.filter(r => r.recorded_cost_total == null);
+      return { ...(group === "key" ? { apiKeyId: first.api_key_id || null, apiKeyMask: first.api_key_masked || null, legacyKey: Number(first.legacy_key) || 0 } : {}),
+        model: first.request_model, tokenAccountingVersion: first.token_accounting_version, recordedCostMask: Number(first.recorded_cost_mask) || 0, ...this.aggregate(rows),
+        successInputTokens: sum("input_tokens"), successOutputTokens: sum("output_tokens"), successCacheWriteTokens: sum("cache_write_tokens"), successCacheReadTokens: sum("cache_read_tokens"),
+        fallbackInputTokens: sum("input_tokens", unrecorded), fallbackOutputTokens: sum("output_tokens", unrecorded), fallbackCacheWriteTokens: sum("cache_write_tokens", unrecorded), fallbackCacheReadTokens: sum("cache_read_tokens", unrecorded),
+        recordedCostInput: sum("recorded_cost_input"), recordedCostOutput: sum("recorded_cost_output"), recordedCostCacheWrite: sum("recorded_cost_cache_write"), recordedCostCacheRead: sum("recorded_cost_cache_read"), recordedCostTotal: sum("recorded_cost_total"), recordedCostCount: successful.filter(r => r.recorded_cost_total != null).length,
+      };
+    });
+  }
+  getCostForGroups(groups: any[]) {
+    return groups.reduce((costs, group) => {
+      const calculated = calculateCost(group.model || "Unknown", group.successInputTokens, group.successOutputTokens, group.successCacheWriteTokens, group.successCacheReadTokens, group.tokenAccountingVersion || null);
+      costs.input += group.recordedCostMask & RECORDED_COST_BITS.input ? group.recordedCostInput : calculated.inputCost;
+      costs.output += group.recordedCostMask & RECORDED_COST_BITS.output ? group.recordedCostOutput : calculated.outputCost;
+      costs.cacheWrite += group.recordedCostMask & RECORDED_COST_BITS.cacheWrite ? group.recordedCostCacheWrite : calculated.cacheWriteCost;
+      costs.cacheRead += group.recordedCostMask & RECORDED_COST_BITS.cacheRead ? group.recordedCostCacheRead : calculated.cacheReadCost;
+      costs.total += group.recordedCostMask & RECORDED_COST_BITS.total ? group.recordedCostTotal : calculated.totalCost;
+      return costs;
+    }, { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, total: 0 });
+  }
+  async getCostBreakdown(filters: any = {}) { const rows = await this.requestRows({ ...filters, status: "success" }); const groups = await this.getGroupedAggregates({ ...filters, status: "success" }); return groups.map((g: any) => ({ model: g.model || "Unknown", tokenAccountingVersion: g.tokenAccountingVersion || null, inputTokens: g.successInputTokens, outputTokens: g.successOutputTokens, cacheWriteTokens: g.successCacheWriteTokens, cacheReadTokens: g.successCacheReadTokens })); }
+
+  private errorWhere(filters: any = {}) { const clauses: string[] = []; const params: unknown[] = []; for (const [field, column] of [["model", "model"], ["endpoint", "endpoint_name"], ["key", "masked_api_key"]] as const) if (filters[field]) { params.push(filters[field]); clauses.push(`${column} = $${params.length}`); } if (filters.statusCode != null && filters.statusCode !== "" && Number.isInteger(Number(filters.statusCode))) { params.push(Number(filters.statusCode)); clauses.push(`status_code = $${params.length}`); } return { clause: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "", params }; }
+  async getErrorLogs(filters: any = {}) { const { clause, params } = this.errorWhere(filters); const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 200); const offset = Math.max(Number(filters.offset) || 0, 0); const rows = await this.db.all(`SELECT id,timestamp,request_id,model,upstream_model,endpoint_key,endpoint_name,api_format,status_code,error_type,error_code,error_message,auto_model,target_model,routing_attempts FROM error_logs${clause} ORDER BY timestamp DESC,id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`, [...params, limit, offset]); return rows.map(mapErrorRow); }
+  async getErrorLogCount(filters: any = {}) { const { clause, params } = this.errorWhere(filters); return Number((await this.db.get<{ count: number }>(`SELECT COUNT(*)::int AS count FROM error_logs${clause}`, params))?.count || 0); }
+  async getErrorLogFilters() { const values = async (c: string) => (await this.db.all(`SELECT DISTINCT ${c} AS value FROM error_logs WHERE ${c} IS NOT NULL AND ${c} != '' ORDER BY ${c}`)).map((r: any) => r.value); return { models: await values("model"), endpoints: await values("endpoint_name"), statuses: await values("status_code"), keys: await values("masked_api_key") }; }
+  async getErrorLogById(id: unknown) { const n = Number(id); return Number.isInteger(n) && n > 0 ? mapErrorRow(await this.db.get("SELECT * FROM error_logs WHERE id = ?", [n])) : null; }
+  async getLatestErrorForRequestId(requestId: string | null | undefined) { if (!requestId) return null; const row: any = await this.db.get("SELECT id,timestamp,status_code,error_type,error_code,error_message FROM error_logs WHERE request_id = ? ORDER BY id DESC LIMIT 1", [requestId]); return row ? { id: row.id, timestamp: row.timestamp, statusCode: row.status_code, errorType: row.error_type, errorCode: row.error_code, errorMessage: row.error_message } : null; }
+  async clearErrorLogs() { return (await this.db.run("DELETE FROM error_logs")).changes; }
+  async readErrorLogs(limit = 50) { return this.getErrorLogs({ limit }); }
+  async renameModel(oldName: string, newName: string) { return this.db.transaction(async tx => { const requestLogs = await tx.run("UPDATE request_logs SET model = ?, request_model = CASE WHEN request_model = ? THEN ? ELSE request_model END, data = jsonb_set(jsonb_set(jsonb_set(jsonb_set(data, '{model}', CASE WHEN data->>'model' = ? THEN to_jsonb(?::text) ELSE data->'model' END), '{requested_model}', CASE WHEN data->>'requested_model' = ? THEN to_jsonb(?::text) ELSE data->'requested_model' END), '{auto_model}', CASE WHEN data->>'auto_model' = ? THEN to_jsonb(?::text) ELSE data->'auto_model' END), '{target_model}', CASE WHEN data->>'target_model' = ? THEN to_jsonb(?::text) ELSE data->'target_model' END) WHERE model = ? OR request_model = ? OR data->>'model' = ? OR data->>'requested_model' = ? OR data->>'auto_model' = ? OR data->>'target_model' = ?", [newName, oldName, newName, oldName, newName, oldName, newName, oldName, newName, oldName, newName, oldName, oldName, oldName, oldName, oldName, oldName]); const errorLogs = await tx.run("UPDATE error_logs SET model = CASE WHEN model = ? THEN ? ELSE model END, auto_model = CASE WHEN auto_model = ? THEN ? ELSE auto_model END, target_model = CASE WHEN target_model = ? THEN ? ELSE target_model END WHERE model = ? OR auto_model = ? OR target_model = ?", [oldName, newName, oldName, newName, oldName, newName, oldName, oldName, oldName]); return { requestLogs: requestLogs.changes, requestData: requestLogs.changes, rollups: 0, errorLogs: errorLogs.changes }; }); }
+  async close() {
+    const database = this.database;
+    this.database = null;
+    if (database) await database.close();
+  }
+}
+
+class DeferredLogManager {
+  private manager: LogManager | PostgresLogManager | undefined;
+  private initialized: Promise<void> | null = null;
+
+  private getManager(): LogManager | PostgresLogManager {
+    if (!this.manager) throw new Error("Log manager has not been initialized");
+    return this.manager;
+  }
+
+  async initialize(): Promise<void> {
+    if (this.initialized) return this.initialized;
+
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    const manager = databaseUrl && /^postgres(?:ql)?:\/\//i.test(databaseUrl)
+      ? new PostgresLogManager()
+      : new LogManager();
+    this.manager = manager;
+    this.initialized = (async () => {
+      try {
+        await manager.initialize();
+      } catch (error) {
+        if (this.manager === manager) this.manager = undefined;
+        this.initialized = null;
+        await manager.close();
+        throw error;
+      }
+    })();
+    return this.initialized;
+  }
+
+  async close(): Promise<void> {
+    const manager = this.manager;
+    this.manager = undefined;
+    this.initialized = null;
+    await manager?.close();
+  }
+
+  bindOperationalMethod(property: string | symbol): unknown {
+    const value = (this.getManager() as any)[property];
+    return typeof value === "function" ? value.bind(this.manager) : value;
+  }
+}
+
+const deferredLogManager = new DeferredLogManager();
+const logManager: any = new Proxy(deferredLogManager, {
+  get(target, property) {
+    if (property === "initialize") return target.initialize.bind(target);
+    if (property === "close") return target.close.bind(target);
+    return target.bindOperationalMethod(property);
+  },
+});
 export default logManager;

@@ -1,66 +1,79 @@
-import crypto from 'crypto';
-import { createRequire } from "module";
-const Database: any = createRequire(import.meta.url)("better-sqlite3");
-import fs from 'fs';
-import path from 'path';
-import Config from '../config/index.js';
+import crypto from "node:crypto";
+import { DatabaseFacade } from "./database.js";
 
-const SESSION_TTL = parseInt(process.env.SESSION_TTL_HOURS || '24', 10) * 60 * 60 * 1000;
+const SESSION_TTL = parseInt(process.env.SESSION_TTL_HOURS || "24", 10) * 60 * 60 * 1000;
+let db: DatabaseFacade | undefined;
+let initialized: Promise<void> | null = null;
 
-// Persistent session store — survives restarts and crashes.
-// better-sqlite3 is synchronous, so the exported API stays sync-compatible
-// with all existing callers (routes/admin.js, routes/pages.js, middleware/auth.js).
-const dbPath = process.env.NORE_PROXY_SESSION_DB_PATH || path.join(Config.LOG_DIR, 'sessions.db');
-if (dbPath !== ':memory:') {
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+function getDb(): DatabaseFacade {
+  if (!db) throw new Error("Session manager has not been initialized");
+  return db;
 }
 
-const db = new Database(dbPath);
-db.pragma('journal_mode = WAL');
-db.exec(`
-  CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    expires_at INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
-`);
+export async function initializeSessionManager(): Promise<void> {
+  if (initialized) return initialized;
 
-const stmtInsert = db.prepare('INSERT INTO sessions (id, expires_at) VALUES (?, ?)');
-const stmtGet = db.prepare('SELECT expires_at FROM sessions WHERE id = ?');
-const stmtDelete = db.prepare('DELETE FROM sessions WHERE id = ?');
-interface SessionRow {
-  expires_at: number;
+  const database = new DatabaseFacade("sessions.db");
+  db = database;
+  initialized = (async () => {
+    try {
+      await database.exec(`CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        expires_at BIGINT NOT NULL
+      )`);
+      await database.exec("CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)");
+      await database.run("DELETE FROM sessions WHERE expires_at <= ?", [Date.now()]);
+    } catch (error) {
+      if (db === database) db = undefined;
+      initialized = null;
+      await database.close();
+      throw error;
+    }
+  })();
+  return initialized;
 }
 
-const stmtDeleteExpired = db.prepare('DELETE FROM sessions WHERE expires_at <= ?');
+async function ready(): Promise<void> {
+  if (!initialized) throw new Error("Session manager has not been initialized");
+  await initialized;
+}
 
-// Purge sessions that expired while the server was down.
-stmtDeleteExpired.run(Date.now());
+export async function cleanupExpiredSessions(): Promise<void> {
+  await ready();
+  await getDb().run("DELETE FROM sessions WHERE expires_at <= ?", [Date.now()]);
+}
 
-export function createSession() {
-  const sessionId = crypto.randomBytes(32).toString('hex');
-  stmtInsert.run(sessionId, Date.now() + SESSION_TTL);
+export async function createSession(): Promise<string> {
+  await ready();
+  const sessionId = crypto.randomBytes(32).toString("hex");
+  await getDb().run("INSERT INTO sessions (id, expires_at) VALUES (?, ?)", [sessionId, Date.now() + SESSION_TTL]);
   return sessionId;
 }
 
-export function validateSession(sessionId: string | null | undefined): boolean {
+export async function validateSession(sessionId: string | null | undefined): Promise<boolean> {
   if (!sessionId) return false;
-  const session = stmtGet.get(sessionId) as SessionRow | undefined;
+  await ready();
+  const session = await getDb().get<{ expires_at: number }>("SELECT expires_at FROM sessions WHERE id = ?", [sessionId]);
   if (!session) return false;
-  if (Date.now() > session.expires_at) {
-    stmtDelete.run(sessionId);
+  if (Date.now() > Number(session.expires_at)) {
+    await getDb().run("DELETE FROM sessions WHERE id = ?", [sessionId]);
     return false;
   }
   return true;
 }
 
-export function deleteSession(sessionId: string | null | undefined): void {
-  if (sessionId) stmtDelete.run(sessionId);
+export async function deleteSession(sessionId: string | null | undefined): Promise<void> {
+  if (sessionId) {
+    await ready();
+    await getDb().run("DELETE FROM sessions WHERE id = ?", [sessionId]);
+  }
 }
 
-// Periodically remove expired sessions (every hour).
-setInterval(() => {
-  stmtDeleteExpired.run(Date.now());
-}, 60 * 60 * 1000).unref();
+export async function closeSessionManager(): Promise<void> {
+  const database = db;
+  db = undefined;
+  initialized = null;
+  await database?.close();
+}
 
-export default { createSession, validateSession, deleteSession };
+export default { createSession, validateSession, deleteSession, initializeSessionManager, cleanupExpiredSessions, closeSessionManager };
