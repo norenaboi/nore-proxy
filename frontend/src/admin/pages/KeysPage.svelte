@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { fade, scale } from "svelte/transition";
   import { requestAdminJson } from "$frontend/lib/api/admin";
+  import { motionDuration } from "$frontend/lib/motion";
   import { toast } from "$frontend/lib/stores";
 
   interface Key {
@@ -169,8 +171,8 @@
 </section>
 
 {#if deletingKey}
-  <div class="modal-backdrop active" onclick={(e) => { if (e.target === e.currentTarget) deletingKey = null; }} role="presentation">
-    <div class="modal delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+  <div class="modal-backdrop active" transition:fade={{ duration: motionDuration(300) }} onclick={(e) => { if (e.target === e.currentTarget) deletingKey = null; }} role="presentation">
+    <div class="modal delete-modal" transition:scale={{ duration: motionDuration(300), start: 0.9 }} role="dialog" aria-modal="true" aria-labelledby="delete-title">
       <div class="modal-header"><h2 id="delete-title">Delete API Key</h2><button class="modal-close" type="button" onclick={() => deletingKey = null}>✕</button></div>
       <div class="modal-body"><p>Are you sure you want to delete <strong>{deletingKey.name}</strong>? This action cannot be undone.</p></div>
       <div class="modal-footer"><button class="btn btn-secondary" type="button" onclick={() => deletingKey = null}>Cancel</button><button class="btn btn-danger" type="button" onclick={deleteKey}>Delete Key</button></div>

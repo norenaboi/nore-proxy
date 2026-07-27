@@ -15,6 +15,8 @@
   }
 
   let s = $state<Settings | null>(null);
+  let loading = $state(true);
+  let loadError = $state("");
   let saving = $state(false);
 
   async function load() {
@@ -22,7 +24,10 @@
       const d = await requestAdminJson<{ settings: Settings }>("/api/settings");
       s = d.settings;
     } catch (e) {
-      toast.show(e instanceof Error ? e.message : "Failed to load settings", "error");
+      loadError = e instanceof Error ? e.message : "Failed to load settings";
+      toast.show(loadError, "error");
+    } finally {
+      loading = false;
     }
   }
 
@@ -58,9 +63,23 @@
   onMount(load);
 </script>
 
-{#if !s}
-  <div class="loading"><div class="loading-spinner"></div><span>Loading settings…</span></div>
-{:else}
+{#if loading}
+  <div class="settings-skeleton" aria-hidden="true">
+    {#each [3, 3, 6] as rows}
+      <section class="settings-card skeleton-card">
+        <div class="card-header"><span class="skeleton-block skeleton-icon"></span><span class="skeleton-block skeleton-title"></span><span class="skeleton-block skeleton-subtitle"></span></div>
+        <div class="card-body">
+          {#each Array(rows) as _}
+            <div class="setting-row skeleton-row"><div class="skeleton-copy"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-description"></span></div><span class="skeleton-block skeleton-control"></span></div>
+          {/each}
+        </div>
+      </section>
+    {/each}
+  </div>
+  <span class="sr-only" role="status">Loading settings…</span>
+{:else if loadError}
+  <div class="page-error" role="alert">{loadError}</div>
+{:else if s}
   <div class="settings-stack">
     <section class="settings-card">
       <div class="card-header"><i class="fa-solid fa-key"></i><h2>Keys</h2><span class="card-subtitle">Default per-key limits</span></div>
@@ -144,15 +163,15 @@
     </section>
 
     <div class="save-row">
-      <button class="btn btn-primary" type="button" onclick={save} disabled={saving}>
-        <i class="fa-solid fa-floppy-disk"></i> {saving ? "Saving…" : "Save Changes"}
+      <button class="btn btn-primary" type="button" onclick={save} disabled={saving} aria-busy={saving}>
+        {#if saving}<span class="button-spinner" aria-hidden="true"></span> Saving…{:else}<i class="fa-solid fa-floppy-disk"></i> Save Changes{/if}
       </button>
     </div>
   </div>
 {/if}
 
 <style>
-  .settings-stack { display: flex; flex-direction: column; gap: 18px; }
+  .settings-stack, .settings-skeleton { display: flex; flex-direction: column; gap: 18px; }
   .settings-card { overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); box-shadow: none; }
   .card-header { display: flex; align-items: center; gap: 12px; padding: 20px 24px; border-bottom: 1px solid var(--border-color); }
   .card-header i { color: var(--primary-dark); font-size: 18px; }
@@ -167,9 +186,19 @@
   .setting-control { display: flex; align-items: center; flex-shrink: 0; }
   .select-control { min-width: 220px; }
   .form-select { width: 100%; min-height: 42px; padding: 10px 36px 10px 14px; border: 1px solid var(--input-border); border-radius: 8px; background-color: var(--input-bg); color: var(--text-primary); }
-  .number-input { width: 100px; padding: 9px 12px; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); text-align: center; }
+  .number-input { width: 100px; padding: 9px 12px; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); text-align: center; transition: opacity .2s ease; }
   .number-input:disabled { opacity: .4; cursor: not-allowed; }
   .toggle-control { gap: 12px; }
   .save-row { display: flex; justify-content: flex-end; padding: 6px 0; }
+  .skeleton-card { pointer-events: none; }
+  .skeleton-icon { width: 18px; height: 18px; }
+  .skeleton-title { width: 96px; height: 20px; }
+  .skeleton-subtitle { width: 150px; height: 14px; margin-left: auto; }
+  .skeleton-row { width: 100%; }
+  .skeleton-copy { display: flex; flex: 1; flex-direction: column; gap: 8px; }
+  .skeleton-label { width: min(210px, 60%); height: 16px; }
+  .skeleton-description { width: min(480px, 90%); height: 12px; }
+  .skeleton-control { width: 100px; height: 42px; flex-shrink: 0; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
   @media (max-width: 768px) { .setting-row { flex-direction: column; gap: 12px; } .setting-control, .select-control { width: 100%; } .toggle-control { justify-content: flex-end; } .card-header, .card-body { padding-left: 18px; padding-right: 18px; } .card-subtitle { font-size: 11px; } }
 </style>

@@ -21,6 +21,12 @@
     if (sortCol === "model") return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
     return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
   }));
+  const maxTotalTokens = $derived(Math.max(0, ...data.map((row) => row.total_tokens)));
+
+  function usagePercent(totalTokens: number) {
+    if (maxTotalTokens <= 0) return 0;
+    return Math.min(100, Math.max(0, totalTokens / maxTotalTokens * 100));
+  }
 
   function sort(col: SortCol) {
     if (sortCol === col) sortDir = sortDir === "asc" ? "desc" : "asc";
@@ -63,7 +69,14 @@
                 <td><span class="metric-value tokens">{formatNumber(row.input_tokens)}</span></td>
                 <td><span class="metric-value tokens">{formatNumber(row.output_tokens)}</span></td>
                 <td title="Write: {formatNumber(row.cache_write_tokens)}, Read: {formatNumber(row.cache_read_tokens)}"><span class="metric-value tokens">{formatNumber(row.cache_tokens)}</span></td>
-                <td><span class="metric-value tokens">{formatNumber(row.total_tokens)}</span></td>
+                <td>
+                  <div class="total-usage">
+                    <span class="metric-value tokens">{formatNumber(row.total_tokens)}</span>
+                    <div class="usage-bar" role="progressbar" aria-label={`${row.model} relative token usage`} aria-valuemin="0" aria-valuemax={maxTotalTokens} aria-valuenow={row.total_tokens}>
+                      <div class="usage-bar-fill" style:width={`${usagePercent(row.total_tokens)}%`}></div>
+                    </div>
+                  </div>
+                </td>
                 <td><span class="metric-value">${row.cost.toFixed(2)}</span></td>
                 <td><span class="metric-value errors">{row.errors.toLocaleString()}</span></td>
               </tr>
@@ -90,6 +103,7 @@
   .rank-badge.top-1 { background: linear-gradient(135deg, #ffd700, #ffed4e); color: #000; } .rank-badge.top-2 { background: linear-gradient(135deg, #c0c0c0, #e8e8e8); color: #000; } .rank-badge.top-3 { background: linear-gradient(135deg, #cd7f32, #e8a87c); color: #000; } .rank-badge.other { background: var(--bg-secondary); color: var(--text-secondary); }
   .model-name { color: var(--text-primary); font-size: 14px; font-weight: 600; }
   .metric-value { font: 600 14px monospace; font-variant-numeric: tabular-nums; } .metric-value.requests { color: var(--primary); } .metric-value.tokens { color: var(--success); } .metric-value.errors { color: var(--danger); }
+  .total-usage { display: grid; min-width: 110px; gap: 6px; }
   .empty-state { padding: 48px 24px; }
   @media (max-width: 768px) { th, td { padding: 12px 16px; } }
 </style>

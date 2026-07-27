@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
+  import { fade, scale } from "svelte/transition";
   import { requestAdminJson, naturalSort } from "$frontend/lib/api/admin";
+  import { motionDuration } from "$frontend/lib/motion";
   import { pageHeaderActions, toast } from "$frontend/lib/stores";
+  import { numericInputValue, type NumericInputValue } from "$frontend/admin/modelForm";
 
   interface Pricing { input?: number; output?: number; cache_write?: number; cache_read?: number; }
-  type NumericInputValue = string | number | undefined;
   interface PricingForm {
     input: NumericInputValue;
     output: NumericInputValue;
@@ -18,6 +20,11 @@
   }
   interface Endpoint { index: number; name?: string; }
   interface TestResult { ok: boolean; latency_ms?: number; error?: string; }
+  type GroupKind = "auto" | "endpoint" | "unknown";
+  type ModelStateFilter = "all" | "enabled" | "disabled";
+  type VisibilityFilter = "all" | "public" | "hidden";
+  type ModelTypeFilter = "all" | "concrete" | "auto";
+  type SortField = "name" | "status";
 
   let models = $state<Model[]>([]);
   let endpoints = $state<Record<string, Endpoint>>({});
@@ -25,11 +32,32 @@
   let errorMsg = $state("");
   const testResults = new Map<string, TestResult>();
   let testVersion = $state(0); // bump to re-render after test map mutation
+  let testingModels = $state<Set<string>>(new Set());
+  let togglingDisabled = $state<Set<string>>(new Set());
+  let togglingVisibility = $state<Set<string>>(new Set());
+
+  // Search, filters, disclosures, and row actions
+  let query = $state("");
+  let filtersOpen = $state(false);
+  let endpointFilter = $state("all");
+  let typeFilter = $state<ModelTypeFilter>("all");
+  let stateFilter = $state<ModelStateFilter>("all");
+  let visibilityFilter = $state<VisibilityFilter>("all");
+  let sortField = $state<SortField>("name");
+  let sortDirection = $state<"asc" | "desc">("asc");
+  let expandedGroups = $state<Record<string, boolean>>({});
+  let openActions = $state<string | null>(null);
+  const actionTriggers = new Map<string, HTMLButtonElement>();
 
   // Modal state
   let modalOpen = $state(false);
   let editingModel = $state<string | null>(null);
   let deletingModel = $state<string | null>(null);
+  let submitting = $state(false);
+  let deleting = $state(false);
+  let deleteDialog = $state<HTMLDivElement | null>(null);
+  let deleteCancelButton = $state<HTMLButtonElement | null>(null);
+  let deleteReturnFocus = $state<HTMLButtonElement | null>(null);
 
   // Form
   let fName = $state("");
@@ -68,23 +96,164 @@
     }
   }
 
-  const grouped = $derived.by(() => {
-    const groups = new Map<string, Model[]>();
-    for (const m of models) {
-      const key = isAuto(m) ? "__auto__" : (m.version || "__none__");
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(m);
+  const activeCriteria = $derived(Boolean(query.trim()) || endpointFilter !== "all" || typeFilter !== "all" || stateFilter !== "all" || visibilityFilter !== "all");
+  const activeFilterCount = $derived([endpointFilter !== "all", typeFilter !== "all", stateFilter !== "all", visibilityFilter !== "all"].filter(Boolean).length);
+
+  function groupKey(m: Model) {
+    return isAuto(m) ? "__auto__" : (m.version || "__none__");
+  }
+
+  function groupKind(key: string): GroupKind {
+    if (key === "__auto__") return "auto";
+    return key !== "__none__" && endpoints[key] ? "endpoint" : "unknown";
+  }
+
+  function groupLabel(key: string) {
+    return key === "__auto__" ? "Automatic Routing" : (endpoints[key]?.name || "Unknown Endpoint");
+  }
+
+  function modelMatches(m: Model) {
+    const key = groupKey(m);
+    const needle = query.trim().toLowerCase();
+    if (needle) {
+      const fields = [m.name, m.backend, m.version, groupLabel(key), m.modelType, m.targetSelection, ...(m.targets || [])];
+      if (!fields.some((value) => String(value || "").toLowerCase().includes(needle))) return false;
     }
-    for (const arr of groups.values()) arr.sort((a, b) => naturalSort(a.name, b.name));
-    const keys = [...groups.keys()].sort((a, b) => {
+    if (endpointFilter !== "all" && key !== endpointFilter) return false;
+    if (typeFilter !== "all" && (isAuto(m) ? "auto" : "concrete") !== typeFilter) return false;
+    if (stateFilter === "enabled" && m.disabled) return false;
+    if (stateFilter === "disabled" && !m.disabled) return false;
+    if (visibilityFilter === "public" && m.hidden) return false;
+    if (visibilityFilter === "hidden" && !m.hidden) return false;
+    return true;
+  }
+
+  function compareModels(a: Model, b: Model) {
+    let comparison = 0;
+    if (sortField === "status") {
+      const statusRank = (m: Model) => m.disabled ? 2 : m.hidden ? 1 : 0;
+      comparison = statusRank(a) - statusRank(b);
+    }
+    if (comparison === 0) comparison = naturalSort(a.name, b.name);
+    return sortDirection === "asc" ? comparison : -comparison;
+  }
+
+  const grouped = $derived.by(() => {
+    const allGroups = new Map<string, Model[]>();
+    for (const m of models) {
+      const key = groupKey(m);
+      if (!allGroups.has(key)) allGroups.set(key, []);
+      allGroups.get(key)!.push(m);
+    }
+    const keys = [...allGroups.keys()].sort((a, b) => {
       if (a === "__auto__") return -1;
       if (b === "__auto__") return 1;
-      if (a === "__none__") return 1;
-      if (b === "__none__") return -1;
+      const aKind = groupKind(a);
+      const bKind = groupKind(b);
+      if (aKind === "unknown" && bKind !== "unknown") return 1;
+      if (bKind === "unknown" && aKind !== "unknown") return -1;
       return (parseInt(a.replace(/\D/g, ""), 10) || 0) - (parseInt(b.replace(/\D/g, ""), 10) || 0);
     });
-    return keys.map((key) => ({ key, label: key === "__auto__" ? "Automatic Routing" : (endpoints[key]?.name || "Unknown Endpoint"), auto: key === "__auto__", items: groups.get(key)! }));
+    return keys.map((key) => {
+      const allItems = allGroups.get(key)!;
+      const items = allItems.filter(modelMatches).sort(compareModels);
+      return {
+        key,
+        kind: groupKind(key),
+        label: groupLabel(key),
+        auto: key === "__auto__",
+        items,
+        total: allItems.length,
+        disabled: items.filter((m) => m.disabled).length,
+        hidden: items.filter((m) => m.hidden).length,
+      };
+    }).filter((group) => group.items.length > 0);
   });
+
+  const visibleCount = $derived(grouped.reduce((total, group) => total + group.items.length, 0));
+  const endpointFilterOptions = $derived.by(() => {
+    const keys = [...new Set(models.map(groupKey))];
+    return keys.sort((a, b) => naturalSort(groupLabel(a), groupLabel(b)));
+  });
+
+  function clearCriteria() {
+    query = "";
+    endpointFilter = "all";
+    typeFilter = "all";
+    stateFilter = "all";
+    visibilityFilter = "all";
+  }
+
+  function isGroupExpanded(group: { key: string; kind: GroupKind }) {
+    if (activeCriteria) return true;
+    return expandedGroups[group.key] ?? group.kind !== "endpoint";
+  }
+
+  function toggleGroup(group: { key: string; kind: GroupKind }) {
+    if (activeCriteria) return;
+    expandedGroups = { ...expandedGroups, [group.key]: !isGroupExpanded(group) };
+  }
+
+  function groupBodyId(key: string) {
+    return `models-group-${key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  }
+
+  function actionPanelId(name: string) {
+    let hash = 0;
+    for (const char of name) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+    return `model-actions-${Math.abs(hash)}`;
+  }
+
+  function closeActions({ restoreFocus = false } = {}) {
+    const name = openActions;
+    openActions = null;
+    if (restoreFocus && name) actionTriggers.get(name)?.focus();
+  }
+
+  function toggleActions(name: string, trigger: HTMLButtonElement) {
+    actionTriggers.set(name, trigger);
+    openActions = openActions === name ? null : name;
+  }
+
+  function onDocumentClick(event: MouseEvent) {
+    if (openActions && !(event.target as Element | null)?.closest("[data-model-actions]")) closeActions();
+  }
+
+  function closeDeleteModal({ restoreFocus = true } = {}) {
+    deletingModel = null;
+    if (restoreFocus) {
+      const trigger = deleteReturnFocus;
+      deleteReturnFocus = null;
+      void tick().then(() => trigger?.focus());
+    }
+  }
+
+  async function openDeleteModal(name: string) {
+    deleteReturnFocus = actionTriggers.get(name) || null;
+    closeActions();
+    deletingModel = name;
+    await tick();
+    deleteCancelButton?.focus();
+  }
+
+  function onDocumentKeydown(event: KeyboardEvent) {
+    if (event.key === "Tab" && deletingModel && deleteDialog) {
+      const focusable = [...deleteDialog.querySelectorAll<HTMLElement>("button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])")];
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (first && last && event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (first && last && !event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+      return;
+    }
+    if (event.key !== "Escape") return;
+    if (deletingModel) closeDeleteModal();
+    else if (openActions) closeActions({ restoreFocus: true });
+  }
 
   const concreteCandidates = $derived(
     models.filter((m) => !isAuto(m) && !m.disabled && m.name !== editingModel)
@@ -168,12 +337,6 @@
     }
   }
 
-  function numericInputValue(value: NumericInputValue) {
-    if (value === undefined || value === "") return null;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
   function pricingPayload() {
     const num = (value: NumericInputValue) => numericInputValue(value) ?? 0;
     return { input: num(fPricing.input), output: num(fPricing.output), cache_write: num(fPricing.cache_write), cache_read: num(fPricing.cache_read) };
@@ -186,6 +349,7 @@
   }
 
   async function submit() {
+    if (submitting) return;
     const name = fName.trim();
     if (!name) return toast.show("Please enter a display name", "error");
     const payload: Record<string, unknown> = { name, modelType: fType, hidden: fHidden, pricing: pricingPayload() };
@@ -207,6 +371,7 @@
       payload.version = fVersion;
     }
 
+    submitting = true;
     try {
       const res = await fetch("/api/models", {
         method: editingModel ? "PUT" : "POST",
@@ -221,10 +386,14 @@
       await load();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : "Failed", "error");
+    } finally {
+      submitting = false;
     }
   }
 
   async function toggleDisabled(name: string) {
+    if (togglingDisabled.has(name)) return;
+    togglingDisabled = new Set(togglingDisabled).add(name);
     try {
       const res = await fetch("/api/models/toggle", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
       if (res.status === 401 || res.status === 403) { window.location.href = "/admin/login"; return; }
@@ -234,10 +403,16 @@
       await load();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : "Failed", "error");
+    } finally {
+      const next = new Set(togglingDisabled);
+      next.delete(name);
+      togglingDisabled = next;
     }
   }
 
   async function toggleVisibility(name: string) {
+    if (togglingVisibility.has(name)) return;
+    togglingVisibility = new Set(togglingVisibility).add(name);
     try {
       const res = await fetch("/api/models/visibility", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
       if (res.status === 401 || res.status === 403) { window.location.href = "/admin/login"; return; }
@@ -247,10 +422,16 @@
       await load();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : "Failed", "error");
+    } finally {
+      const next = new Set(togglingVisibility);
+      next.delete(name);
+      togglingVisibility = next;
     }
   }
 
   async function testModel(name: string) {
+    if (testingModels.has(name)) return;
+    testingModels = new Set(testingModels).add(name);
     try {
       const res = await fetch("/api/models/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
       const data = await res.json() as TestResult;
@@ -261,21 +442,28 @@
       testResults.set(name, { ok: false, error: e instanceof Error ? e.message : "error" });
       testVersion++;
       toast.show(e instanceof Error ? e.message : "Failed", "error");
+    } finally {
+      const next = new Set(testingModels);
+      next.delete(name);
+      testingModels = next;
     }
   }
 
   async function confirmDelete() {
-    if (!deletingModel) return;
+    if (!deletingModel || deleting) return;
+    deleting = true;
     try {
       const res = await fetch("/api/models", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: deletingModel }) });
       if (res.status === 401 || res.status === 403) { window.location.href = "/admin/login"; return; }
       const data = await res.json().catch(() => ({})) as { error?: string; dependents?: string[]; blockers?: string[] };
       if (!res.ok) throw new Error(res.status === 409 ? depMessage(data, "Model has active dependencies") : (data.error || "Failed to delete model"));
       toast.show("Model deleted successfully");
-      deletingModel = null;
+      closeDeleteModal({ restoreFocus: false });
       await load();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : "Failed", "error");
+    } finally {
+      deleting = false;
     }
   }
 
@@ -285,7 +473,13 @@
 
   onMount(() => {
     void load();
-    return () => pageHeaderActions.set(null);
+    document.addEventListener("click", onDocumentClick);
+    document.addEventListener("keydown", onDocumentKeydown);
+    return () => {
+      document.removeEventListener("click", onDocumentClick);
+      document.removeEventListener("keydown", onDocumentKeydown);
+      pageHeaderActions.set(null);
+    };
   });
 </script>
 
@@ -298,58 +492,101 @@
 {:else}
   {#key testVersion}
   <div class="card models-card">
-    <div class="card-header"><span class="card-title">Allowed Models</span></div>
+    <div class="models-toolbar">
+      <label class="model-search" aria-label="Search models">
+        <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+        <input type="search" bind:value={query} placeholder="Search models, backends, endpoints, or targets…" />
+        {#if query}<button type="button" aria-label="Clear search" onclick={() => query = ""}><i class="fa-solid fa-xmark"></i></button>{/if}
+      </label>
+      <span class="search-count">{visibleCount} of {models.length}</span>
+      <button class="btn btn-secondary filters-toggle" class:active={filtersOpen || activeFilterCount > 0} type="button" aria-expanded={filtersOpen} aria-controls="model-filters" onclick={() => filtersOpen = !filtersOpen}>
+        <i class="fa-solid fa-sliders"></i> Filters
+        {#if activeFilterCount}<span class="filter-count">{activeFilterCount}</span>{/if}
+        <i class="fa-solid fa-chevron-{filtersOpen ? 'up' : 'down'}"></i>
+      </button>
+    </div>
+    {#if filtersOpen}
+      <div id="model-filters" class="model-filters">
+        <label>Endpoint<select bind:value={endpointFilter} class="form-select"><option value="all">All endpoints</option>{#each endpointFilterOptions as key}<option value={key}>{groupLabel(key)}{key.startsWith("v") ? ` (${key})` : ""}</option>{/each}</select></label>
+        <label>Type<select bind:value={typeFilter} class="form-select"><option value="all">All types</option><option value="concrete">Concrete</option><option value="auto">Automatic</option></select></label>
+        <label>State<select bind:value={stateFilter} class="form-select"><option value="all">Any state</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
+        <label>Visibility<select bind:value={visibilityFilter} class="form-select"><option value="all">Any visibility</option><option value="public">Public</option><option value="hidden">Hidden</option></select></label>
+        <label>Sort by<select bind:value={sortField} class="form-select"><option value="name">Name</option><option value="status">Status</option></select></label>
+        <label>Direction<select bind:value={sortDirection} class="form-select"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
+        <button class="btn btn-secondary clear-filters" type="button" onclick={clearCriteria} disabled={!activeCriteria}>Clear</button>
+      </div>
+    {/if}
     <div class="card-body models-list">
-      {#each grouped as group (group.key)}
-        <section class="endpoint-group" class:auto-model-group={group.auto}>
-          <div class="endpoint-group-header">
-            <div class="endpoint-icon"><i class="fa-solid {group.auto ? 'fa-shuffle' : 'fa-hexagon-nodes'}"></i></div>
-            <span class="endpoint-name">{group.label}</span>
-            <span class="endpoint-count">{group.items.length} model{group.items.length === 1 ? "" : "s"}</span>
-          </div>
-          <div class="endpoint-group-divider"></div>
-          <div class="endpoint-group-models">
-            {#each group.items as model (model.name)}
-              {@const result = testResults.get(model.name)}
-              <div class="model-item" class:disabled-model={model.disabled} class:auto-model-item={group.auto}>
-                <div class="model-info">
-                  <div class="model-icon"><i class="fa-solid {group.auto ? 'fa-shuffle' : 'fa-microchip'}"></i></div>
-                  <div class="model-meta">
-                    <div class="model-meta-row">
-                      <span class="model-name">{model.name}</span>
-                      {#if model.disabled}<span class="model-badge model-badge-disabled">disabled</span>{/if}
-                      {#if model.hidden}<span class="model-badge model-badge-hidden">hidden</span>{/if}
-                      {#if group.auto}
-                        <span class="model-badge model-badge-auto">auto</span>
-                        <span class="model-badge model-badge-selection">{model.targetSelection === "roundrobin" ? "round-robin" : "sticky"}</span>
-                        <span class="model-badge model-badge-targets">{(model.targets || []).length} targets</span>
-                        {#if model.maxTargetAttempts != null}<span class="model-badge model-badge-attempts">max {model.maxTargetAttempts}</span>{/if}
-                      {:else if model.backend && model.backend !== model.name}
-                        <span class="model-badge model-badge-backend">{model.backend}</span>
-                      {/if}
+      {#if grouped.length === 0}
+        <div class="filtered-empty"><i class="fa-solid fa-magnifying-glass"></i><strong>No models match</strong><span>Try a different search or clear the current filters.</span><button class="btn btn-secondary btn-sm" type="button" onclick={clearCriteria}>Clear search and filters</button></div>
+      {:else}
+        {#each grouped as group (group.key)}
+          {@const expanded = isGroupExpanded(group)}
+          <section class="endpoint-group" class:auto-model-group={group.auto}>
+            <h2 class="endpoint-group-heading">
+              <button class="endpoint-group-header" type="button" aria-expanded={expanded} aria-controls={groupBodyId(group.key)} onclick={() => toggleGroup(group)}>
+                <span class="endpoint-icon"><i class="fa-solid {group.auto ? 'fa-shuffle' : group.kind === 'unknown' ? 'fa-triangle-exclamation' : 'fa-hexagon-nodes'}"></i></span>
+                <span class="endpoint-title"><span class="endpoint-name">{group.label}</span>{#if group.key.startsWith("v")}<span class="endpoint-key">{group.key}</span>{/if}</span>
+                <span class="endpoint-summary">
+                  <span>{group.items.length}{activeCriteria && group.items.length !== group.total ? ` of ${group.total}` : ""} model{group.items.length === 1 ? "" : "s"}</span>
+                  {#if group.disabled}<span class="summary-flag disabled">{group.disabled} disabled</span>{/if}
+                  {#if group.hidden}<span class="summary-flag hidden">{group.hidden} hidden</span>{/if}
+                </span>
+                <i class="group-chevron fa-solid fa-chevron-{expanded ? 'up' : 'down'}" aria-hidden="true"></i>
+              </button>
+            </h2>
+            {#if expanded}
+              <div id={groupBodyId(group.key)} class="endpoint-group-models">
+                {#each group.items as model (model.name)}
+                  {@const result = testResults.get(model.name)}
+                  <div class="model-item" class:disabled-model={model.disabled} class:auto-model-item={group.auto}>
+                    <div class="model-info">
+                      <div class="model-icon"><i class="fa-solid {group.auto ? 'fa-shuffle' : 'fa-microchip'}"></i></div>
+                      <div class="model-meta">
+                        <div class="model-meta-row">
+                          <span class="model-name">{model.name}</span>
+                          {#if model.disabled}<span class="model-badge model-badge-disabled">disabled</span>{/if}
+                          {#if model.hidden}<span class="model-badge model-badge-hidden">hidden</span>{/if}
+                          {#if group.auto}
+                            <span class="model-badge model-badge-auto">auto</span>
+                            <span class="model-badge model-badge-selection">{model.targetSelection === "roundrobin" ? "round-robin" : "sticky"}</span>
+                            <span class="model-badge model-badge-targets">{(model.targets || []).length} targets</span>
+                            {#if model.maxTargetAttempts != null}<span class="model-badge model-badge-attempts">max {model.maxTargetAttempts}</span>{/if}
+                          {:else if model.backend && model.backend !== model.name}
+                            <span class="model-badge model-badge-backend">{model.backend}</span>
+                          {/if}
+                        </div>
+                        <div class="model-pricing">
+                          {#each [["in", model.pricing?.input], ["out", model.pricing?.output], ["cw", model.pricing?.cache_write], ["cr", model.pricing?.cache_read]] as [label, val]}
+                            <span class="pricing-chip"><span class="chip-label">{label}</span><span class="chip-val">${priceChip(val as number | undefined)}</span></span>
+                          {/each}
+                        </div>
+                      </div>
                     </div>
-                    <div class="model-pricing">
-                      {#each [["in", model.pricing?.input], ["out", model.pricing?.output], ["cw", model.pricing?.cache_write], ["cr", model.pricing?.cache_read]] as [label, val]}
-                        <span class="pricing-chip"><span class="chip-label">{label}</span><span class="chip-val">${priceChip(val as number | undefined)}</span></span>
-                      {/each}
+                    <div class="model-actions">
+                      {#if !group.auto}
+                        {#if result}<span class="test-result-badge {result.ok ? 'ok' : 'fail'}"><i class="fa-solid {result.ok ? 'fa-check' : 'fa-xmark'}"></i>{result.ok ? `${result.latency_ms}ms` : "fail"}</span>{/if}
+                        <button class="btn btn-test btn-sm" type="button" title="Test model (silent — not logged)" aria-label={`Test ${model.name}`} onclick={() => testModel(model.name)} disabled={testingModels.has(model.name)} aria-busy={testingModels.has(model.name)}>{#if testingModels.has(model.name)}<span class="button-spinner" aria-hidden="true"></span>{:else}<i class="fa-solid fa-flask"></i>{/if}</button>
+                      {/if}
+                      <button class="btn btn-secondary btn-sm" type="button" onclick={() => openEdit(model.name)}><i class="fa-solid fa-pen"></i> Edit</button>
+                      <div class="model-actions-menu" data-model-actions>
+                        <button class="btn btn-secondary btn-sm more-actions" type="button" aria-label={`More actions for ${model.name}`} aria-expanded={openActions === model.name} aria-controls={actionPanelId(model.name)} onclick={(event) => { event.stopPropagation(); toggleActions(model.name, event.currentTarget); }}><i class="fa-solid fa-ellipsis-vertical"></i></button>
+                        {#if openActions === model.name}
+                          <div class="action-popover" id={actionPanelId(model.name)}>
+                            <button type="button" onclick={() => { closeActions(); void toggleDisabled(model.name); }} disabled={togglingDisabled.has(model.name)}><i class="fa-solid fa-{model.disabled ? 'play' : 'pause'}"></i><span>{model.disabled ? "Enable model" : "Disable model"}</span></button>
+                            <button type="button" onclick={() => { closeActions(); void toggleVisibility(model.name); }} disabled={togglingVisibility.has(model.name)}><i class="fa-solid fa-eye{model.hidden ? '' : '-slash'}"></i><span>{model.hidden ? "Show publicly" : "Hide publicly"}</span></button>
+                            <button class="danger" type="button" onclick={() => openDeleteModal(model.name)}><i class="fa-solid fa-trash"></i><span>Delete model</span></button>
+                          </div>
+                        {/if}
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div class="model-actions">
-                  {#if !group.auto}
-                    {#if result}<span class="test-result-badge {result.ok ? 'ok' : 'fail'}"><i class="fa-solid {result.ok ? 'fa-check' : 'fa-xmark'}"></i>{result.ok ? `${result.latency_ms}ms` : "fail"}</span>{/if}
-                    <button class="btn btn-test btn-sm" type="button" title="Test model (silent — not logged)" onclick={() => testModel(model.name)}><i class="fa-solid fa-flask"></i></button>
-                  {/if}
-                  <button class="btn btn-sm {model.disabled ? 'btn-warning' : 'btn-success'}" type="button" title={model.disabled ? "Enable model" : "Disable model"} onclick={() => toggleDisabled(model.name)}><i class="fa-solid fa-{model.disabled ? 'pause' : 'play'}"></i></button>
-                  <button class="btn btn-sm {model.hidden ? 'btn-warning' : 'btn-secondary'}" type="button" title={model.hidden ? "Show in public model discovery" : "Hide from public model discovery"} onclick={() => toggleVisibility(model.name)}><i class="fa-solid fa-eye{model.hidden ? '' : '-slash'}"></i></button>
-                  <button class="btn btn-secondary btn-sm" type="button" onclick={() => openEdit(model.name)}><i class="fa-solid fa-pen"></i> Edit</button>
-                  <button class="btn btn-danger btn-sm" type="button" aria-label={`Delete ${model.name}`} onclick={() => deletingModel = model.name}><i class="fa-solid fa-trash"></i></button>
-                </div>
+                {/each}
               </div>
-            {/each}
-          </div>
-        </section>
-      {/each}
+            {/if}
+          </section>
+        {/each}
+      {/if}
     </div>
   </div>
   {/key}
@@ -357,8 +594,8 @@
 
 <!-- Add/Edit modal -->
 {#if modalOpen}
-  <div class="modal-backdrop active" onclick={(e) => { if (e.target === e.currentTarget) closeModal(); }} role="presentation">
-    <div class="modal" role="dialog" aria-modal="true">
+  <div class="modal-backdrop active" transition:fade={{ duration: motionDuration(300) }} onclick={(e) => { if (e.target === e.currentTarget) closeModal(); }} role="presentation">
+    <div class="modal" transition:scale={{ duration: motionDuration(300), start: 0.9 }} role="dialog" aria-modal="true">
       <div class="modal-header"><h2>{editingModel ? "Edit Model" : "Add Model"}</h2><button class="modal-close" type="button" onclick={closeModal}>✕</button></div>
 
       <div class="form-group">
@@ -377,7 +614,7 @@
       {#if fType === "concrete"}
         <div class="form-group">
           <label for="mVersion">Endpoint</label>
-          <select id="mVersion" bind:value={fVersion} onchange={() => { availableModels = []; upstreamFetched = false; }} class="form-select" style="width:100%;">
+          <select id="mVersion" bind:value={fVersion} onchange={() => { availableModels = []; upstreamFetched = false; }} class="form-select" style="width:100%;" disabled={fetchingModels}>
             <option value="">Select an endpoint</option>
             {#each versionKeys as v}<option value={v}>{endpoints[v]?.name || v}</option>{/each}
           </select>
@@ -386,8 +623,8 @@
           <label for="mBackend">Backend Model</label>
           <div style="display:flex;gap:8px;">
             <input id="mBackend" type="text" bind:value={fBackend} placeholder="Backend model name" style="flex:1;" />
-            <button class="btn btn-secondary btn-sm" type="button" onclick={fetchUpstream} disabled={fetchingModels || !fVersion}>
-              {fetchingModels ? "Fetching…" : "Fetch"}
+            <button class="btn btn-secondary btn-sm" type="button" onclick={fetchUpstream} disabled={fetchingModels || !fVersion} aria-busy={fetchingModels}>
+              {#if fetchingModels}<span class="button-spinner" aria-hidden="true"></span> Fetching…{:else}Fetch{/if}
             </button>
           </div>
           {#if upstreamFetched && availableModels.length}
@@ -468,7 +705,7 @@
 
       <div class="modal-footer">
         <button class="btn btn-secondary" type="button" onclick={closeModal}>Cancel</button>
-        <button class="btn btn-primary" type="button" onclick={submit}>{editingModel ? "Save Changes" : "Add Model"}</button>
+        <button class="btn btn-primary" type="button" onclick={submit} disabled={submitting} aria-busy={submitting}>{#if submitting}<span class="button-spinner" aria-hidden="true"></span> Saving…{:else}{editingModel ? "Save Changes" : "Add Model"}{/if}</button>
       </div>
     </div>
   </div>
@@ -476,41 +713,63 @@
 
 <!-- Delete modal -->
 {#if deletingModel}
-  <div class="modal-backdrop active" onclick={(e) => { if (e.target === e.currentTarget) deletingModel = null; }} role="presentation">
-    <div class="modal" role="dialog" aria-modal="true">
-      <div class="modal-header"><h2>Delete Model</h2><button class="modal-close" type="button" onclick={() => deletingModel = null}>✕</button></div>
+  <div class="modal-backdrop active" transition:fade={{ duration: motionDuration(300) }} onclick={(e) => { if (e.target === e.currentTarget) closeDeleteModal(); }} role="presentation">
+    <div class="modal" bind:this={deleteDialog} transition:scale={{ duration: motionDuration(300), start: 0.9 }} role="dialog" aria-modal="true" aria-labelledby="delete-model-title">
+      <div class="modal-header"><h2 id="delete-model-title">Delete Model</h2><button class="modal-close" type="button" aria-label="Close delete confirmation" onclick={() => closeDeleteModal()}>✕</button></div>
       <p>Are you sure you want to delete <strong>{deletingModel}</strong>? This cannot be undone.</p>
       <div class="modal-footer">
-        <button class="btn btn-secondary" type="button" onclick={() => deletingModel = null}>Cancel</button>
-        <button class="btn btn-danger" type="button" onclick={confirmDelete}>Delete</button>
+        <button class="btn btn-secondary" type="button" bind:this={deleteCancelButton} onclick={() => closeDeleteModal()}>Cancel</button>
+        <button class="btn btn-danger" type="button" onclick={confirmDelete} disabled={deleting} aria-busy={deleting}>{#if deleting}<span class="button-spinner" aria-hidden="true"></span> Deleting…{:else}Delete{/if}</button>
       </div>
     </div>
   </div>
 {/if}
 
 <style>
-  .models-card { overflow: hidden; }
-  .card-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--border-color); }
-  .card-title { color: var(--text-primary); font-family: Georgia, "Times New Roman", serif; font-size: 16px; font-weight: 500; }
-  .card-body { padding: 24px; }
+  .models-card { overflow: visible; }
+  .models-toolbar { display: flex; align-items: center; gap: 12px; padding: 18px 24px; border-bottom: 1px solid var(--border-color); }
+  .model-search { display: flex; min-width: 220px; max-width: 680px; height: 42px; align-items: center; flex: 1; gap: 10px; padding: 0 12px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); color: var(--text-secondary); transition: border-color .2s ease, box-shadow .2s ease; }
+  .model-search:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-alpha-012); }
+  .model-search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; box-shadow: none; color: var(--text-primary); }
+  .model-search button { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; flex-shrink: 0; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
+  .search-count { flex-shrink: 0; color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .filters-toggle { min-width: 118px; justify-content: center; }
+  .filters-toggle.active { border-color: var(--primary-alpha-035); background: var(--primary-alpha-012); color: var(--primary-dark); }
+  .filter-count { display: inline-flex; min-width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 999px; background: var(--primary); color: white; font-size: 10px; }
+  .model-filters { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)) auto; align-items: end; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--border-color); background: var(--bg-tertiary); }
+  .model-filters label { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: var(--text-secondary); font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .model-filters select { width: 100%; min-width: 0; height: 38px; font-size: 12px; text-transform: none; }
+  .clear-filters { height: 38px; }
+  .card-body { padding: 18px 24px 24px; }
   .models-list { display: flex; flex-direction: column; gap: 10px; }
-  .endpoint-group { margin-bottom: 8px; }
-  .endpoint-group + .endpoint-group { margin-top: 18px; }
-  .endpoint-group-header { display: flex; align-items: center; gap: 10px; padding: 10px 4px 8px; margin-bottom: 2px; }
-  .endpoint-icon { display: flex; width: 30px; height: 30px; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 8px; background: var(--gradient-primary); color: white; font-size: 13px; }
-  .endpoint-name { color: var(--text-primary); font-size: 15px; font-weight: 600; }
-  .endpoint-count { margin-left: auto; color: var(--text-secondary); font-size: 12px; }
-  .endpoint-group-divider { height: 1px; margin-bottom: 10px; background: var(--border-color); }
-  .endpoint-group-models { display: flex; flex-direction: column; gap: 8px; margin-left: 15px; padding-left: 8px; border-left: 2px solid var(--primary-alpha-015); }
-  .model-item { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); transition: border-color .2s ease; }
+  .filtered-empty { display: flex; min-height: 260px; align-items: center; justify-content: center; flex-direction: column; gap: 9px; color: var(--text-secondary); text-align: center; }
+  .filtered-empty > i { color: var(--gray-300); font-size: 30px; }
+  .filtered-empty strong { color: var(--text-primary); font-size: 16px; }
+  .filtered-empty span { font-size: 13px; }
+  .endpoint-group { position: relative; border: 1px solid var(--border-color); border-radius: 11px; background: var(--card-bg); }
+  .endpoint-group-heading { margin: 0; }
+  .endpoint-group-header { display: flex; width: 100%; min-width: 0; align-items: center; gap: 11px; padding: 12px 14px; border: 0; border-radius: 10px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background .2s ease, border-color .2s ease; }
+  .endpoint-group-header:hover { background: var(--gray-50); }
+  .endpoint-group-header:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .endpoint-icon { display: flex; width: 32px; height: 32px; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 8px; background: var(--gradient-primary); color: white; font-size: 13px; }
+  .endpoint-title { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
+  .endpoint-name { overflow: hidden; color: var(--text-primary); font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .endpoint-key { flex-shrink: 0; color: var(--text-secondary); font-family: "Courier New", monospace; font-size: 10px; }
+  .endpoint-summary { display: flex; align-items: center; justify-content: flex-end; flex: 1; flex-wrap: wrap; gap: 6px; color: var(--text-secondary); font-size: 11px; }
+  .summary-flag { padding: 2px 7px; border-radius: 999px; font-weight: 600; }
+  .summary-flag.disabled { background: rgba(245,158,11,.12); color: #b45309; }
+  .summary-flag.hidden { background: var(--gray-100); color: var(--gray-600); }
+  .group-chevron { width: 14px; flex-shrink: 0; color: var(--text-secondary); font-size: 11px; text-align: center; }
+  .endpoint-group-models { display: flex; flex-direction: column; gap: 8px; margin: 0 14px 14px 29px; padding: 12px 0 0 13px; border-top: 1px solid var(--border-color); border-left: 2px solid var(--primary-alpha-015); }
+  .model-item { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); transition: border-color .2s ease; }
   .model-item:hover { border-color: var(--primary); }
   .model-item.disabled-model { opacity: .5; }
   .model-item.disabled-model .model-icon { background: var(--gray-300); }
   .model-info { display: flex; align-items: center; min-width: 0; flex: 1; gap: 12px; }
   .model-icon { display: flex; width: 40px; height: 40px; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 10px; background: var(--gradient-primary); color: white; }
   .model-meta { display: flex; min-width: 0; flex: 1; flex-direction: row; gap: 6px; }
-  .model-meta-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-  .model-name { color: var(--text-primary); font-weight: 500; }
+  .model-meta-row { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .model-name { min-width: 0; overflow-wrap: anywhere; color: var(--text-primary); font-weight: 500; }
   .model-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; font-family: "Courier New", monospace; font-size: 11px; font-weight: 500; }
   .model-badge-backend { background: var(--gray-100); color: var(--gray-600); }
   .model-badge-disabled { background: var(--warning); color: white; opacity: .8; }
@@ -523,11 +782,23 @@
   .pricing-chip { display: inline-flex; align-items: baseline; gap: 3px; padding: 2px 8px; border-radius: 20px; background: var(--gray-100); color: var(--gray-600); font-size: 11px; }
   .chip-label { color: var(--gray-500); font-size: 10px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
   .chip-val { color: var(--gray-800); font-family: "Courier New", monospace; font-weight: 500; }
-  .model-actions { display: flex; gap: 8px; }
+  .model-actions { display: flex; align-items: center; flex-shrink: 0; gap: 8px; }
+  .model-actions-menu { position: relative; }
+  .more-actions { width: 34px; justify-content: center; padding-right: 0; padding-left: 0; }
+  .action-popover { position: absolute; top: calc(100% + 7px); right: 0; z-index: 30; display: flex; width: 210px; flex-direction: column; gap: 3px; padding: 6px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); box-shadow: 0 12px 30px rgba(0,0,0,.15); }
+  .action-popover button { display: flex; width: 100%; align-items: center; gap: 9px; padding: 9px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text-primary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+  .action-popover button:hover { background: var(--gray-100); }
+  .action-popover button:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
+  .action-popover button:disabled { opacity: .5; cursor: not-allowed; }
+  .action-popover button i { width: 15px; color: var(--text-secondary); text-align: center; }
+  .action-popover button.danger { margin-top: 3px; border-top: 1px solid var(--border-color); border-radius: 0 0 7px 7px; color: var(--danger); }
+  .action-popover button.danger i { color: var(--danger); }
   .btn-test { border: 1px solid var(--primary-alpha-035); background: var(--primary-alpha-012); color: var(--primary); }
   .test-result-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; white-space: nowrap; }
   .test-result-badge.ok { border: 1px solid var(--success-alpha-04); background: var(--success-alpha-01); color: var(--success-dark); }
   .test-result-badge.fail { border: 1px solid var(--danger-alpha-02); background: var(--danger-alpha-01); color: var(--danger-dark); }
+  .auto-model-group { border-color: var(--primary-alpha-035); }
+  .auto-model-group .endpoint-group-header { background: var(--primary-alpha-01); }
   .auto-model-group .endpoint-icon, .auto-model-item .model-icon { background: linear-gradient(135deg, var(--primary) 0%, var(--warning) 140%); }
   .auto-model-item { border-color: var(--primary-alpha-035); background: var(--primary-alpha-01); }
   .form-section-label { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; padding-top: 12px; border-top: 1px solid var(--border-color); color: var(--text-secondary); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
@@ -544,10 +815,32 @@
   .target-action { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; border: 0; border-radius: 7px; background: var(--gray-200); color: var(--gray-600); cursor: pointer; }
   .target-action.remove { color: var(--danger); }
   .target-action:disabled { opacity: .35; cursor: not-allowed; }
+  @media (max-width: 1100px) {
+    .model-filters { grid-template-columns: repeat(3, minmax(130px, 1fr)); }
+    .clear-filters { justify-self: start; }
+  }
   @media (max-width: 760px) {
+    .models-toolbar { align-items: stretch; flex-wrap: wrap; padding: 14px 16px; }
+    .model-search { max-width: none; flex-basis: 100%; }
+    .search-count { align-self: center; }
+    .filters-toggle { margin-left: auto; }
+    .model-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 14px 16px; }
+    .card-body { padding: 14px 16px 18px; }
+    .endpoint-group-header { align-items: center; flex-wrap: wrap; }
+    .endpoint-title { flex: 1; }
+    .endpoint-summary { order: 3; min-width: 100%; justify-content: flex-start; padding-left: 43px; }
+    .endpoint-group-models { margin-right: 10px; margin-left: 16px; padding-left: 8px; }
     .model-item { align-items: flex-start; flex-direction: column; gap: 12px; }
     .model-meta { flex-direction: column; }
     .model-pricing { margin: 6px 0 0; }
     .model-actions { align-self: flex-end; flex-wrap: wrap; }
+  }
+  @media (max-width: 480px) {
+    .model-filters { grid-template-columns: 1fr; }
+    .endpoint-summary { padding-left: 0; }
+    .model-info { align-items: flex-start; }
+    .model-icon { width: 34px; height: 34px; }
+    .model-actions { width: 100%; justify-content: flex-end; }
+    .action-popover { right: 0; width: min(210px, calc(100vw - 64px)); }
   }
 </style>

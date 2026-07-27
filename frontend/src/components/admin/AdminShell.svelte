@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { fly } from "svelte/transition";
   import { logout } from "$frontend/lib/api/admin";
+  import { motionDuration } from "$frontend/lib/motion";
   import { toast, theme } from "$frontend/lib/stores";
 
   let {
@@ -73,9 +75,11 @@
   {@render children()}
 </main>
 
-{#each $toast as t (t.id)}
-  <div class="toast show {t.type}" role="status" aria-live="polite">
-    <i class="fa-solid fa-{t.type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
-    {t.message}
-  </div>
-{/each}
+<div class="toast-viewport" aria-live="polite" aria-atomic="false">
+  {#each $toast as t (t.id)}
+    <div class="toast {t.type}" role="status" transition:fly={{ y: 100, duration: motionDuration(300) }}>
+      <i class="fa-solid fa-{t.type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
+      {t.message}
+    </div>
+  {/each}
+</div>

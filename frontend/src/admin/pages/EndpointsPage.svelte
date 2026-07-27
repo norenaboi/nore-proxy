@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { fade, scale } from "svelte/transition";
   import { requestAdminJson } from "$frontend/lib/api/admin";
+  import { motionDuration } from "$frontend/lib/motion";
   import {
     isDuplicateToken,
     mergeBulkTokens,
@@ -28,8 +29,6 @@
     defaultEndpointMaxTokensEnabled?: boolean; defaultEndpointMaxTokens?: number | null;
     defaultEndpointPromptCachingEnabled?: boolean; defaultEndpointPromptCachingDepth?: number;
   }
-
-  const modalTransitionDuration = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 300;
 
   const fmtLabels: Record<string, string> = {
     openai: "OpenAI", anthropic: "Anthropic", gemini: "Gemini",
@@ -358,8 +357,8 @@
 
 <!-- Add/Edit modal -->
 {#if modalOpen}
-  <div class="modal-backdrop active endpoint-modal-backdrop" transition:fade={{ duration: modalTransitionDuration }} onclick={(e) => { if (e.target === e.currentTarget) closeModal(); }} role="presentation">
-    <div class="modal endpoint-modal" transition:scale={{ duration: modalTransitionDuration, start: 0.9 }} role="dialog" aria-modal="true">
+  <div class="modal-backdrop active endpoint-modal-backdrop" transition:fade={{ duration: motionDuration(300) }} onclick={(e) => { if (e.target === e.currentTarget) closeModal(); }} role="presentation">
+    <div class="modal endpoint-modal" transition:scale={{ duration: motionDuration(300), start: 0.9 }} role="dialog" aria-modal="true">
       <div class="modal-header"><h2>{editingIndex !== null ? "Edit Endpoint" : "Add Endpoint"}</h2><button class="modal-close" type="button" aria-label="Close endpoint editor" onclick={closeModal}><i class="fa-solid fa-xmark"></i></button></div>
 
       <div class="modal-body modal-body-grid">
@@ -405,8 +404,8 @@
 
 <!-- Delete endpoint modal -->
 {#if deletingIndex !== null}
-  <div class="modal-backdrop active" onclick={(e) => { if (e.target === e.currentTarget) deletingIndex = null; }} role="presentation">
-    <div class="modal" role="dialog" aria-modal="true">
+  <div class="modal-backdrop active" transition:fade={{ duration: motionDuration(300) }} onclick={(e) => { if (e.target === e.currentTarget) deletingIndex = null; }} role="presentation">
+    <div class="modal" transition:scale={{ duration: motionDuration(300), start: 0.9 }} role="dialog" aria-modal="true">
       <div class="modal-header"><h2>Delete Endpoint</h2><button class="modal-close" type="button" onclick={() => deletingIndex = null}>✕</button></div>
       <p>Are you sure you want to delete endpoint <strong>{endpoints.find((e) => e.index === deletingIndex)?.name || `#${deletingIndex}`}</strong>? This cannot be undone.</p>
       <div class="modal-footer">
@@ -420,8 +419,8 @@
 <!-- Key health modal -->
 {#if keysModalIndex !== null}
   {@const ep = endpoints.find((e) => e.index === keysModalIndex)}
-  <div class="modal-backdrop active" onclick={(e) => { if (e.target === e.currentTarget) keysModalIndex = null; }} role="presentation">
-    <div class="modal" style="max-width:760px;" role="dialog" aria-modal="true">
+  <div class="modal-backdrop active" transition:fade={{ duration: motionDuration(300) }} onclick={(e) => { if (e.target === e.currentTarget) keysModalIndex = null; }} role="presentation">
+    <div class="modal" style="max-width:760px;" transition:scale={{ duration: motionDuration(300), start: 0.9 }} role="dialog" aria-modal="true">
       <div class="modal-header"><h2>Keys — {ep?.name || `Endpoint ${keysModalIndex}`}</h2><button class="modal-close" type="button" onclick={() => keysModalIndex = null}>✕</button></div>
       {#if keysLoading}
         <div class="loading"><div class="loading-spinner"></div><span>Loading keys…</span></div>
@@ -455,8 +454,8 @@
 
 <!-- Bulk delete tokens confirm -->
 {#if bulkDeleteOpen}
-  <div class="modal-backdrop active" onclick={(e) => { if (e.target === e.currentTarget) bulkDeleteOpen = false; }} role="presentation">
-    <div class="modal" role="dialog" aria-modal="true">
+  <div class="modal-backdrop active" transition:fade={{ duration: motionDuration(300) }} onclick={(e) => { if (e.target === e.currentTarget) bulkDeleteOpen = false; }} role="presentation">
+    <div class="modal" transition:scale={{ duration: motionDuration(300), start: 0.9 }} role="dialog" aria-modal="true">
       <div class="modal-header"><h2>Remove All Tokens</h2><button class="modal-close" type="button" onclick={() => bulkDeleteOpen = false}>✕</button></div>
       <p>Remove all <strong>{pendingTokens.length}</strong> token{pendingTokens.length !== 1 ? "s" : ""} from this endpoint? You will need to add new ones before saving.</p>
       <div class="modal-footer">
