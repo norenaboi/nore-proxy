@@ -92,7 +92,13 @@ class SettingsManager {
   }
 
   _currentSettings(): Settings {
-    return { ...this._defaults, ...this._overrides };
+    const current = { ...this._defaults };
+    for (const key of Object.keys(this._defaults) as Array<keyof Settings>) {
+      if (key in this._overrides) {
+        (current as any)[key] = this._overrides[key];
+      }
+    }
+    return current;
   }
 
   get<K extends keyof Settings>(key: K): Settings[K] {

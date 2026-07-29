@@ -763,7 +763,8 @@
   .endpoint-group-models { display: flex; flex-direction: column; gap: 8px; margin: 0 14px 14px 29px; padding: 12px 0 0 13px; border-top: 1px solid var(--border-color); border-left: 2px solid var(--primary-alpha-015); }
   .model-item { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); transition: border-color .2s ease; }
   .model-item:hover { border-color: var(--primary); }
-  .model-item.disabled-model { opacity: .5; }
+  .model-item.disabled-model > .model-info,
+  .model-item.disabled-model > .model-actions > :not(.model-actions-menu) { opacity: .5; }
   .model-item.disabled-model .model-icon { background: var(--gray-300); }
   .model-info { display: flex; align-items: center; min-width: 0; flex: 1; gap: 12px; }
   .model-icon { display: flex; width: 40px; height: 40px; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 10px; background: var(--gradient-primary); color: white; }
