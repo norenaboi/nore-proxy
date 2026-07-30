@@ -5,10 +5,10 @@ import { getClientIp } from "../utils/helpers.js";
 type AttemptMap = Map<string, number[]>;
 type RateLimitError = Error & { statusCode: number };
 
-// IP-level brute-force limiter for admin/auth routes
+// IP-level brute-force limiter for the admin login route
 // Tracks attempt timestamps per IP and rejects if too many occur within the window
 const ADMIN_WINDOW_SECONDS = 60;
-const ADMIN_MAX_ATTEMPTS = parseInt(process.env.ADMIN_MAX_ATTEMPTS || "100", 10);
+const ADMIN_MAX_ATTEMPTS = parseInt(process.env.ADMIN_MAX_ATTEMPTS || "5", 10);
 const adminAttempts: AttemptMap = new Map();
 
 // IP-level brute-force limiter for /api/usage

@@ -34,11 +34,11 @@ type QueryValue = string | undefined;
 
 const router = express.Router();
 
-// Apply IP-level rate limiting to all admin routes to limit brute-force attempts
-router.use(adminRateLimit);
-
-// POST /admin/login — validate master key and issue a session cookie
-router.post("/admin/login", async (req: any, res: any) => {
+// POST /admin/login — validate master key and issue a session cookie.
+// IP-level rate limiting is applied only here to throttle brute-force attempts;
+// other admin routes are session-authenticated and would otherwise burn the
+// shared budget with normal dashboard XHR traffic.
+router.post("/admin/login", adminRateLimit, async (req: any, res: any) => {
   const provided = (req.body.masterKey || "").toString();
   const expected = Config.MASTER_KEY;
   let valid = false;
