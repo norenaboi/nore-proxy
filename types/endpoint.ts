@@ -46,7 +46,7 @@ export type EndpointsDocument = Record<EndpointKey, Endpoint>;
 /** Normalized configuration held by Config.ENDPOINTS. */
 export interface LoadedEndpoint extends Omit<Endpoint, "name" | "headers" | "apiFormat" | "appendApiSuffix" | "generationDefaults" | "promptCaching"> {
   name: string;
-  token: string;
+  token: string | null;
   headers: Record<string, string>;
   apiFormat: ApiFormat;
   appendApiSuffix: boolean;

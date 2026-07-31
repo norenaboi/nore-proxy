@@ -4,7 +4,7 @@
   import { requestAdminJson, naturalSort } from "$frontend/lib/api/admin";
   import { motionDuration } from "$frontend/lib/motion";
   import { pageHeaderActions, toast } from "$frontend/lib/stores";
-  import { numericInputValue, type NumericInputValue } from "$frontend/admin/modelForm";
+  import { effectiveModelName, isDuplicateModelName, numericInputValue, type NumericInputValue } from "$frontend/admin/modelForm";
 
   interface Pricing { input?: number; output?: number; cache_write?: number; cache_read?: number; }
   interface PricingForm {
@@ -51,6 +51,7 @@
 
   // Modal state
   let modalOpen = $state(false);
+  let modalMode = $state<"add" | "edit" | "clone">("add");
   let editingModel = $state<string | null>(null);
   let deletingModel = $state<string | null>(null);
   let submitting = $state(false);
@@ -62,6 +63,7 @@
   // Form
   let fName = $state("");
   let fType = $state<"concrete" | "auto">("concrete");
+  let fDisabled = $state(false);
   let fHidden = $state(false);
   let fVersion = $state("");
   let fBackend = $state("");
@@ -267,21 +269,18 @@
   }
 
   function resetForm() {
-    editingModel = null; fName = ""; fType = "concrete"; fHidden = false;
+    editingModel = null; modalMode = "add"; fName = ""; fType = "concrete"; fDisabled = false; fHidden = false;
     fVersion = ""; fBackend = ""; fPricing = { input: "", output: "", cache_write: "", cache_read: "" };
     fTargets = []; fTargetSelection = "sticky"; fMaxAttempts = ""; fTargetCandidate = "";
     availableModels = []; upstreamFetched = false;
   }
 
-  function openAdd() { resetForm(); modalOpen = true; }
+  function openAdd() { resetForm(); modalMode = "add"; modalOpen = true; }
 
-  function openEdit(name: string) {
-    const m = models.find((e) => e.name === name);
-    if (!m) return toast.show("Model not found", "error");
-    resetForm();
-    editingModel = name;
+  function populateForm(m: Model) {
     fName = m.name;
     fType = isAuto(m) ? "auto" : "concrete";
+    fDisabled = m.disabled === true;
     fHidden = m.hidden === true;
     if (isAuto(m)) {
       fTargets = [...new Set(Array.isArray(m.targets) ? m.targets : [])];
@@ -297,6 +296,25 @@
       cache_write: m.pricing?.cache_write != null ? String(m.pricing.cache_write) : "",
       cache_read: m.pricing?.cache_read != null ? String(m.pricing.cache_read) : "",
     };
+  }
+
+  function openEdit(name: string) {
+    const m = models.find((e) => e.name === name);
+    if (!m) return toast.show("Model not found", "error");
+    resetForm();
+    editingModel = name;
+    modalMode = "edit";
+    populateForm(m);
+    modalOpen = true;
+  }
+
+  function openClone(name: string) {
+    const m = models.find((e) => e.name === name);
+    if (!m) return toast.show("Model not found", "error");
+    resetForm();
+    modalMode = "clone";
+    populateForm(m);
+    fName = `${m.name} Copy`;
     modalOpen = true;
   }
 
@@ -350,22 +368,24 @@
 
   async function submit() {
     if (submitting) return;
-    const name = fName.trim();
+    const backend = fBackend.trim();
+    if (fType === "concrete" && !backend) return toast.show("Please enter a backend name", "error");
+    const name = effectiveModelName(fName, fType, backend);
     if (!name) return toast.show("Please enter a display name", "error");
-    const payload: Record<string, unknown> = { name, modelType: fType, hidden: fHidden, pricing: pricingPayload() };
+    if (isDuplicateModelName(name, models, modalMode === "edit" ? editingModel : null)) {
+      return toast.show("A model with that name already exists", "error");
+    }
+    const payload: Record<string, unknown> = { name, modelType: fType, disabled: fDisabled, hidden: fHidden, pricing: pricingPayload() };
 
     if (fType === "auto") {
       const unique = [...new Set(fTargets)];
-      if (unique.length < 2 || unique.length !== fTargets.length) return toast.show("Select at least two unique concrete targets", "error");
+      if (unique.length !== fTargets.length) return toast.show("Targets must be unique", "error");
       const maxAttempts = numericInputValue(fMaxAttempts);
       if (maxAttempts !== null && (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 20)) return toast.show("Maximum target attempts must be an integer from 1 to 20", "error");
-      if (maxAttempts !== null && maxAttempts > unique.length) return toast.show("Maximum target attempts cannot exceed the number of targets", "error");
       payload.targets = unique;
       payload.targetSelection = fTargetSelection;
       payload.maxTargetAttempts = maxAttempts;
     } else {
-      const backend = fBackend.trim();
-      if (!backend) return toast.show("Please enter a backend name", "error");
       if (!fVersion) return toast.show("Please select an endpoint version", "error");
       payload.backend = backend;
       payload.version = fVersion;
@@ -373,15 +393,16 @@
 
     submitting = true;
     try {
+      const editing = modalMode === "edit" && editingModel;
       const res = await fetch("/api/models", {
-        method: editingModel ? "PUT" : "POST",
+        method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editingModel ? { oldName: editingModel, ...payload } : payload),
+        body: JSON.stringify(editing ? { oldName: editingModel, ...payload } : payload),
       });
       if (res.status === 401 || res.status === 403) { window.location.href = "/admin/login"; return; }
       const data = await res.json().catch(() => ({})) as { error?: string; dependents?: string[]; blockers?: string[] };
-      if (!res.ok) throw new Error(res.status === 409 ? depMessage(data, "Model has active dependencies") : (data.error || `Failed to ${editingModel ? "update" : "add"} model`));
-      toast.show(`Model ${editingModel ? "updated" : "added"} successfully`);
+      if (!res.ok) throw new Error(res.status === 409 ? depMessage(data, "Model has active dependencies") : (data.error || `Failed to ${editing ? "update" : "add"} model`));
+      toast.show(`Model ${modalMode === "clone" ? "cloned" : editing ? "updated" : "added"} successfully`);
       closeModal();
       await load();
     } catch (e) {
@@ -573,6 +594,7 @@
                         <button class="btn btn-secondary btn-sm more-actions" type="button" aria-label={`More actions for ${model.name}`} aria-expanded={openActions === model.name} aria-controls={actionPanelId(model.name)} onclick={(event) => { event.stopPropagation(); toggleActions(model.name, event.currentTarget); }}><i class="fa-solid fa-ellipsis-vertical"></i></button>
                         {#if openActions === model.name}
                           <div class="action-popover" id={actionPanelId(model.name)}>
+                            <button type="button" onclick={() => { closeActions(); openClone(model.name); }}><i class="fa-solid fa-copy"></i><span>Clone</span></button>
                             <button type="button" onclick={() => { closeActions(); void toggleDisabled(model.name); }} disabled={togglingDisabled.has(model.name)}><i class="fa-solid fa-{model.disabled ? 'play' : 'pause'}"></i><span>{model.disabled ? "Enable model" : "Disable model"}</span></button>
                             <button type="button" onclick={() => { closeActions(); void toggleVisibility(model.name); }} disabled={togglingVisibility.has(model.name)}><i class="fa-solid fa-eye{model.hidden ? '' : '-slash'}"></i><span>{model.hidden ? "Show publicly" : "Hide publicly"}</span></button>
                             <button class="danger" type="button" onclick={() => openDeleteModal(model.name)}><i class="fa-solid fa-trash"></i><span>Delete model</span></button>
@@ -596,11 +618,11 @@
 {#if modalOpen}
   <div class="modal-backdrop active" transition:fade={{ duration: motionDuration(300) }} onclick={(e) => { if (e.target === e.currentTarget) closeModal(); }} role="presentation">
     <div class="modal" transition:scale={{ duration: motionDuration(300), start: 0.9 }} role="dialog" aria-modal="true">
-      <div class="modal-header"><h2>{editingModel ? "Edit Model" : "Add Model"}</h2><button class="modal-close" type="button" onclick={closeModal}>✕</button></div>
+      <div class="modal-header"><h2>{modalMode === "edit" ? "Edit Model" : modalMode === "clone" ? "Clone Model" : "Add Model"}</h2><button class="modal-close" type="button" onclick={closeModal}>✕</button></div>
 
       <div class="form-group">
-        <label for="mName">Display Name</label>
-        <input id="mName" type="text" bind:value={fName} placeholder="gpt-5" />
+        <label for="mName">Display Name{fType === "concrete" ? " (optional)" : ""}</label>
+        <input id="mName" type="text" bind:value={fName} placeholder={fType === "concrete" ? "Uses backend name when blank" : "automatic-model"} />
       </div>
 
       <div class="form-group">
@@ -648,7 +670,7 @@
             </select>
             <button class="btn btn-secondary btn-sm" type="button" onclick={addTarget} disabled={!fTargetCandidate}>Add</button>
           </div>
-          <p class="form-help">Choose at least two unique, enabled concrete models. Order controls failover priority.</p>
+          <p class="form-help">Add any number of concrete model names. Order controls failover priority; unavailable names are skipped at request time.</p>
           <div class="selected-targets">
             {#if fTargets.length === 0}
               <p class="targets-empty">No targets selected.</p>
@@ -697,6 +719,14 @@
 
       <div class="form-group">
         <label class="toggle" style="display:inline-flex;align-items:center;gap:8px;">
+          <input type="checkbox" bind:checked={fDisabled} />
+          <div class="toggle-track"></div><div class="toggle-thumb"></div>
+          <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--text-primary);">Disabled</span>
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label class="toggle" style="display:inline-flex;align-items:center;gap:8px;">
           <input type="checkbox" bind:checked={fHidden} />
           <div class="toggle-track"></div><div class="toggle-thumb"></div>
           <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--text-primary);">Hidden from public model discovery</span>
@@ -705,7 +735,7 @@
 
       <div class="modal-footer">
         <button class="btn btn-secondary" type="button" onclick={closeModal}>Cancel</button>
-        <button class="btn btn-primary" type="button" onclick={submit} disabled={submitting} aria-busy={submitting}>{#if submitting}<span class="button-spinner" aria-hidden="true"></span> Saving…{:else}{editingModel ? "Save Changes" : "Add Model"}{/if}</button>
+        <button class="btn btn-primary" type="button" onclick={submit} disabled={submitting} aria-busy={submitting}>{#if submitting}<span class="button-spinner" aria-hidden="true"></span> Saving…{:else}{modalMode === "edit" ? "Save Changes" : modalMode === "clone" ? "Create Clone" : "Add Model"}{/if}</button>
       </div>
     </div>
   </div>

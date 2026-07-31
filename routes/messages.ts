@@ -225,10 +225,17 @@ const clone = (value: any): any => structuredClone(value);
 const statusOf = (error: any): any => error?.response?.status ?? error?.statusCode ?? null;
 
 function autoExhausted(lastError: any, state: any) {
-  const error = new Error(lastError?.message || "All automatic routing targets failed.");
-  error.name = "AutoTargetsExhaustedError";
-  error.code = "auto_targets_exhausted";
-  error.statusCode = statusOf(lastError) || 502;
+  const unavailable = state.attempts.length === 0 || state.attempts.every(
+    (attempt: any) => attempt.outcome === "target_unavailable" || attempt.outcome === "key_exhausted",
+  );
+  const error = new Error(
+    unavailable
+      ? `Automatic model '${state.requestedModel}' has no available targets.`
+      : lastError?.message || "All automatic routing targets failed.",
+  );
+  error.name = unavailable ? "AutoTargetsUnavailableError" : "AutoTargetsExhaustedError";
+  error.code = unavailable ? "auto_targets_unavailable" : "auto_targets_exhausted";
+  error.statusCode = unavailable ? 503 : statusOf(lastError) || 502;
   error.responseBody = lastError?.responseBody;
   error.attemptContext = lastError?.attemptContext;
   error.routingState = state;
@@ -261,7 +268,6 @@ async function executeMessagesRouting(requestId: string, requestedModel: string,
     parseInt(String(settingsManager.get("keyHopAttempts")), 10) || 0,
   );
   let lastError = null;
-  let autoFallbackOccurred = false;
 
   for (let target = nextTarget(state); target; target = nextTarget(state)) {
     let fallbackTarget = false;
@@ -363,10 +369,9 @@ async function executeMessagesRouting(requestId: string, requestedModel: string,
       }
     }
     if (!fallbackTarget) throw lastError;
-    if (state.autoModel) autoFallbackOccurred = true;
   }
 
-  if (autoFallbackOccurred) throw autoExhausted(lastError, state);
+  if (state.autoModel) throw autoExhausted(lastError, state);
   if (lastError) {
     lastError.routingState = state;
     throw lastError;

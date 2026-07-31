@@ -17,7 +17,6 @@ import { getApiKeyId } from "../utils/keyIdentity.js";
 import crypto from "crypto";
 import { createSession, deleteSession } from "../services/sessionManager.js";
 import {
-  findAutoDependents,
   rewriteAutoTargetReferences,
   validateModelDefinition,
 } from "../utils/autoRouting.js";
@@ -783,7 +782,13 @@ function readEndpointsDocument() {
 }
 
 function modelType(config: any) {
-  return config?.type === "auto" ? "auto" : "concrete";
+  return config?.type === "auto" || config?.modelType === "auto" ? "auto" : "concrete";
+}
+
+function effectiveModelName(name: unknown, config: DynamicRecord) {
+  const displayName = typeof name === "string" ? name.trim() : "";
+  if (displayName || modelType(config) === "auto") return displayName;
+  return typeof config.backend === "string" ? config.backend.trim() : "";
 }
 
 function modelValidationContext(models: any) {
@@ -853,10 +858,6 @@ function buildStoredModel(definition: DynamicRecord, existing: DynamicRecord = {
   return stored;
 }
 
-function dependencyConflict(res: any, dependents: any, message: any) {
-  return res.status(409).json({ error: message, dependents });
-}
-
 // Get all models as normalized concrete/auto records.
 router.get("/api/models", verifySession, async (_req: any, res: any) => {
   try {
@@ -874,8 +875,12 @@ router.get("/api/models", verifySession, async (_req: any, res: any) => {
 // Add model. Concrete and auto definitions share the same validator.
 router.post("/api/models", verifySession, async (req: any, res: any) => {
   try {
-    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
-    if (!name) return res.status(400).json({ error: "Model name required" });
+    const name = effectiveModelName(req.body.name, req.body);
+    if (!name) {
+      return res.status(400).json({
+        error: modelType(req.body) === "auto" ? "Model name required" : "Model name or backend required",
+      });
+    }
 
     const data = readModelsDocument();
     if (data.models[name]) {
@@ -900,9 +905,7 @@ router.post("/api/models", verifySession, async (req: any, res: any) => {
 router.put("/api/models", verifySession, async (req: any, res: any) => {
   try {
     const oldName = typeof req.body.oldName === "string" ? req.body.oldName.trim() : "";
-    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
     if (!oldName) return res.status(400).json({ error: "Old model name required" });
-    if (!name) return res.status(400).json({ error: "Model name required" });
 
     const modelsPath = getModelsPath();
     if (!fs.existsSync(modelsPath)) {
@@ -914,22 +917,22 @@ router.put("/api/models", verifySession, async (req: any, res: any) => {
     const existing = data.models[oldName];
     if (!existing) return res.status(404).json({ error: "Model not found" });
 
+    const updates = { ...req.body };
+    delete updates.oldName;
+    delete updates.name;
+    const stored = buildStoredModel(updates, existing);
+    const name = effectiveModelName(req.body.name, stored);
+    if (!name) {
+      return res.status(400).json({
+        error: modelType(stored) === "auto" ? "Model name required" : "Model name or backend required",
+      });
+    }
     const nameChanged = oldName !== name;
     if (nameChanged && data.models[name]) {
       return res.status(400).json({ error: "Model already exists" });
     }
 
-    const updates = { ...req.body };
-    delete updates.oldName;
-    delete updates.name;
-    const stored = buildStoredModel(updates, existing);
     const existingIsConcrete = modelType(existing) === "concrete";
-    if (existingIsConcrete && (modelType(stored) !== "concrete" || stored.disabled === true)) {
-      const dependents = findAutoDependents(data.models, oldName);
-      if (dependents.length) {
-        return dependencyConflict(res, dependents, "Referenced concrete model cannot be disabled or converted");
-      }
-    }
 
     const candidateModels = { ...data.models };
     if (nameChanged) delete candidateModels[oldName];
@@ -967,13 +970,6 @@ router.delete("/api/models", verifySession, async (req: any, res: any) => {
     const data = readModelsDocument();
     const existing = data.models[name];
     if (!existing) return res.status(404).json({ error: "Model not found" });
-    if (modelType(existing) === "concrete") {
-      const dependents = findAutoDependents(data.models, name);
-      if (dependents.length) {
-        return dependencyConflict(res, dependents, "Referenced concrete model cannot be deleted");
-      }
-    }
-
     delete data.models[name];
     fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2));
     loadModelsFromFile();
@@ -1018,12 +1014,6 @@ router.patch("/api/models/toggle", verifySession, async (req: any, res: any) => 
     if (!existing) return res.status(404).json({ error: "Model not found" });
 
     const disabled = existing.disabled !== true;
-    if (disabled && modelType(existing) === "concrete") {
-      const dependents = findAutoDependents(data.models, name);
-      if (dependents.length) {
-        return dependencyConflict(res, dependents, "Referenced concrete model cannot be disabled");
-      }
-    }
     const updated = { ...existing, disabled };
     if (!disabled) {
       const validationError = validateAdminModel(name, updated, { ...data.models, [name]: updated });
@@ -1062,6 +1052,9 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
     const endpointInfo = await getEndpointForModel(name, { ignoreState: true });
     if (!endpointInfo) {
       return res.status(400).json({ ok: false, error: `No endpoint configured for model '${name}'` });
+    }
+    if (endpointInfo.tokenExhausted || !endpointInfo.token) {
+      return res.status(400).json({ ok: false, error: "Model endpoint has no configured keys" });
     }
 
     const { url: backendUrl, token: backendToken, actualModel, customHeaders, apiFormat } = endpointInfo;
@@ -1207,8 +1200,8 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
       if (single) tokens = [single];
     }
 
-    if (!url || tokens.length === 0)
-      return res.status(400).json({ error: "URL and at least one token are required" });
+    if (!url)
+      return res.status(400).json({ error: "URL is required" });
 
     // Validate and capture apiFormat from request, falling back to admin panel default
     const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'openai-responses', 'openai-codex'];
@@ -1402,30 +1395,30 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
     let resolvedTokens = null;
     if (incomingTokens !== null) {
       if (incomingTokens.length === 0) {
-        return res.status(400).json({ error: "At least one token is required" });
-      }
-
-      const hasMasked = incomingTokens.some((t: any) => t.includes("****"));
-
-      if (hasMasked) {
-        // Read the real stored tokens so we can de-mask
-        const storedTokens = data[endpointKey].tokens || [];
-
-        // Build masked→real lookup (same masking logic as GET handler)
-        const maskedToReal = new Map();
-        for (const t of storedTokens) {
-          const masked = t.length > 8
-            ? t.substring(0, 4) + "****" + t.substring(t.length - 4)
-            : "****";
-          maskedToReal.set(masked, t);
-        }
-
-        resolvedTokens = incomingTokens.map((t: any) =>
-          t.includes("****") ? (maskedToReal.get(t) ?? t) : t
-        );
+        resolvedTokens = [];
       } else {
-        // All real (new) tokens — use directly
-        resolvedTokens = incomingTokens;
+        const hasMasked = incomingTokens.some((t: any) => t.includes("****"));
+
+        if (hasMasked) {
+          // Read the real stored tokens so we can de-mask
+          const storedTokens = data[endpointKey].tokens || [];
+
+          // Build masked→real lookup (same masking logic as GET handler)
+          const maskedToReal = new Map();
+          for (const t of storedTokens) {
+            const masked = t.length > 8
+              ? t.substring(0, 4) + "****" + t.substring(t.length - 4)
+              : "****";
+            maskedToReal.set(masked, t);
+          }
+
+          resolvedTokens = incomingTokens.map((t: any) =>
+            t.includes("****") ? (maskedToReal.get(t) ?? t) : t
+          );
+        } else {
+          // All real (new) tokens — use directly
+          resolvedTokens = incomingTokens;
+        }
       }
     }
 
@@ -1531,21 +1524,6 @@ router.delete("/api/endpoints", verifySession, async (req: any, res: any) => {
     const endpointConcreteModels = Object.entries(modelsData.models)
       .filter(([, config]) => modelType(config as DynamicRecord) === "concrete" && (config as DynamicRecord).version === endpointKey)
       .map(([modelName]) => modelName);
-    const blockingConcreteModels = endpointConcreteModels.filter(
-      (modelName: any) => findAutoDependents(modelsData.models, modelName).length > 0,
-    );
-    const autoBlockers = [...new Set(
-      blockingConcreteModels.flatMap((modelName: any) =>
-        findAutoDependents(modelsData.models, modelName),
-      ),
-    )];
-    if (autoBlockers.length) {
-      return res.status(409).json({
-        error: "Endpoint models are referenced by auto models",
-        blockers: { concrete: blockingConcreteModels, auto: autoBlockers },
-      });
-    }
-
     for (const modelName of endpointConcreteModels) {
       delete modelsData.models[modelName];
     }

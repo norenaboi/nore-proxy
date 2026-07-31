@@ -43,6 +43,7 @@ function persistUpstreamError({ requestId, modelName, endpointInfo, requestHeade
 
 function sendStreamError(res: any, requestId: any, modelName: any, error: any, statusCode: any = 500) {
   if (res.writableEnded) return;
+  if (!res.headersSent) res.status(statusCode);
   res.write(`data: ${JSON.stringify({ id: `chatcmpl-${requestId}`, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: modelName, choices: [{ index: 0, delta: {}, finish_reason: "error" }], error: { message: error?.message || "Unknown error", type: "server_error", code: error?.code || statusCode } })}\n\n`);
   res.write("data: [DONE]\n\n");
   res.end();
@@ -71,10 +72,17 @@ function withContext(error: Error, endpointInfo: any, prepared: Partial<Prepared
 }
 
 function autoExhausted(lastError: any, state: any) {
-  const error = new Error(lastError?.message || "All automatic routing targets failed.");
-  error.name = "AutoTargetsExhaustedError";
-  error.code = "auto_targets_exhausted";
-  error.statusCode = statusOf(lastError) || 502;
+  const unavailable = state.attempts.length === 0 || state.attempts.every(
+    (attempt: any) => attempt.outcome === "target_unavailable" || attempt.outcome === "key_exhausted",
+  );
+  const error = new Error(
+    unavailable
+      ? `Automatic model '${state.requestedModel}' has no available targets.`
+      : lastError?.message || "All automatic routing targets failed.",
+  );
+  error.name = unavailable ? "AutoTargetsUnavailableError" : "AutoTargetsExhaustedError";
+  error.code = unavailable ? "auto_targets_unavailable" : "auto_targets_exhausted";
+  error.statusCode = unavailable ? 503 : statusOf(lastError) || 502;
   error.responseBody = lastError?.responseBody;
   error.attemptContext = lastError?.attemptContext;
   error.routingState = state;
@@ -155,7 +163,6 @@ async function executeRouting(requestId: string, requestedModel: string, runAtte
   const state = createRoutingState({ requestId, requestedModel, registry: MODEL_REGISTRY, globalCeiling: settingsManager.get("autoModelMaxTargetAttempts") });
   const maxKeyAttempts = 1 + Math.max(0, parseInt(String(settingsManager.get("keyHopAttempts")), 10) || 0);
   let lastError = null;
-  let autoFallbackOccurred = false;
 
   for (let target = nextTarget(state); target; target = nextTarget(state)) {
     let fallback = false;
@@ -166,8 +173,18 @@ async function executeRouting(requestId: string, requestedModel: string, runAtte
       if (!endpoint) {
         const error = new Error("Can't find the model you're looking for.");
         error.name = "EndpointResolutionError";
-        error.statusCode = 404;
-        throw error;
+        error.statusCode = state.autoModel ? 503 : 404;
+        if (!state.autoModel) throw error;
+        lastError = error;
+        recordRoutingAttempt(state, {
+          targetModel: target,
+          keyAttempt,
+          outcome: "target_unavailable",
+          retryReason: "http_5xx",
+          statusCode: 503,
+        });
+        fallback = true;
+        break;
       }
       endpointKey = endpoint.endpointKey;
       const tried = attemptedKeyHashes(state, endpointKey) ?? new Set<string>();
@@ -202,9 +219,8 @@ async function executeRouting(requestId: string, requestedModel: string, runAtte
       }
     }
     if (!fallback) throw lastError;
-    if (state.autoModel) autoFallbackOccurred = true;
   }
-  if (autoFallbackOccurred) throw autoExhausted(lastError, state);
+  if (state.autoModel) throw autoExhausted(lastError, state);
   if (lastError) {
     lastError.routingState = state;
     throw lastError;

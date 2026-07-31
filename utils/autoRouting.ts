@@ -94,7 +94,6 @@ export function validateModelDefinition(
     ? config.targets.map((target) => String(target).trim()).filter(Boolean)
     : [];
   const uniqueTargets = [...new Set(targets)];
-  if (targets.length < 2) errors.push("Auto model requires at least two targets");
   if (uniqueTargets.length !== targets.length) errors.push("Auto model targets must be unique");
 
   const targetSelection =
@@ -109,39 +108,14 @@ export function validateModelDefinition(
     maxTargetAttempts = Number(config.maxTargetAttempts);
     if (!positiveInteger(maxTargetAttempts)) {
       errors.push("Maximum target attempts must be a positive integer");
-    } else {
-      if (maxTargetAttempts > targets.length) {
-        errors.push("Maximum target attempts cannot exceed target count");
-      }
-      if (maxTargetAttempts > globalCeiling) {
-        errors.push("Maximum target attempts cannot exceed the global ceiling");
-      }
+    } else if (maxTargetAttempts > globalCeiling) {
+      errors.push("Maximum target attempts cannot exceed the global ceiling");
     }
   }
 
-  const rawModels = context.models || {};
   for (const target of uniqueTargets) {
     if (target === trimmedName) {
       errors.push("Auto model cannot target itself");
-      continue;
-    }
-    const targetConfig = rawModels[target];
-    if (!targetConfig) {
-      errors.push(`Target '${target}' does not exist`);
-      continue;
-    }
-    if (modelType(targetConfig) !== "concrete") {
-      errors.push(`Target '${target}' must be a concrete model`);
-      continue;
-    }
-    if (targetConfig.disabled === true) {
-      errors.push(`Target '${target}' is disabled`);
-    }
-    if (
-      context.endpoints &&
-      (typeof targetConfig.version !== "string" || !context.endpoints[targetConfig.version as EndpointKey])
-    ) {
-      errors.push(`Target '${target}' references a missing endpoint`);
     }
   }
 

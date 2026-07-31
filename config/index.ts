@@ -78,15 +78,15 @@ class Config {
         const index = match[1];
         const tokens = Array.isArray(endpoint.tokens) ? endpoint.tokens : [];
 
-        if (!endpoint.url || tokens.length === 0) {
-          console.warn(`Warning: Endpoint "${key}" missing url or tokens — skipping`);
+        if (!endpoint.url) {
+          console.warn(`Warning: Endpoint "${key}" missing url — skipping`);
           continue;
         }
 
         this.ENDPOINTS[key] = {
           name: endpoint.name || `Endpoint ${index}`,
           url: endpoint.url,
-          token: tokens[0], // Keep for backward compat
+          token: tokens[0] ?? null, // Keep for backward compat
           tokens,
           headers: endpoint.headers || {},
           apiFormat: endpoint.apiFormat || "openai",

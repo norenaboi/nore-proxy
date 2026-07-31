@@ -203,9 +203,6 @@
     if (bulkInput.trim()) finalTokens = mergeBulkTokens(finalTokens, bulkInput).tokens;
 
     if (!url) return toast.show("Please enter a URL", "error");
-    if (finalTokens.length === 0) return toast.show("Please add at least one API token", "error");
-    const hasReal = finalTokens.some((t) => !t.includes("****"));
-    if (editingIndex === null && !hasReal) return toast.show("Please add at least one API token", "error");
 
     let headers: Record<string, string> = {};
     if (fHeaders.trim()) {
@@ -374,7 +371,7 @@
               {/each}
             </div>
             <div class="input-row"><input type="password" bind:value={tokenInput} placeholder={editingIndex !== null ? "Add a new token (optional)" : "Paste a token and press Add"} onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTokenFromInput(); } }} /><button class="btn btn-secondary" type="button" onclick={addTokenFromInput} disabled={!tokenInput.trim()}>Add</button></div>
-            <p class="form-hint">Add one or more tokens. Requests will be round-robined across all tokens.</p>
+            <p class="form-hint">Keys are optional. Requests cannot use this endpoint until at least one key is configured.</p>
             <div class="bulk-token-section"><textarea class="bulk-input" bind:value={bulkInput} rows="3" placeholder="Paste many tokens, one per line, then click Import"></textarea><div class="bulk-actions"><button class="btn btn-danger btn-sm" type="button" onclick={() => bulkDeleteOpen = true} disabled={pendingTokens.length === 0}><i class="fa-solid fa-trash"></i> Delete all keys</button><button class="btn btn-secondary btn-sm" type="button" onclick={importBulk} disabled={!bulkInput.trim()}><i class="fa-solid fa-file-import"></i> Import lines</button></div><p class="form-hint">One token per line. Blank lines, duplicates, and masked placeholders are skipped.</p></div>
           </div>
         </div>
@@ -457,7 +454,7 @@
   <div class="modal-backdrop active" transition:fade={{ duration: motionDuration(300) }} onclick={(e) => { if (e.target === e.currentTarget) bulkDeleteOpen = false; }} role="presentation">
     <div class="modal" transition:scale={{ duration: motionDuration(300), start: 0.9 }} role="dialog" aria-modal="true">
       <div class="modal-header"><h2>Remove All Tokens</h2><button class="modal-close" type="button" onclick={() => bulkDeleteOpen = false}>✕</button></div>
-      <p>Remove all <strong>{pendingTokens.length}</strong> token{pendingTokens.length !== 1 ? "s" : ""} from this endpoint? You will need to add new ones before saving.</p>
+      <p>Remove all <strong>{pendingTokens.length}</strong> token{pendingTokens.length !== 1 ? "s" : ""} from this endpoint? You can save the endpoint without keys and add them later.</p>
       <div class="modal-footer">
         <button class="btn btn-secondary" type="button" onclick={() => bulkDeleteOpen = false}>Cancel</button>
         <button class="btn btn-danger" type="button" onclick={confirmBulkDeleteTokens}>Remove all</button>
