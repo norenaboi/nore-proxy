@@ -158,7 +158,7 @@ All admin endpoints require authentication.
 - **Frontend:** Svelte 5 + TypeScript, bundled with Vite
 - **Backend:** Node.js + Express + TypeScript (ESM, executed with `tsx`)
 - **Storage:** Better-SQLite3 by default, with optional PostgreSQL
-- **Testing:** Vitest for frontend unit tests and Node.js Test Runner for backend tests
+- **Testing:** A global `npm test` health check built on the Node.js Test Runner
 - **Deployment:** Multi-stage Docker build with compiled frontend assets
 
 ## License

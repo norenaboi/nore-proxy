@@ -137,24 +137,23 @@ Public pages are eagerly imported. Admin pages are lazy imported and form build 
 | `npm run typecheck` | Run server and frontend typechecks | Frontend typecheck also performs a Vite build. |
 | `npm run typecheck:server` | Typecheck server/shared TypeScript | No emit. |
 | `npm run typecheck:frontend` | Typecheck and build the frontend | Includes a production Vite build. |
-| `npm run test:frontend` | Run frontend Vitest tests | Vitest currently uses a Node environment. |
-| `npm run check` | Typecheck, run frontend tests, and build | Does not run backend tests. |
+| `npm test` | Run the global repository health check | Runs server typechecking, frontend typechecking and production build, then all root unit and contract tests. |
+| `npm run test:frontend` | Run frontend utility tests | Uses Node's test runner with `tsx`. |
+| `npm run check` | Run the global repository health check | Alias of `npm test`. |
 
 Current limitations:
 
 - There is no lint or format script/configuration.
-- `npm test` targets `tests/*.test.js`, but that tracked backend test directory is currently absent. Treat the script as stale until tests are restored or added; do not report it as passing merely because no backend suite ran.
-- The established frontend baseline includes catalog utility tests. Always inspect the working tree for additional local tests before deciding what to run or preserve.
+- Tests avoid live services and operational data; application and persistence integration checks require explicitly isolated configuration and database paths.
 
 ## Verification policy
 
-Use the repository Docker image for executable checks, including dependency installation, typechecks, tests, builds, server startup, API integration, and browser verification. Do not fall back to host Node/npm when Docker is available.
+Run executable checks directly from the working tree with the repository's Node/npm scripts. Do not use Docker for verification unless the user explicitly requests it.
 
-- Build and run disposable containers from the working tree.
-- Use isolated JSON configuration and isolated database paths.
-- Bind only to a loopback, non-production port and use a non-production container name.
-- Never stop, remove, restart, rename, or modify a live `nore-proxy` container to free a port or name.
-- Do not restart the deployed Compose service until isolated verification succeeds and the user explicitly approves deployment.
+- Use isolated JSON configuration and isolated database paths for checks that start the application or exercise persistence.
+- Bind test servers only to a loopback, non-production port.
+- Never stop, remove, restart, rename, or modify a live `nore-proxy` process, container, or service to free a port or name.
+- Do not restart or modify the deployed service unless isolated verification succeeds and the user explicitly approves deployment.
 - Run the smallest relevant check first, followed by broader checks when warranted.
 - For documentation-only changes, review the Markdown and run `git diff --check`; an application build is unnecessary.
 - Report every skipped, unavailable, stale, or failing check honestly.
@@ -199,7 +198,7 @@ A change is complete when:
 
 - all coupled server, frontend, persistence, and protocol surfaces are updated;
 - credential, privacy, masking, logging, and streaming invariants are preserved;
-- relevant checks have run in an isolated Docker environment, or documentation-only verification has completed;
+- relevant checks have run from the working tree with appropriate runtime isolation, or documentation-only verification has completed;
 - failures and verification gaps are reported accurately;
 - generated/runtime files and unrelated user changes remain untouched;
 - no commit, deployment, or live-service action occurred without explicit authorization.

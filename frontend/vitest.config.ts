@@ -12,5 +12,6 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    include: ["frontend/tests/**/*.test.ts"],
   },
 });
