@@ -7,8 +7,8 @@ import Config from "../config/index.js";
 import { DatabaseFacade } from "./database.js";
 import settingsManager from "./settingsManager.js";
 
-export const ACTIONABLE_CODES = new Set([401, 402, 403, 429]);
-export const INVALID_CODES = new Set([401, 402]);
+export const ACTIONABLE_CODES = new Set([400, 401, 402, 403, 404, 429]);
+export const INVALID_CODES = new Set([401, 403, 404]);
 export const TIMEOUT_CODE = 429;
 
 interface KeyStateRow {
