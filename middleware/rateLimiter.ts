@@ -8,8 +8,23 @@ type RateLimitError = Error & { statusCode: number };
 // IP-level brute-force limiter for the admin login route
 // Tracks attempt timestamps per IP and rejects if too many occur within the window
 const ADMIN_WINDOW_SECONDS = 60;
-const ADMIN_MAX_ATTEMPTS = parseInt(process.env.ADMIN_MAX_ATTEMPTS || "5", 10);
+const ADMIN_MAX_ATTEMPTS = resolveAdminMaxAttempts(process.env.ADMIN_MAX_ATTEMPTS);
 const adminAttempts: AttemptMap = new Map();
+
+// A non-numeric or non-positive override would make every `length >= limit`
+// comparison false and silently disable brute-force protection.
+function resolveAdminMaxAttempts(rawValue: string | undefined): number {
+  const fallback = 5;
+  if (rawValue === undefined || rawValue.trim() === "") return fallback;
+  const parsed = Number(rawValue);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    console.warn(
+      `Warning: ignoring invalid ADMIN_MAX_ATTEMPTS "${rawValue}"; using ${fallback}.`,
+    );
+    return fallback;
+  }
+  return parsed;
+}
 
 // IP-level brute-force limiter for /api/usage
 // Prevents attackers from enumerating valid API keys via repeated lookups
@@ -17,6 +32,8 @@ const USAGE_WINDOW_SECONDS = 60;
 const USAGE_MAX_ATTEMPTS = 10;
 const usageAttempts: AttemptMap = new Map();
 
+// Eviction timers are unref'd: they exist to bound map growth in a running
+// server, and must not by themselves keep the process alive.
 setInterval(() => {
   const cutoff = Date.now() / 1000 - USAGE_WINDOW_SECONDS * 2;
   for (const [ip, timestamps] of usageAttempts.entries()) {
@@ -24,7 +41,7 @@ setInterval(() => {
     if (fresh.length === 0) usageAttempts.delete(ip);
     else usageAttempts.set(ip, fresh);
   }
-}, 60000);
+}, 60000).unref();
 
 setInterval(() => {
   const cutoff = Date.now() / 1000 - ADMIN_WINDOW_SECONDS * 2;
@@ -33,7 +50,7 @@ setInterval(() => {
     if (fresh.length === 0) adminAttempts.delete(ip);
     else adminAttempts.set(ip, fresh);
   }
-}, 60000);
+}, 60000).unref();
 
 export function usageRateLimit(
   req: Request,

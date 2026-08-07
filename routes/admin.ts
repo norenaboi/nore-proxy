@@ -321,7 +321,9 @@ router.get("/api/logs", verifySession, async (req: any, res: any) => {
         name:
           log.key_name ||
           (apiKey !== "Unknown" ? await apiKeyManager.getKeyName(apiKey) : "Unknown"),
-        api_key: apiKey.length > 5 ? apiKey.substring(0, 5) + "..." : apiKey,
+        // Stored log keys are already masked; maskKey is idempotent over that
+        // form and, unlike a bare substring, never returns a short key whole.
+        api_key: maskKey(apiKey),
         model,
         input_tokens: log.input_tokens || 0,
         output_tokens: log.output_tokens || 0,
@@ -703,11 +705,12 @@ router.post("/api/keys", verifySession, async (req: any, res: any) => {
   }
 });
 
-// Update API key
+// Update API key. Identified by opaque key id; the raw secret is resolved
+// server-side and never travels in the request.
 router.put("/api/keys", verifySession, async (req: any, res: any) => {
   try {
     const newName = (req.body.name || "").trim();
-    const apiKey = (req.body.api_key || "").trim();
+    const apiKey = await apiKeyManager.resolveKeyId(req.body.key_id);
     const rpd = req.body.rpd;
     const rpm = req.body.rpm;
     const max_context_size =
@@ -716,6 +719,9 @@ router.put("/api/keys", verifySession, async (req: any, res: any) => {
         : settingsManager.get("maxContextSizeDefault");
     const active = req.body.active;
 
+    if (!apiKey) {
+      return res.status(404).json({ error: "API key not found" });
+    }
     if (!newName) {
       return res.status(400).json({ error: "Name is required" });
     }
@@ -741,13 +747,17 @@ router.put("/api/keys", verifySession, async (req: any, res: any) => {
   }
 });
 
-// Delete API key
+// Delete API key by opaque key id.
 router.delete("/api/keys", verifySession, async (req: any, res: any) => {
   try {
-    const apiKey = (req.body.api_key || "").trim();
+    const apiKey = await apiKeyManager.resolveKeyId(req.body.key_id);
+    if (!apiKey) {
+      return res.status(404).json({ error: "API key not found" });
+    }
 
+    const name = await apiKeyManager.getKeyName(apiKey);
     await apiKeyManager.removeKey(apiKey);
-    console.log(`Deleted API key: ${apiKey}`);
+    console.log(`Deleted API key: ${name} (${maskKey(apiKey)})`);
 
     res.json({ message: "API key deleted successfully" });
   } catch (error: any) {
@@ -1891,9 +1901,9 @@ router.get("/api/users", verifySession, async (req: any, res: any) => {
     for (const apiKey of Object.keys(allApiKeys)) {
       const stats = await apiKeyManager.getUsageStats(apiKey);
       users.push({
+        id: getApiKeyId(apiKey),
         name: stats.name || "Unnamed",
-        api_key: apiKey.length > 5 ? apiKey.substring(0, 5) + "..." : apiKey,
-        api_key_full: apiKey, // Send full key for routing (admin-only endpoint, already behind session auth)
+        api_key: maskKey(apiKey),
         active: stats.active,
         daily_requests: stats.daily_requests || 0,
         total_requests: stats.total_requests || 0,
@@ -1918,13 +1928,12 @@ router.get("/api/users", verifySession, async (req: any, res: any) => {
   }
 });
 
-// Get individual user details with recent requests
-router.get("/api/users/:apiKey", verifySession, async (req: any, res: any) => {
+// Get individual user details with recent requests, addressed by opaque key id
+// so the secret never appears in a URL, access log, or browser history.
+router.get("/api/users/:keyId", verifySession, async (req: any, res: any) => {
   try {
-    const fullApiKey = req.params.apiKey;
-
-    // Validate that the key exists
-    if (!(await apiKeyManager.validateKey(fullApiKey).then(() => true).catch(() => false))) {
+    const fullApiKey = await apiKeyManager.resolveKeyId(req.params.keyId);
+    if (!fullApiKey) {
       return res.status(404).json({ error: "User not found" });
     }
 
@@ -1932,12 +1941,7 @@ router.get("/api/users/:apiKey", verifySession, async (req: any, res: any) => {
     const logs = await logManager.readRequestLogs(10000);
 
     // Get masked key for log filtering
-    const maskedKey =
-      fullApiKey.length > 8
-        ? fullApiKey.substring(0, 5) +
-          "..." +
-          fullApiKey.substring(fullApiKey.length - 3)
-        : "****";
+    const maskedKey = maskKey(fullApiKey);
 
     // Filter logs for this user
     const allUserLogs = logs.filter((log: any) => log.api_key === maskedKey);
@@ -1971,7 +1975,7 @@ router.get("/api/users/:apiKey", verifySession, async (req: any, res: any) => {
 
     res.json({
       name: stats.name || "Unnamed",
-      api_key: fullApiKey.length > 5 ? fullApiKey.substring(0, 5) + "..." : fullApiKey,
+      api_key: maskKey(fullApiKey),
       active: stats.active,
       daily_requests: stats.daily_requests || 0,
       total_requests: stats.total_requests || 0,

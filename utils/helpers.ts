@@ -237,11 +237,20 @@ function addCacheControlToMessage(message: any) {
   return message;
 }
 
+/**
+ * Rough token estimate from a character count. Split out so callers that
+ * retain only a bounded prefix of generated text can still estimate from the
+ * full length that passed through.
+ */
+export function estimateTokensFromLength(length: any) {
+  return Number.isFinite(length) && length > 0 ? Math.floor(length / 4) : 0;
+}
+
 export function estimateTokens(input: any) {
   if (!input) return 0;
 
   if (typeof input === "string") {
-    return Math.floor(input.length / 4);
+    return estimateTokensFromLength(input.length);
   }
 
   if (Array.isArray(input)) {

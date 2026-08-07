@@ -1,12 +1,13 @@
 import express, { type Request, type Response } from "express";
 import axios from "axios";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 import { verifyApiKey } from "../middleware/auth.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import settingsManager from "../services/settingsManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
 import { logRequestStart, logRequestEnd, logError, normalizeBillingTokens } from "../utils/logging.js";
-import { MODEL_REGISTRY, getEndpointForConcreteModel, getFullUrl, estimateTokens, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, resolveKeyHealth, getClientIp } from "../utils/helpers.js";
+import { MODEL_REGISTRY, getEndpointForConcreteModel, getFullUrl, estimateTokens, estimateTokensFromLength, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, resolveKeyHealth, getClientIp } from "../utils/helpers.js";
+import { createBoundedText, guardCarryBuffer, type BoundedText } from "../utils/streamLimits.js";
 import keyStateManager, { ACTIONABLE_CODES } from "../services/keyStateManager.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import { buildUpstreamErrorContext, getUpstreamErrorMessage, readUpstreamErrorBody } from "../utils/upstreamErrors.js";
@@ -30,7 +31,7 @@ type PreparedAttempt = {
   requestUrl: string;
 };
 type RoutingAttemptRunner = (state: any, endpoint: any) => Promise<any>;
-type StreamResult = { content: string; reasoning: string; usage: any };
+type StreamResult = { content: BoundedText; reasoning: BoundedText; usage: any };
 
 
 const router = express.Router();
@@ -236,7 +237,7 @@ router.post("/v1/chat/completions", verifyApiKey, async (req: any, res: any) => 
   try { await apiKeyManager.checkForGeneration(apiKey, rateLimiter, estimateTokens(baseRequest.messages || [])); }
   catch (error: any) { return res.status(error.statusCode || 500).json({ error: { message: error.message } }); }
 
-  const requestId = uuidv4();
+  const requestId = randomUUID();
   const modelName = baseRequest.model;
   const streaming = baseRequest.stream === true;
   if (!MODEL_REGISTRY[modelName]) return res.status(404).json({ error: `Model '${modelName}' not found.` });
@@ -355,11 +356,18 @@ async function streamFromBackend(req: Request, res: Response, requestId: string,
 
 function consumeStream(stream: StreamWithDestroy, res: Response, state: any, adapter: any, streamCtx: import("../types/adapter.js").AdapterStreamContext, requestId: string, isClientAborted: () => boolean): Promise<StreamResult> {
   return new Promise((resolve: any, reject: any) => {
-    let settled = false, buffer = "", content = "", reasoning = ""; let usage: any = null;
+    let settled = false, buffer = "";
+    const content = createBoundedText();
+    const reasoning = createBoundedText();
+    let usage: any = null;
     const fail = (error: any) => { if (!settled) { settled = true; reject(error); } };
     stream.on("data", (chunk: any) => {
       if (settled) return;
       buffer += chunk.toString();
+      // A hostile or broken upstream can withhold newlines indefinitely.
+      // Settle before destroying so the close event cannot reclassify this.
+      try { guardCarryBuffer(buffer); }
+      catch (error: any) { buffer = ""; fail(error); stream.destroy?.(); return; }
       const lines = buffer.split("\n"); buffer = lines.pop() || "";
       for (const line of lines) {
         const trimmed = line.trim();
@@ -375,8 +383,8 @@ function consumeStream(stream: StreamWithDestroy, res: Response, state: any, ada
           // throw typed in-band failures (for example response.failed).
           const chunkOut = adapter.buildStreamChunk(raw, streamCtx);
           const parsed = adapter.parseStreamChunk(raw, streamCtx);
-          if (parsed?.deltaContent) content += parsed.deltaContent;
-          if (parsed?.deltaReasoning) reasoning += parsed.deltaReasoning;
+          if (parsed?.deltaContent) content.append(parsed.deltaContent);
+          if (parsed?.deltaReasoning) reasoning.append(parsed.deltaReasoning);
           usage = mergeUsage(usage, parsed?.usage);
           if (chunkOut && !res.writableEnded) { markStreamOutputStarted(state); res.write(`data: ${JSON.stringify(chunkOut)}\n\n`); }
         } catch (error: any) { fail(error); return; }
@@ -399,14 +407,16 @@ function billing(usage: any, input: any, output: any, endpoint: any) {
 }
 
 async function logStreamSuccess(requestId: any, result: any, request: any, endpoint: any, apiKey: any, state: any) {
-  const b = billing(result.usage, estimateTokens(request), estimateTokens(result.content) + estimateTokens(result.reasoning), endpoint);
+  // Token estimation uses the full observed output length; only the retained
+  // prefix is persisted as response content.
+  const b = billing(result.usage, estimateTokens(request), estimateTokensFromLength(result.content.totalLength) + estimateTokensFromLength(result.reasoning.totalLength), endpoint);
   await logRequestEnd(
     requestId,
     true,
     b.inputTokens,
     b.outputTokens,
     null,
-    result.content,
+    result.content.text,
     apiKey,
     b.cacheWriteTokens,
     b.cacheReadTokens,

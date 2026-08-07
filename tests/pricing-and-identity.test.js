@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { getApiKeyId, getSafeKeyMetadata } from "../utils/keyIdentity.js";
+import { maskKey } from "../utils/helpers.js";
 import {
   TOKEN_ACCOUNTING_VERSION,
   calculateModelCost,
@@ -58,6 +59,18 @@ test("API key identity is stable, secret-bound, and safely masked", () => {
       api_key: "secre...key",
       api_key_id: first,
     });
+
+    // Short keys must collapse to "****" rather than being echoed whole; the
+    // hand-rolled substring masks this replaced would return them intact.
+    for (const shortKey of ["sk-1", "12345678"]) {
+      assert.equal(maskKey(shortKey), "****");
+      assert.equal(getSafeKeyMetadata(shortKey).api_key, "****");
+    }
+    assert.equal(maskKey("123456789"), "12345...789");
+
+    // Masking is idempotent, so re-masking an already-masked stored log value
+    // does not reveal more of it.
+    assert.equal(maskKey(maskKey("secret-api-key")), "secre...key");
   } finally {
     if (previousMasterKey === undefined) delete process.env.MASTER_KEY;
     else process.env.MASTER_KEY = previousMasterKey;

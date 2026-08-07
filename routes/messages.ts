@@ -1,6 +1,6 @@
 import express, { type Request, type Response } from "express";
 import axios from "axios";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 import { verifyApiKey } from "../middleware/auth.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import settingsManager from "../services/settingsManager.js";
@@ -17,10 +17,16 @@ import {
   getEndpointForConcreteModel,
   getFullUrl,
   estimateTokens,
+  estimateTokensFromLength,
   applyGenerationPolicy,
   resolveKeyHealth,
   getClientIp,
 } from "../utils/helpers.js";
+import {
+  createBoundedText,
+  createToolByteBudget,
+  guardCarryBuffer,
+} from "../utils/streamLimits.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import { openAIResponseToAnthropic } from "../utils/responseFormats.js";
 import {
@@ -429,7 +435,7 @@ router.post("/v1/messages", verifyApiKey, async (req: any, res: any) => {
   const anthropicReq = clone(req.body);
   const modelName = anthropicReq.model;
   const isStreaming = anthropicReq.stream === true;
-  const requestId = uuidv4();
+  const requestId = randomUUID();
 
   // Convert Anthropic messages to OpenAI format for token estimation
   const openaiMessages = anthropicToOpenAIMessages(anthropicReq);
@@ -826,7 +832,6 @@ async function streamMessagesAttempt(
   if (endpointOverride?.generationDefaults) {
     applyGenerationPolicy(anthropicReq, endpointOverride.generationDefaults);
   }
-  let accumulatedContent = "";
   let endpointInfo = null;
   let fullUrl = null;
   let requestUrl = null;
@@ -1002,7 +1007,7 @@ function streamAnthropicPassthrough(
   const promise: CancelablePromise = new Promise<void>((resolve: any, reject: any) => {
     let settled = false;
     let buffer = "";
-    let accumulatedContent = "";
+    const accumulated = createBoundedText();
     let usage: any = null;
     const cleanup = () => {
       stream.off("data", onData);
@@ -1021,6 +1026,10 @@ function streamAnthropicPassthrough(
     const onData = (chunk: any) => {
       if (settled) return;
       buffer += chunk.toString();
+      // Native Anthropic events are delimited by a blank line; an upstream
+      // that never sends one must not grow this buffer without limit.
+      try { guardCarryBuffer(buffer); }
+      catch (error: any) { buffer = ""; settle(error); stream.destroy?.(); return; }
       const records = buffer.split("\n\n");
       buffer = records.pop() || "";
       for (const record of records) {
@@ -1057,7 +1066,7 @@ function streamAnthropicPassthrough(
         } else if (data.type === "message_delta" && data.usage) {
           usage = { ...(usage || {}), ...data.usage };
         } else if (data.type === "content_block_delta" && data.delta?.type === "text_delta") {
-          accumulatedContent += data.delta.text || "";
+          accumulated.append(data.delta.text || "");
         }
         if (!res.writableEnded) {
           markStreamOutputStarted(routingState);
@@ -1073,14 +1082,14 @@ function streamAnthropicPassthrough(
       settle();
       const billingTokens = normalizeBillingTokens({
         inputTokens: usage?.input_tokens ?? estimateTokens(openaiMessages),
-        outputTokens: usage?.output_tokens ?? estimateTokens(accumulatedContent),
+        outputTokens: usage?.output_tokens ?? estimateTokensFromLength(accumulated.totalLength),
         cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
         cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
         inputIncludesCache: false,
       });
       void (async () => {
         try {
-          await logRequestEnd(requestId, true, billingTokens.inputTokens, billingTokens.outputTokens, null, accumulatedContent, apiKey, billingTokens.cacheWriteTokens, billingTokens.cacheReadTokens, String(billingTokens.tokenAccountingVersion), successfulRoutingMetadata(routingState, execution.endpointInfo, execution));
+          await logRequestEnd(requestId, true, billingTokens.inputTokens, billingTokens.outputTokens, null, accumulated.text, apiKey, billingTokens.cacheWriteTokens, billingTokens.cacheReadTokens, String(billingTokens.tokenAccountingVersion), successfulRoutingMetadata(routingState, execution.endpointInfo, execution));
         } catch (error) {
           console.error("Failed to log completed message stream:", error);
         } finally {
@@ -1119,8 +1128,11 @@ function streamOpenAIToAnthropic(
   (res as any).__routingState = routingState;
   const adapter = getAdapter(apiFormat);
   let buffer = "";
-  let accumulatedContent = "";
-  let accumulatedReasoning = "";
+  const accumulatedContent = createBoundedText();
+  const accumulatedReasoning = createBoundedText();
+  // Tool arguments must be retained in full to emit valid tool events, so an
+  // oversized buffer fails the stream rather than truncating silently.
+  const toolBudget = createToolByteBudget();
   let streamUsage: any = null;
   let sentMessageStart = false;
   let terminated = false;
@@ -1236,6 +1248,7 @@ function streamOpenAIToAnthropic(
     toolFragments.clear();
     toolOrder.length = 0;
     lastToolIndex = null;
+    toolBudget.reset();
   }
 
   function closeOpenBlocks() {
@@ -1257,7 +1270,8 @@ function streamOpenAIToAnthropic(
       delta: { stop_reason: stopReason, stop_sequence: null },
       usage: {
         output_tokens: streamUsage?.completion_tokens ??
-          (estimateTokens(accumulatedContent) + estimateTokens(accumulatedReasoning)),
+          (estimateTokensFromLength(accumulatedContent.totalLength) +
+            estimateTokensFromLength(accumulatedReasoning.totalLength)),
       },
     });
     writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
@@ -1282,6 +1296,9 @@ function streamOpenAIToAnthropic(
   const onData = (chunk: any) => {
     if (settled) return;
     buffer += chunk.toString();
+    // Guard before splitting so a buffer holding complete lines is never rejected.
+    try { guardCarryBuffer(buffer); }
+    catch (error: any) { buffer = ""; settle(error); stream.destroy?.(); return; }
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
 
@@ -1318,7 +1335,7 @@ function streamOpenAIToAnthropic(
           // precedes answer text; if an upstream emits more reasoning after a
           // later block has opened, do not open another thinking block.
           ensureThinkingBlockStart();
-          accumulatedReasoning += parsed.deltaReasoning;
+          accumulatedReasoning.append(parsed.deltaReasoning);
           writeAnthropicEvent(res, "content_block_delta", {
             type: "content_block_delta",
             index: thinkingBlockIndex,
@@ -1331,7 +1348,7 @@ function streamOpenAIToAnthropic(
 
         if (parsed.deltaContent) {
           ensureTextBlockStart();
-          accumulatedContent += parsed.deltaContent;
+          accumulatedContent.append(parsed.deltaContent);
           writeAnthropicEvent(res, "content_block_delta", {
             type: "content_block_delta",
             index: textBlockIndex,
@@ -1353,7 +1370,10 @@ function streamOpenAIToAnthropic(
             if (tc.id) tool.id = tc.id;
             if (tc.function?.name) tool.name = tc.function.name;
             // Preserve arguments carried on the same chunk as the tool ID.
-            if (tc.function?.arguments) tool.fragments.push(tc.function.arguments);
+            if (tc.function?.arguments) {
+              toolBudget.add(tc.function.arguments);
+              tool.fragments.push(tc.function.arguments);
+            }
             lastToolIndex = tcIndex;
           }
         }
@@ -1390,7 +1410,8 @@ function streamOpenAIToAnthropic(
     settle();
     const inputTokens = streamUsage?.prompt_tokens ?? estimateTokens(openaiMessages);
     const outputTokens = streamUsage?.completion_tokens ??
-      (estimateTokens(accumulatedContent) + estimateTokens(accumulatedReasoning));
+      (estimateTokensFromLength(accumulatedContent.totalLength) +
+        estimateTokensFromLength(accumulatedReasoning.totalLength));
     const cacheWriteTokens = streamUsage?.prompt_tokens_details?.cache_creation_input_tokens
       ?? streamUsage?.prompt_tokens_details?.cache_write_tokens ?? 0;
     const cacheReadTokens = streamUsage?.prompt_tokens_details?.cached_tokens
@@ -1411,7 +1432,7 @@ function streamOpenAIToAnthropic(
           billingTokens.inputTokens,
           billingTokens.outputTokens,
           null,
-          accumulatedContent,
+          accumulatedContent.text,
           apiKey,
           billingTokens.cacheWriteTokens,
           billingTokens.cacheReadTokens,

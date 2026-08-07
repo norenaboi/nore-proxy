@@ -6,7 +6,7 @@
   import { toast } from "$frontend/lib/stores";
 
   interface Key {
-    api_key: string; name: string; active: boolean;
+    id: string; api_key: string; name: string; active: boolean;
     rpd: number; rpm: number; max_context_size: number; usage_today: number;
   }
 
@@ -33,7 +33,7 @@
   }
 
   function startEdit(key: Key) {
-    editingKey = key.api_key;
+    editingKey = key.id;
     editState = { name: key.name, rpd: String(key.rpd), rpm: String(key.rpm), max_context_size: String(key.max_context_size ?? 0), active: key.active };
   }
 
@@ -43,7 +43,7 @@
       await requestAdminJson("/api/keys", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api_key: editingKey, name: editState.name, rpd: editState.rpd, rpm: editState.rpm, max_context_size: parseInt(editState.max_context_size, 10) || 0, active: editState.active }),
+        body: JSON.stringify({ key_id: editingKey, name: editState.name, rpd: editState.rpd, rpm: editState.rpm, max_context_size: parseInt(editState.max_context_size, 10) || 0, active: editState.active }),
       });
       toast.show("Key updated successfully");
       editingKey = null;
@@ -59,7 +59,7 @@
       await requestAdminJson("/api/keys", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api_key: deletingKey.api_key }),
+        body: JSON.stringify({ key_id: deletingKey.id }),
       });
       toast.show("API key deleted successfully");
       deletingKey = null;
@@ -93,12 +93,12 @@
 
   function generateKey() {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    // Math.random is not a CSPRNG; a guessable key is a usable key.
+    const bytes = crypto.getRandomValues(new Uint8Array(48));
     let key = "sk-";
-    for (let i = 0; i < 48; i++) key += chars.charAt(Math.floor(Math.random() * chars.length));
+    for (const byte of bytes) key += chars.charAt(byte % chars.length);
     addKey = key;
   }
-
-  function maskKey(k: string) { return k.substring(0, 10) + "..." + k.substring(k.length - 4); }
 
   onMount(load);
 </script>
@@ -140,12 +140,12 @@
         <table class="keys-table">
           <thead><tr><th>Status</th><th>Name</th><th>API Key</th><th>RPD Quota</th><th>RPM Limit</th><th>Max Context</th><th>Actions</th></tr></thead>
           <tbody>
-            {#each keys as key (key.api_key)}
-              {#if editingKey === key.api_key}
+            {#each keys as key (key.id)}
+              {#if editingKey === key.id}
                 <tr class="editing-row">
                   <td class="status-cell"><label class="toggle" title="Active"><input type="checkbox" bind:checked={editState.active} /><div class="toggle-track"></div><div class="toggle-thumb"></div></label></td>
                   <td><input class="edit-input" type="text" bind:value={editState.name} /></td>
-                  <td><span class="key-display">{maskKey(key.api_key)}</span></td>
+                  <td><span class="key-display">{key.api_key}</span></td>
                   <td><input class="edit-input numeric-input" type="number" bind:value={editState.rpd} /></td>
                   <td><input class="edit-input numeric-input" type="number" bind:value={editState.rpm} /></td>
                   <td><input class="edit-input context-input" type="number" min="0" bind:value={editState.max_context_size} /></td>
@@ -155,7 +155,7 @@
                 <tr>
                   <td class="status-cell"><span class="status-dot" class:inactive={!key.active} title={key.active ? "Active" : "Inactive"}></span></td>
                   <td><span class="name-text">{key.name}</span></td>
-                  <td><span class="key-display">{maskKey(key.api_key)}</span></td>
+                  <td><span class="key-display">{key.api_key}</span></td>
                   <td><span class="metric-value">{key.usage_today}/{key.rpd}</span></td>
                   <td><span class="metric-value">{key.rpm}</span></td>
                   <td><span class="metric-value">{key.max_context_size > 0 ? key.max_context_size.toLocaleString() : "∞"}</span></td>

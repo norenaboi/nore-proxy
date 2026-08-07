@@ -81,7 +81,7 @@ Environment variables configure server-level behavior that cannot be changed at 
 |----------|-------------|---------|
 | `PORT` | Server port | 8741 |
 | `MASTER_KEY` | Admin authentication key (min 16 chars) | required, no default |
-| `ADMIN_MAX_ATTEMPTS` | Admin login attempts per minute per IP | 100 |
+| `ADMIN_MAX_ATTEMPTS` | Admin login attempts per minute per IP | 5 |
 | `SESSION_TTL_HOURS` | Admin session lifetime | 24 |
 | `CORS_ORIGIN` | Allowed CORS origin(s) | `*` |
 | `DATABASE_URL` | Optional PostgreSQL URL. Only `postgres://` or `postgresql://` selects PostgreSQL; blank/unset uses SQLite. | unset |
@@ -138,7 +138,7 @@ All admin endpoints require authentication.
 | `/api/endpoints/:version/keys/reset-stats` | POST | Reset per-key usage and failure statistics |
 | `/api/endpoints/:version/keys/disable` | POST | Manually disable a key |
 | `/api/users` | GET | Get all users' usage stats |
-| `/api/users/:apiKey` | GET | Get individual user details |
+| `/api/users/:keyId` | GET | Get individual user details |
 
 ### Public Endpoints
 

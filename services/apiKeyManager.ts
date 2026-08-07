@@ -115,10 +115,16 @@ class APIKeyManager {
     return this.getKeyMap();
   }
 
+  /**
+   * Keys as the admin API exposes them: an opaque HMAC identity plus a masked
+   * display value. The raw secret is never part of this projection — it only
+   * enters the process on creation and on the authentication path.
+   */
   async getKeys() {
     const keys = await this.getKeyMap();
     return Object.entries(keys).map(([api_key, data]) => ({
-      api_key,
+      id: getApiKeyId(api_key),
+      api_key: maskKey(api_key),
       name: data.name || "Unnamed",
       active: data.active,
       usage_today: data.usage_today,
@@ -126,6 +132,23 @@ class APIKeyManager {
       rpm: data.rpm,
       max_context_size: data.max_context_size,
     }));
+  }
+
+  /**
+   * Resolves an opaque key id back to the stored secret for internal use
+   * (updates, deletes, usage lookups). Returns null when no key matches, so
+   * callers surface a not-found rather than acting on a guess.
+   *
+   * Identities are HMACs over the raw key, so this compares rather than
+   * indexes; the key count here is administrative in scale.
+   */
+  async resolveKeyId(keyId: unknown): Promise<string | null> {
+    if (typeof keyId !== "string" || !keyId) return null;
+    const keys = await this.getKeyMap();
+    for (const apiKey of Object.keys(keys)) {
+      if (getApiKeyId(apiKey) === keyId) return apiKey;
+    }
+    return null;
   }
 
   async validateKey(apiKey: string): Promise<true> {

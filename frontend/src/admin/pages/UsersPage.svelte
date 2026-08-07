@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { requestAdminJson, formatNumber } from "$frontend/lib/api/admin";
 
-  interface User { name: string; api_key: string; api_key_full: string; }
+  interface User { id: string; name: string; api_key: string; }
   interface UserDetail {
     name: string; api_key: string;
     total_requests: number; daily_requests: number;
@@ -43,9 +43,9 @@
     }
   }
 
-  async function showDetail(key: string) {
+  async function showDetail(keyId: string) {
     try {
-      detail = await requestAdminJson<UserDetail>(`/api/users/${encodeURIComponent(key)}`);
+      detail = await requestAdminJson<UserDetail>(`/api/users/${encodeURIComponent(keyId)}`);
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : "Failed to load user";
     }
@@ -125,7 +125,7 @@
   {:else}
     <div class="users-grid">
       {#each visible as user}
-        <button class="user-card" type="button" onclick={() => showDetail(user.api_key_full)}>
+        <button class="user-card" type="button" onclick={() => showDetail(user.id)}>
           <div class="user-header"><div class="user-avatar">{user.name.charAt(0).toUpperCase()}</div><div class="user-info"><h3>{user.name}</h3><div class="user-key">{user.api_key}</div></div></div>
         </button>
       {/each}

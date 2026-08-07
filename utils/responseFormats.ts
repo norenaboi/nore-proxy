@@ -1,7 +1,4 @@
-import { createRequire } from "module";
-
-const require = createRequire(import.meta.url);
-const { v4: uuidv4 } = require("uuid") as { v4: () => string };
+import { randomUUID } from "node:crypto";
 
 export function openAIResponseToAnthropic(openaiData: any, modelName: any, requestId: any) {
   const choice = openaiData.choices?.[0];
@@ -23,7 +20,7 @@ export function openAIResponseToAnthropic(openaiData: any, modelName: any, reque
     for (const tc of message.tool_calls) {
       contentBlocks.push({
         type: "tool_use",
-        id: tc.id || `toolu_${uuidv4().replace(/-/g, "").slice(0, 20)}`,
+        id: tc.id || `toolu_${randomUUID().replace(/-/g, "").slice(0, 20)}`,
         name: tc.function?.name || "",
         input: safeParseJSON(tc.function?.arguments || "{}"),
       });
