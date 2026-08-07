@@ -168,9 +168,12 @@ async function executeRouting(requestId: string, requestedModel: string, runAtte
   for (let target = nextTarget(state); target; target = nextTarget(state)) {
     let fallback = false;
     let endpointKey = null;
+    // One rotation start per target: the hops below continue round-robin from it
+    // instead of drawing a new random position each time.
+    let rotationOffset: number | undefined;
     for (let keyAttempt = 1; keyAttempt <= maxKeyAttempts; keyAttempt++) {
       const excluded: Set<string> = endpointKey ? attemptedKeyHashes(state, endpointKey) ?? new Set<string>() : new Set<string>();
-      const endpoint = await getEndpointForConcreteModel(target, { excludeHashes: excluded });
+      const endpoint = await getEndpointForConcreteModel(target, { excludeHashes: excluded, rotationOffset });
       if (!endpoint) {
         const error = new Error("Can't find the model you're looking for.");
         error.name = "EndpointResolutionError";
@@ -188,6 +191,7 @@ async function executeRouting(requestId: string, requestedModel: string, runAtte
         break;
       }
       endpointKey = endpoint.endpointKey;
+      rotationOffset = endpoint.rotationOffset ?? rotationOffset;
       const tried = attemptedKeyHashes(state, endpointKey) ?? new Set<string>();
       if (endpoint.tokenExhausted || !endpoint.token) {
         lastError = withContext(await keyStateManager.buildExhaustionError(String(endpointKey)), endpoint);

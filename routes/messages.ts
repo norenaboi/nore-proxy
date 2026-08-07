@@ -278,12 +278,16 @@ async function executeMessagesRouting(requestId: string, requestedModel: string,
   for (let target = nextTarget(state); target; target = nextTarget(state)) {
     let fallbackTarget = false;
     let endpointKey = null;
+    // One rotation start per target: the hops below continue round-robin from it
+    // instead of drawing a new random position each time.
+    let rotationOffset: number | undefined;
     for (let keyAttempt = 1; keyAttempt <= maxKeyAttempts; keyAttempt++) {
       const excluded = endpointKey
         ? attemptedKeyHashes(state, endpointKey)
         : new Set<string>();
       const endpointInfo = await getEndpointForConcreteModel(target, {
         excludeHashes: excluded,
+        rotationOffset,
       });
       if (!endpointInfo) {
         const error = new Error("Can't find the model you're looking for.");
@@ -303,6 +307,7 @@ async function executeMessagesRouting(requestId: string, requestedModel: string,
         break;
       }
       endpointKey = endpointInfo.endpointKey;
+      rotationOffset = endpointInfo.rotationOffset ?? rotationOffset;
       const tried = attemptedKeyHashes(state, endpointKey) ?? new Set<string>();
 
       if (endpointInfo.tokenExhausted || !endpointInfo.token) {

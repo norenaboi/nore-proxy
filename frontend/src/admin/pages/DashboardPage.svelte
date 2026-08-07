@@ -185,8 +185,8 @@
     <section class="token-ledger" aria-label="Token totals">
       <article><span>Input tokens</span><strong>{fmt(rd.summary.input_tokens)}</strong><small>{cost(rd.summary.input_cost)}</small></article>
       <article><span>Output tokens</span><strong>{fmt(rd.summary.output_tokens)}</strong><small>{cost(rd.summary.output_cost)}</small></article>
-      <article><span>Cache read</span><strong>{fmt(rd.summary.cache_read_tokens)}</strong><small>{cost(rd.summary.cache_read_cost)}</small></article>
       <article><span>Cache write</span><strong>{fmt(rd.summary.cache_write_tokens)}</strong><small>{cost(rd.summary.cache_write_cost)}</small></article>
+      <article><span>Cache read</span><strong>{fmt(rd.summary.cache_read_tokens)}</strong><small>{cost(rd.summary.cache_read_cost)}</small></article>
     </section>
 
     <div class="tables-grid">

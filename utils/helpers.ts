@@ -16,6 +16,7 @@ import type { ModelDefinition, ModelPricingRegistry, ModelRegistry } from "../ty
 type ModelLoadOptions = {
   excludeHashes?: Set<string>;
   ignoreState?: boolean;
+  rotationOffset?: number;
 };
 
 type MessageContentBlock = Record<string, unknown>;
@@ -345,14 +346,19 @@ function resolveRotationMode(endpointKeyRotation: any) {
  *
  * Rotation mode:
  *   - sticky (default): use the first usable key (lowest index) until it errors.
- *   - roundrobin: rotate across usable keys.
+ *   - roundrobin: start at a random position in the endpoint's key list, then
+ *     walk it in order. `rotationOffset` carries that starting position across
+ *     the key hops of one request, so a hop lands on the next usable key rather
+ *     than re-randomizing; omitting it draws a fresh offset, which is what keeps
+ *     two consecutive requests from beginning on the same key.
  *
  * Returns null when the model has no endpoint. When an endpoint exists but no
  * usable key remains, returns the meta with `token: null` and
- * `tokenExhausted: true` so the caller can surface the 404.
+ * `tokenExhausted: true` so the caller can surface the 404. On success the
+ * returned `rotationOffset` is the offset used, for the caller to feed back.
  *
  * @param {string} modelName
- * @param {{ excludeHashes?: Set<string> }} [opts]
+ * @param {{ excludeHashes?: Set<string>, ignoreState?: boolean, rotationOffset?: number }} [opts]
  */
 export async function getEndpointForConcreteModel(
   modelName: string,
@@ -374,6 +380,7 @@ export async function getEndpointForConcreteModel(
       token,
       tokenHash: token ? keyStateManager.hashToken(meta.endpointKey, token) : null,
       tokenExhausted: token == null,
+      rotationOffset: 0,
     };
   }
 
@@ -382,17 +389,22 @@ export async function getEndpointForConcreteModel(
   });
 
   if (usable.length === 0) {
-    return { ...meta, token: null, tokenHash: null, tokenExhausted: true };
+    return { ...meta, token: null, tokenHash: null, tokenExhausted: true, rotationOffset: 0 };
   }
 
   const mode = resolveRotationMode(meta.keyRotation);
+  let rotationOffset = 0;
   let chosen = usable[0];
   if (mode === "roundrobin") {
-    const rotatedToken = Config.rotateUsableToken(
-      meta.endpointKey,
-      usable.map(({ token }) => token),
-    );
-    chosen = usable.find(({ token }) => token === rotatedToken) || chosen;
+    rotationOffset = opts.rotationOffset ?? Config.randomRotationOffset(allTokens.length);
+    const usableByToken = new Map(usable.map((entry) => [entry.token, entry]));
+    for (const token of Config.orderTokensFrom(allTokens, rotationOffset)) {
+      const entry = usableByToken.get(token);
+      if (entry) {
+        chosen = entry;
+        break;
+      }
+    }
   }
 
   return {
@@ -400,6 +412,7 @@ export async function getEndpointForConcreteModel(
     token: chosen.token,
     tokenHash: chosen.tokenHash,
     tokenExhausted: false,
+    rotationOffset,
   };
 }
 

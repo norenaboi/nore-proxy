@@ -39,6 +39,8 @@ class SettingsManager {
       // How long a 429'd key stays timed out before auto-recovering (hours).
       keyTimeoutHours: 24,
       // Default rotation mode seeded onto new endpoints: "sticky" | "roundrobin".
+      // roundrobin starts each request at a random key and walks forward from
+      // there, so consecutive requests do not begin on the same key.
       defaultEndpointKeyRotation: "sticky",
       // Default key-health mode seeded onto new endpoints.
       // true  = an actionable error (400/401/402/429) sidelines the key (invalid/timeout).

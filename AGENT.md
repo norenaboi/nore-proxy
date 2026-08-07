@@ -21,10 +21,10 @@ Nore Proxy is a unified LLM API gateway with OpenAI-compatible and Anthropic-com
 
 ### Configuration
 
-- `config/index.ts` loads process-level configuration and `endpoints.json`, validates required server settings, owns the in-memory endpoint map, and maintains endpoint key-rotation counters.
+- `config/index.ts` loads process-level configuration and `endpoints.json`, validates required server settings, owns the in-memory endpoint map, and provides the key-rotation ordering helpers.
 - `utils/configPaths.ts` resolves the runtime JSON paths and supports isolated paths through `NORE_PROXY_MODELS_PATH`, `NORE_PROXY_ENDPOINTS_PATH`, and `NORE_PROXY_SETTINGS_PATH`.
 - `models.json` is the persisted model, pricing, and automatic-routing definition source. `loadModelsFromFile()` validates it and rebuilds the in-memory model registry, aliases, pricing, and automatic-routing counters while excluding disabled models.
-- `endpoints.json` contains upstream endpoint definitions and raw credentials. Loaded endpoints can use sticky or usable-key round-robin selection; key health and cooldown state are persisted separately by non-secret key identity.
+- `endpoints.json` contains upstream endpoint definitions and raw credentials. Loaded endpoints can use sticky or round-robin key selection; round-robin starts each request at a random position in the key list and walks forward from there, holding that position across the request's key hops. Key health and cooldown state are persisted separately by non-secret key identity.
 - `settings.json` contains runtime settings overrides merged with defaults in `services/settingsManager.ts`.
 
 Treat these runtime JSON files as operational data, not examples or source fixtures. Do not inspect or reproduce secret values merely to document or test behavior.
@@ -81,7 +81,7 @@ Public pages are eagerly imported. Admin pages are lazy imported and form build 
 
 ## Backend invariants
 
-- Every persisted `endpoints.json` change must refresh the in-memory endpoint configuration with the established reload path. Reloading intentionally resets endpoint round-robin counters.
+- Every persisted `endpoints.json` change must refresh the in-memory endpoint configuration with the established reload path. Endpoint key rotation keeps no cross-request state, so a reload carries no rotation position to reset.
 - Every persisted `models.json` change must refresh the model registry. Reloading intentionally resets automatic-model round-robin counters.
 - Concrete-model renames must preserve automatic-model target references and the existing historical-log rename behavior.
 - Endpoint/model deletion must preserve dependency checks; do not leave automatic models pointing to missing concrete models.

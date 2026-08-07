@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import crypto from "node:crypto";
 import settingsManager from "../services/settingsManager.js";
 import { getEndpointsPath } from "../utils/configPaths.js";
 import type { EndpointsDocument, LoadedEndpoint } from "../types/endpoint.js";
@@ -49,12 +50,8 @@ class Config {
 
   static ENDPOINTS: Record<string, LoadedEndpoint> = {};
 
-  // In-memory round-robin counters keyed by endpoint index string (e.g. "1", "2")
-  static _rrCounters: Record<string, number> = {};
-
   static loadEndpoints() {
     this.ENDPOINTS = {};
-    this._rrCounters = {};
 
     const endpointsPath = getEndpointsPath();
 
@@ -103,7 +100,6 @@ class Config {
           // still hop). null/absent => fall back to defaultEndpointKeyHealth at runtime.
           keyHealth: endpoint.keyHealth !== undefined ? endpoint.keyHealth : null,
         };
-        this._rrCounters[index] = 0;
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -114,43 +110,29 @@ class Config {
   }
 
   /**
-   * Returns the next token for a given endpoint index using round-robin.
-   * Falls back to the first (and only) token if there's just one.
-   * @param {string} endpointKey - e.g. "v1"
-   * @returns {string} The token to use for this request
+   * Rotates a token list so it begins at `offset` and wraps around, e.g.
+   * offset 2 over [a, b, c, d] yields [c, d, a, b].
+   *
+   * Pure, and deliberately indexed over the endpoint's full token list rather
+   * than the usable subset: the subset shrinks as a request hops between keys,
+   * so a fixed offset into it would not describe a stable sequence.
    */
-  static getNextToken(endpointKey: string): string | null {
-    const endpoint = this.ENDPOINTS[endpointKey];
-    if (!endpoint) return null;
-
-    const tokens = endpoint.tokens;
-    if (!tokens || tokens.length <= 1) return endpoint.token;
-
-    // Extract numeric index from key (e.g. "v1" → "1")
-    const idx = endpointKey.replace(/^v/, "");
-    const counter = this._rrCounters[idx] || 0;
-    const token = tokens[counter % tokens.length];
-    this._rrCounters[idx] = (counter + 1) % tokens.length;
-    return token;
+  static orderTokensFrom<T>(tokens: T[], offset: number): T[] {
+    if (!Array.isArray(tokens) || tokens.length === 0) return [];
+    const length = tokens.length;
+    const normalized = Number.isFinite(offset) ? Math.trunc(offset) : 0;
+    const start = ((normalized % length) + length) % length;
+    return tokens.map((_, index) => tokens[(start + index) % length]);
   }
 
   /**
-   * Advances the round-robin counter over a supplied list of usable tokens and
-   * returns the next one. Used by the smart-key selection path in helpers.js so
-   * that only *usable* keys participate in rotation. Returns null for an empty
-   * list.
-   * @param {string} endpointKey - e.g. "v1"
-   * @param {string[]} usableTokens - subset of the endpoint's tokens that are usable
+   * Draws the starting position for one request's key rotation. Each request
+   * gets a fresh offset so consecutive requests do not begin on the same key,
+   * which keeps a key that is failing with a non-actionable code (a 500, say,
+   * which never sidelines it) from absorbing every request.
    */
-  static rotateUsableToken(endpointKey: string, usableTokens: string[]): string | null {
-    if (!Array.isArray(usableTokens) || usableTokens.length === 0) return null;
-    if (usableTokens.length === 1) return usableTokens[0];
-
-    const idx = endpointKey.replace(/^v/, "");
-    const counter = this._rrCounters[idx] || 0;
-    const token = usableTokens[counter % usableTokens.length];
-    this._rrCounters[idx] = (counter + 1) % usableTokens.length;
-    return token;
+  static randomRotationOffset(length: number): number {
+    return Number.isInteger(length) && length > 1 ? crypto.randomInt(length) : 0;
   }
 
   static reload() {
