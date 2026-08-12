@@ -48,6 +48,7 @@ Once the server is running, open:
 - Admin login: `http://localhost:8741/admin/login`
 - Models: `http://localhost:8741/models`
 - Usage: `http://localhost:8741/usage`
+- Playground: `http://localhost:8741/playground`
 
 For development, use `npm run dev` for automatic restarts and `npm run typecheck` to run the TypeScript compiler without emitting files.
 

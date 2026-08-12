@@ -28,6 +28,14 @@ a { color: inherit; }
 .public-head nav a:hover, .public-head nav a[aria-current="page"] { color: var(--accent-ink); }
 .public-main { width: min(1200px, calc(100% - 48px)); margin: auto; padding: 54px 0 70px; }
 .public-main.not-found-main { min-height: 0; flex: 1; display: flex; }
+/* margin on .public-main centers vertically as well, which suits documents but
+   not the wide pages; the horizontal auto must stay. */
+.public-main.wide-main { width: min(1600px, calc(100% - 48px)); margin: 0 auto; padding: 40px 0 56px; }
+.public-main.playground-main { width: min(1420px, calc(100% - 32px)); min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 20px 0 16px; }
+/* The playground owns its own scrolling, so the document must not add any. */
+body:has(.public-main.playground-main) { height: 100vh; height: 100dvh; overflow: hidden; }
+body:has(.public-main.playground-main) #app { height: 100%; min-height: 0; overflow: hidden; }
+body:has(.public-main.playground-main) .public-footer { min-height: 0; margin-bottom: 12px; padding: 10px 0; }
 .eyebrow { margin: 0 0 8px; color: var(--accent-ink); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
 h1 { margin: 0; font: 500 clamp(38px, 5vw, 56px)/1.05 Georgia, "Times New Roman", serif; letter-spacing: -.03em; }
 .lead { color: var(--muted); font-size: 17px; }
@@ -140,10 +148,19 @@ button, input { font: inherit; }
   .public-head, .public-footer { width: calc(100% - 32px); align-items: flex-start; padding: 18px 0; }
   .public-head { display: grid; }
   .public-main { width: calc(100% - 32px); padding-top: 38px; }
+  /* .wide-main outranks the rule above, so its mobile width is set explicitly. */
+  .public-main.wide-main { width: calc(100% - 32px); }
   .public-head nav { gap: 16px; overflow-x: auto; }
   .public-footer { display: grid; }
   .model-grid, .destinations { grid-template-columns: 1fr; }
   .card-copy { opacity: 1; }
   .key-entry { display: grid; }
   .stat-row { align-items: flex-start; }
+}
+/* Narrow viewports cannot spare the height for a locked layout, so the
+   playground falls back to a tall chat panel on a normally scrolling page. */
+@media (max-width: 700px), (max-height: 620px) {
+  body:has(.public-main.playground-main),
+  body:has(.public-main.playground-main) #app { height: auto; overflow: visible; }
+  .public-main.playground-main { flex: 0 0 auto; min-height: 78vh; overflow: visible; }
 }

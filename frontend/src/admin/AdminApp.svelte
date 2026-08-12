@@ -36,6 +36,10 @@
   let PageComponent: Component | null = $state(null);
   let loadError = $state("");
 
+  // Express serves one document for every admin path, so the tab title has to
+  // be set here rather than in admin.html.
+  const documentTitle = `${titles[path] ?? "Admin"} — Nore Proxy`;
+
   const loader = pages[path];
   if (loader) {
     loader()
@@ -45,6 +49,10 @@
     loadError = "Page not found.";
   }
 </script>
+
+<svelte:head>
+  <title>{documentTitle}</title>
+</svelte:head>
 
 <AdminShell activePath={path} title={titles[path] ?? "Admin"} eyebrow={path === "/admin/dashboard" ? "Overview" : "Administration"}>
   {#snippet actions()}
