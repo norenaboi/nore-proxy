@@ -1048,6 +1048,7 @@ function streamAnthropicPassthrough(
         if (!payload) continue;
         let data;
         try { data = JSON.parse(payload); } catch { continue; }
+        if (!data || typeof data !== "object") continue;
         if (data.type === "error") {
           const error = new Error(data.error?.message || "Upstream stream failed");
           error.name = "UpstreamStreamError";
@@ -1324,6 +1325,7 @@ function streamOpenAIToAnthropic(
 
       let chunkData;
       try { chunkData = JSON.parse(payload); } catch { continue; }
+      if (!chunkData || typeof chunkData !== "object") continue;
 
       try {
         const parsed = adapter.parseStreamChunk(chunkData, streamCtx);

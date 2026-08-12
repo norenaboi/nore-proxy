@@ -60,6 +60,8 @@ function buildOpenAIBody(openaiReq: any, actualModel: any, stream: any) {
  * Returns { deltaContent, finishReason, usage } or null if nothing useful.
  */
 export function parseStreamChunk(rawChunk: any, ctx: any) {
+  if (!rawChunk || typeof rawChunk !== "object") return null;
+
   const choices = rawChunk.choices || [];
   if (choices.length === 0) return null;
 
@@ -86,6 +88,8 @@ export function parseStreamChunk(rawChunk: any, ctx: any) {
  * For OpenAI format this is essentially passthrough with structure enforcement.
  */
 export function buildStreamChunk(rawChunk: any, ctx: any) {
+  if (!rawChunk || typeof rawChunk !== "object") return null;
+
   return {
     id: rawChunk.id || ctx.streamId,
     object: "chat.completion.chunk",

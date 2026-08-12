@@ -380,6 +380,9 @@ function consumeStream(stream: StreamWithDestroy, res: Response, state: any, ada
         if (adapter.isStreamEnd(payload)) continue;
         let raw;
         try { raw = JSON.parse(payload); } catch { console.warn(`BACKEND [ID: ${requestId}]: Invalid JSON in stream.`); continue; }
+        // `data: null` and other valid-JSON non-objects carry no event; they
+        // must not reach the adapters as if they were chunks.
+        if (!raw || typeof raw !== "object") continue;
         try {
           const eventError = inBandStreamError(raw);
           if (eventError) throw eventError;

@@ -85,3 +85,16 @@ test("response adapters preserve text, reasoning, tools, and usage", () => {
   assert.equal(geminiChunk.deltaContent, "done");
   assert.equal(geminiChunk.finishReason, "stop");
 });
+
+test("stream adapters treat valid-JSON non-objects as empty events", () => {
+  // An upstream can emit `data: null` (or a bare scalar) as keepalive or
+  // framing noise. It parses successfully, so it reaches the adapters and must
+  // yield no chunk rather than dereferencing a null.
+  const ctx = { requestId: "r", modelName: "model", streamId: "chatcmpl-r", streamCreated: 1 };
+  for (const payload of [null, 0, "", "ping", true]) {
+    for (const adapter of [openai, anthropic, gemini, responses, codex]) {
+      assert.equal(adapter.buildStreamChunk(payload, ctx), null);
+      assert.equal(adapter.parseStreamChunk(payload, ctx), null);
+    }
+  }
+});
