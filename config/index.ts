@@ -99,6 +99,10 @@ class Config {
           // the key (invalid/timeout); when false, keys are never sidelined (requests
           // still hop). null/absent => fall back to defaultEndpointKeyHealth at runtime.
           keyHealth: endpoint.keyHealth !== undefined ? endpoint.keyHealth : null,
+          // Extra attempts on the same key after a transient failure (5xx, timeout,
+          // network) before the request hops keys. null/absent => fall back to
+          // defaultEndpointRetryAttempts at runtime.
+          retryAttempts: endpoint.retryAttempts !== undefined ? endpoint.retryAttempts : null,
         };
       }
     } catch (e) {

@@ -313,6 +313,9 @@ export function getConcreteModelMeta(modelName: any) {
     // Whether an actionable error benches the key (invalid/timeout). Absent =>
     // fall back to the global default at the point of use.
     keyHealth: endpoint.keyHealth ?? null,
+    // Extra same-key attempts on a transient failure. Absent => fall back to
+    // the global default at the point of use.
+    retryAttempts: endpoint.retryAttempts ?? null,
   };
 }
 
@@ -325,6 +328,17 @@ export function resolveKeyHealth(endpointKeyHealth: any) {
     return endpointKeyHealth;
   }
   return settingsManager.get("defaultEndpointKeyHealth") !== false;
+}
+
+/**
+ * Resolves the effective retry count for an endpoint: the per-endpoint
+ * retryAttempts if set, otherwise the global default. Returns a non-negative
+ * integer; 0 means a failure is never retried on the same key.
+ */
+export function resolveRetryAttempts(endpointRetryAttempts: any) {
+  const configured = endpointRetryAttempts ?? settingsManager.get("defaultEndpointRetryAttempts");
+  const parsed = Number(configured);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
 }
 
 /**

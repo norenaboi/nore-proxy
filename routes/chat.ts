@@ -6,7 +6,7 @@ import apiKeyManager from "../services/apiKeyManager.js";
 import settingsManager from "../services/settingsManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
 import { logRequestStart, logRequestEnd, logError, normalizeBillingTokens } from "../utils/logging.js";
-import { MODEL_REGISTRY, getEndpointForConcreteModel, getFullUrl, estimateTokens, estimateTokensFromLength, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, resolveKeyHealth, getClientIp } from "../utils/helpers.js";
+import { MODEL_REGISTRY, getEndpointForConcreteModel, getFullUrl, estimateTokens, estimateTokensFromLength, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, resolveKeyHealth, resolveRetryAttempts, getClientIp } from "../utils/helpers.js";
 import { createBoundedText, guardCarryBuffer, type BoundedText } from "../utils/streamLimits.js";
 import keyStateManager, { ACTIONABLE_CODES } from "../services/keyStateManager.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
@@ -122,8 +122,8 @@ async function recordKeyFailure(endpoint: any, status: any) {
   await keyStateManager.recordFailure(endpoint.endpointKey, endpoint.token, Number(status), { sideline: resolveKeyHealth(endpoint.keyHealth) });
 }
 
-function noteAttempt(state: any, endpoint: any, keyAttempt: any, outcome: any, decision: any, statusCode: any) {
-  recordRoutingAttempt(state, { targetModel: endpoint?.targetModel, endpointKey: endpoint?.endpointKey, endpointName: endpoint?.endpointName, tokenHash: endpoint?.tokenHash, keyAttempt, outcome, retryReason: decision?.reason, statusCode });
+function noteAttempt(state: any, endpoint: any, keyAttempt: any, outcome: any, decision: any, statusCode: any, retryAttempt: any = 0) {
+  recordRoutingAttempt(state, { targetModel: endpoint?.targetModel, endpointKey: endpoint?.endpointKey, endpointName: endpoint?.endpointName, tokenHash: endpoint?.tokenHash, keyAttempt, retryAttempt, outcome, retryReason: decision?.reason, statusCode });
 }
 
 function mergeUsage(current: any, incoming: any) {
@@ -200,28 +200,36 @@ async function executeRouting(requestId: string, requestedModel: string, runAtte
         fallback = true;
         break;
       }
-      try {
-        const result = await runAttempt(state, endpoint);
-        noteAttempt(state, endpoint, keyAttempt, "success", null, null);
-        if (result && typeof result === "object") {
-          Object.defineProperty(result, "routingState", {
-            value: state,
-            enumerable: false,
-          });
+      // Same-key retries for transient failures (5xx, timeout, network), before
+      // this key is written off and the request hops or falls back.
+      const maxRetries = resolveRetryAttempts(endpoint.retryAttempts);
+      let decision: any = null;
+      for (let retryAttempt = 0; retryAttempt <= maxRetries; retryAttempt++) {
+        try {
+          const result = await runAttempt(state, endpoint);
+          noteAttempt(state, endpoint, keyAttempt, "success", null, null, retryAttempt);
+          if (result && typeof result === "object") {
+            Object.defineProperty(result, "routingState", {
+              value: state,
+              enumerable: false,
+            });
+          }
+          return result;
+        } catch (error: any) {
+          if (error.clientAbort) throw error;
+          lastError = error;
+          const status = statusOf(error);
+          decision = classifyUpstreamFailure({ statusCode: status, error, streamOutputStarted: state.streamOutputStarted });
+          const retrying = decision.retrySame && retryAttempt < maxRetries;
+          noteAttempt(state, endpoint, keyAttempt, retrying ? "retry" : "failure", decision, status, retryAttempt);
+          await recordKeyFailure(endpoint, status);
+          if (!retrying) break;
         }
-        return result;
-      } catch (error: any) {
-        if (error.clientAbort) throw error;
-        lastError = error;
-        const status = statusOf(error);
-        const decision = classifyUpstreamFailure({ statusCode: status, error, streamOutputStarted: state.streamOutputStarted });
-        noteAttempt(state, endpoint, keyAttempt, "failure", decision, status);
-        await recordKeyFailure(endpoint, status);
-        if (endpoint.tokenHash) tried.add(endpoint.tokenHash);
-        if (decision.retryKey && keyAttempt < maxKeyAttempts) continue;
-        fallback = decision.fallbackTarget;
-        break;
       }
+      if (endpoint.tokenHash) tried.add(endpoint.tokenHash);
+      if (decision.retryKey && keyAttempt < maxKeyAttempts) continue;
+      fallback = decision.fallbackTarget;
+      break;
     }
     if (!fallback) throw lastError;
   }

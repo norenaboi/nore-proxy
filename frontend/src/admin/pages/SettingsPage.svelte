@@ -7,7 +7,7 @@
     rpdDefault: number; rpmDefault: number; maxContextSizeDefault: number;
     keyHopAttempts: number; autoModelMaxTargetAttempts: number; keyTimeoutHours: number;
     defaultEndpointApiFormat: string; defaultEndpointKeyRotation: string;
-    defaultEndpointKeyHealth: boolean;
+    defaultEndpointKeyHealth: boolean; defaultEndpointRetryAttempts: number;
     defaultEndpointTemperatureEnabled: boolean; defaultEndpointTemperature: number | null;
     defaultEndpointTopPEnabled: boolean; defaultEndpointTopP: number | null;
     defaultEndpointMaxTokensEnabled: boolean; defaultEndpointMaxTokens: number | null;
@@ -39,6 +39,7 @@
     if (isNaN(s.keyHopAttempts) || s.keyHopAttempts < 0) return toast.show("Key hop attempts must be 0 or higher", "error");
     if (isNaN(s.autoModelMaxTargetAttempts) || s.autoModelMaxTargetAttempts < 1 || s.autoModelMaxTargetAttempts > 20) return toast.show("Auto model target attempts must be 1–20", "error");
     if (isNaN(s.keyTimeoutHours) || s.keyTimeoutHours < 1) return toast.show("Key timeout hours must be at least 1", "error");
+    if (!Number.isInteger(s.defaultEndpointRetryAttempts) || s.defaultEndpointRetryAttempts < 0 || s.defaultEndpointRetryAttempts > 10) return toast.show("Default endpoint retry attempts must be 0–10", "error");
     if (s.defaultEndpointTemperatureEnabled && s.defaultEndpointTemperature !== null && (isNaN(s.defaultEndpointTemperature) || s.defaultEndpointTemperature < 0 || s.defaultEndpointTemperature > 2)) return toast.show("Temperature must be 0–2", "error");
     if (s.defaultEndpointTopPEnabled && s.defaultEndpointTopP !== null && (isNaN(s.defaultEndpointTopP) || s.defaultEndpointTopP < 0 || s.defaultEndpointTopP > 1)) return toast.show("Top P must be 0–1", "error");
     if (s.defaultEndpointMaxTokensEnabled && s.defaultEndpointMaxTokens !== null && (isNaN(s.defaultEndpointMaxTokens) || s.defaultEndpointMaxTokens < 1)) return toast.show("Max tokens must be at least 1", "error");
@@ -134,6 +135,11 @@
           <option value={true as unknown as string}>On</option>
           <option value={false as unknown as string}>Off</option>
         </select></div>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info"><div class="setting-label">Default Retry Attempts</div><div class="setting-description">Extra same-key attempts after a transient 5xx, timeout, or network error. 0 disables retries.</div></div>
+        <div class="setting-control"><input class="number-input" type="number" bind:value={s.defaultEndpointRetryAttempts} min="0" max="10" step="1" placeholder="0" /></div>
       </div>
 
       {#each [["Default Temperature", "defaultEndpointTemperatureEnabled", "defaultEndpointTemperature", 0.1, 0, 2, "1"], ["Default Top P", "defaultEndpointTopPEnabled", "defaultEndpointTopP", 0.05, 0, 1, "1"], ["Default Max Tokens", "defaultEndpointMaxTokensEnabled", "defaultEndpointMaxTokens", 1, 1, null, "4096"]] as [label, enabledField, valueField, step, min, max, placeholder]}

@@ -2,8 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import Config from "../config/index.js";
+import { resolveRetryAttempts } from "../utils/helpers.js";
 
 const KEYS = ["k0", "k1", "k2", "k3"];
+
+test("retry attempts normalize to a non-negative integer", () => {
+  assert.equal(resolveRetryAttempts(0), 0);
+  assert.equal(resolveRetryAttempts(2), 2);
+  assert.equal(resolveRetryAttempts(2.9), 2);
+  assert.equal(resolveRetryAttempts(-1), 0);
+  assert.equal(resolveRetryAttempts("invalid"), 0);
+});
 
 test("rotated order is a full permutation starting at the offset", () => {
   assert.deepEqual(Config.orderTokensFrom(KEYS, 0), ["k0", "k1", "k2", "k3"]);

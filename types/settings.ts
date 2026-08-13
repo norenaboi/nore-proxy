@@ -11,6 +11,7 @@ export interface Settings {
   keyTimeoutHours: number;
   defaultEndpointKeyRotation: KeyRotation;
   defaultEndpointKeyHealth: boolean;
+  defaultEndpointRetryAttempts: number;
   defaultEndpointApiFormat: ApiFormat;
   defaultEndpointTemperatureEnabled: boolean;
   defaultEndpointTemperature: number;

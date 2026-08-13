@@ -47,6 +47,10 @@ class SettingsManager {
       // false = keys are never sidelined; requests still hop on an error but the key
       //         stays usable. Suited to RPM/TPM endpoints where a limit clears quickly.
       defaultEndpointKeyHealth: true,
+      // Default retry count seeded onto new endpoints, and the fallback for
+      // endpoints that store no value of their own. 0 = no retry: a transient
+      // failure goes straight to the next key or target, as before.
+      defaultEndpointRetryAttempts: 0,
 
       // Default endpoint creation settings (only affect new endpoints)
       defaultEndpointApiFormat: "openai",

@@ -20,6 +20,7 @@ import {
   estimateTokensFromLength,
   applyGenerationPolicy,
   resolveKeyHealth,
+  resolveRetryAttempts,
   getClientIp,
 } from "../utils/helpers.js";
 import {
@@ -329,55 +330,65 @@ async function executeMessagesRouting(requestId: string, requestedModel: string,
         break;
       }
 
-      try {
-        const result = await runAttempt(state, endpointInfo, keyAttempt);
-        recordRoutingAttempt(state, {
-          targetModel: target,
-          endpointKey,
-          endpointName: endpointInfo.endpointName,
-          tokenHash: endpointInfo.tokenHash,
-          keyAttempt,
-          outcome: "success",
-        });
-        if (result && typeof result === "object") {
-          Object.defineProperty(result, "routingState", {
-            value: state,
-            enumerable: false,
-          });
-        }
-        return result;
-      } catch (error: any) {
-        if (error.clientAbort) throw error;
-        lastError = error;
-        const statusCode = statusOf(error);
-        const decision = classifyUpstreamFailure({
-          statusCode,
-          error,
-          streamOutputStarted: state.streamOutputStarted,
-        });
-        recordRoutingAttempt(state, {
-          targetModel: target,
-          endpointKey,
-          endpointName: endpointInfo.endpointName,
-          tokenHash: endpointInfo.tokenHash,
-          keyAttempt,
-          outcome: "failure",
-          retryReason: decision.reason,
-          statusCode,
-        });
-        if (endpointInfo.tokenHash) tried.add(endpointInfo.tokenHash);
-        if (endpointInfo.token && ACTIONABLE_CODES.has(Number(statusCode))) {
-          await keyStateManager.recordFailure(
+      // Same-key retries for transient failures (5xx, timeout, network), before
+      // this key is written off and the request hops or falls back.
+      const maxRetries = resolveRetryAttempts(endpointInfo.retryAttempts);
+      let decision: any = null;
+      for (let retryAttempt = 0; retryAttempt <= maxRetries; retryAttempt++) {
+        try {
+          const result = await runAttempt(state, endpointInfo, keyAttempt);
+          recordRoutingAttempt(state, {
+            targetModel: target,
             endpointKey,
-            endpointInfo.token,
-            Number(statusCode),
-            { sideline: resolveKeyHealth(endpointInfo.keyHealth) },
-          );
+            endpointName: endpointInfo.endpointName,
+            tokenHash: endpointInfo.tokenHash,
+            keyAttempt,
+            retryAttempt,
+            outcome: "success",
+          });
+          if (result && typeof result === "object") {
+            Object.defineProperty(result, "routingState", {
+              value: state,
+              enumerable: false,
+            });
+          }
+          return result;
+        } catch (error: any) {
+          if (error.clientAbort) throw error;
+          lastError = error;
+          const statusCode = statusOf(error);
+          decision = classifyUpstreamFailure({
+            statusCode,
+            error,
+            streamOutputStarted: state.streamOutputStarted,
+          });
+          const retrying = decision.retrySame && retryAttempt < maxRetries;
+          recordRoutingAttempt(state, {
+            targetModel: target,
+            endpointKey,
+            endpointName: endpointInfo.endpointName,
+            tokenHash: endpointInfo.tokenHash,
+            keyAttempt,
+            retryAttempt,
+            outcome: retrying ? "retry" : "failure",
+            retryReason: decision.reason,
+            statusCode,
+          });
+          if (endpointInfo.token && ACTIONABLE_CODES.has(Number(statusCode))) {
+            await keyStateManager.recordFailure(
+              endpointKey,
+              endpointInfo.token,
+              Number(statusCode),
+              { sideline: resolveKeyHealth(endpointInfo.keyHealth) },
+            );
+          }
+          if (!retrying) break;
         }
-        if (decision.retryKey && keyAttempt < maxKeyAttempts) continue;
-        fallbackTarget = decision.fallbackTarget;
-        break;
       }
+      if (endpointInfo.tokenHash) tried.add(endpointInfo.tokenHash);
+      if (decision.retryKey && keyAttempt < maxKeyAttempts) continue;
+      fallbackTarget = decision.fallbackTarget;
+      break;
     }
     if (!fallbackTarget) throw lastError;
   }

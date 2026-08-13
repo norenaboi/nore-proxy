@@ -237,6 +237,7 @@ export function recordRoutingAttempt(state: RoutingState, attempt: Partial<Routi
     tokenHash: attempt.tokenHash ?? null,
     targetAttempt: attempt.targetAttempt ?? state.attemptedTargets.size,
     keyAttempt: attempt.keyAttempt ?? null,
+    retryAttempt: attempt.retryAttempt ?? null,
     outcome: attempt.outcome ?? null,
     retryReason: attempt.retryReason ?? null,
     statusCode: Number.isInteger(attempt.statusCode) ? attempt.statusCode : null,
@@ -255,27 +256,29 @@ export function classifyUpstreamFailure({
   keyExhausted = false,
   streamOutputStarted = false,
 }: FailureOptions = {}) {
-  if (streamOutputStarted) return { reason: "output_started", retryKey: false, fallbackTarget: false };
-  if (keyExhausted) return { reason: "key_exhausted", retryKey: false, fallbackTarget: true };
+  if (streamOutputStarted) return { reason: "output_started", retrySame: false, retryKey: false, fallbackTarget: false };
+  if (keyExhausted) return { reason: "key_exhausted", retrySame: false, retryKey: false, fallbackTarget: true };
 
   const status = Number(statusCode);
+  // Actionable codes belong to the key, not the moment: another attempt on the
+  // same credential would fail identically, so hop instead of retrying.
   if (Number.isInteger(status) && [401, 402, 403, 429].includes(status)) {
-    return { reason: `http_${status}`, retryKey: true, fallbackTarget: true };
+    return { reason: `http_${status}`, retrySame: false, retryKey: true, fallbackTarget: true };
   }
   if (Number.isInteger(status) && status >= 500 && status <= 599) {
-    return { reason: "http_5xx", retryKey: false, fallbackTarget: true };
+    return { reason: "http_5xx", retrySame: true, retryKey: false, fallbackTarget: true };
   }
   if (Number.isInteger(status) && status >= 400 && status <= 499) {
-    return { reason: `http_${status}`, retryKey: false, fallbackTarget: false };
+    return { reason: `http_${status}`, retrySame: false, retryKey: false, fallbackTarget: false };
   }
 
   const code = String(error?.code || "").toUpperCase();
   const message = String(error?.message || "").toLowerCase();
   const timeout = ["ECONNABORTED", "ETIMEDOUT", "ESOCKETTIMEDOUT"].includes(code) || message.includes("timeout");
-  if (timeout) return { reason: "timeout", retryKey: false, fallbackTarget: true };
+  if (timeout) return { reason: "timeout", retrySame: true, retryKey: false, fallbackTarget: true };
   const network = !error?.response && (code.startsWith("E") || /network|socket|dns|tls|connection/.test(message));
-  if (network) return { reason: "network", retryKey: false, fallbackTarget: true };
-  return { reason: "terminal", retryKey: false, fallbackTarget: false };
+  if (network) return { reason: "network", retrySame: true, retryKey: false, fallbackTarget: true };
+  return { reason: "terminal", retrySame: false, retryKey: false, fallbackTarget: false };
 }
 
 export function summarizeRoutingAttempts(state: Pick<RoutingState, "attempts"> | null | undefined) {

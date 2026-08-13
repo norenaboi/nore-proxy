@@ -156,6 +156,7 @@ test("a limit breach after client output neither retries nor falls back", () => 
   });
   assert.deepEqual(after, {
     reason: "output_started",
+    retrySame: false,
     retryKey: false,
     fallbackTarget: false,
   });

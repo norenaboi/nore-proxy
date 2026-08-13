@@ -56,18 +56,21 @@ test("automatic target selection rotates and respects attempt ceilings", () => {
 
 test("failure classification preserves retry and streaming boundaries", () => {
   assert.deepEqual(classifyUpstreamFailure({ statusCode: 429 }), {
-    reason: "http_429", retryKey: true, fallbackTarget: true,
+    reason: "http_429", retrySame: false, retryKey: true, fallbackTarget: true,
   });
   assert.deepEqual(classifyUpstreamFailure({ statusCode: 400 }), {
-    reason: "http_400", retryKey: false, fallbackTarget: false,
+    reason: "http_400", retrySame: false, retryKey: false, fallbackTarget: false,
+  });
+  assert.deepEqual(classifyUpstreamFailure({ statusCode: 503 }), {
+    reason: "http_5xx", retrySame: true, retryKey: false, fallbackTarget: true,
   });
   assert.deepEqual(classifyUpstreamFailure({ error: { code: "ETIMEDOUT" } }), {
-    reason: "timeout", retryKey: false, fallbackTarget: true,
+    reason: "timeout", retrySame: true, retryKey: false, fallbackTarget: true,
   });
 
   const state = createRoutingState({ requestId: "req-2", requestedModel: "direct", registry });
   markStreamOutputStarted(state);
   assert.deepEqual(classifyUpstreamFailure({ statusCode: 503, streamOutputStarted: state.streamOutputStarted }), {
-    reason: "output_started", retryKey: false, fallbackTarget: false,
+    reason: "output_started", retrySame: false, retryKey: false, fallbackTarget: false,
   });
 });

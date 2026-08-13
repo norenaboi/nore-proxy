@@ -1183,6 +1183,7 @@ router.get("/api/endpoints", verifySession, async (req: any, res: any) => {
         promptCaching: endpoint.promptCaching !== undefined ? endpoint.promptCaching : null,
         keyRotation: endpoint.keyRotation ?? null,
         keyHealth: endpoint.keyHealth ?? null,
+        retryAttempts: endpoint.retryAttempts ?? null,
       });
     }
 
@@ -1295,6 +1296,15 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
       keyHealth = settingsManager.get("defaultEndpointKeyHealth") !== false;
     }
 
+    // Seed same-key retries from the client value, else the global default.
+    let retryAttempts = validateRetryAttempts(req.body.retryAttempts);
+    if (req.body.retryAttempts !== undefined && retryAttempts === null) {
+      return res.status(400).json({ error: "Retry attempts must be an integer from 0 to 10" });
+    }
+    if (retryAttempts === null) {
+      retryAttempts = settingsManager.get("defaultEndpointRetryAttempts");
+    }
+
     data[endpointKey] = {
       name: name || `Endpoint ${newIndex}`,
       url: normalizedUrl,
@@ -1306,6 +1316,7 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
       promptCaching,
       keyRotation,
       keyHealth,
+      retryAttempts,
     };
 
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
@@ -1367,6 +1378,15 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
     if (req.body.keyHealth !== undefined) {
       const parsed = validateKeyHealth(req.body.keyHealth);
       keyHealth = parsed === null ? true : parsed;
+    }
+
+    // Validate optional same-key retry count (undefined = keep existing)
+    let retryAttempts = undefined;
+    if (req.body.retryAttempts !== undefined) {
+      retryAttempts = validateRetryAttempts(req.body.retryAttempts);
+      if (retryAttempts === null) {
+        return res.status(400).json({ error: "Retry attempts must be an integer from 0 to 10" });
+      }
     }
 
     // Validate index is a plain positive integer to prevent RegExp injection
@@ -1487,6 +1507,9 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
     }
     if (keyHealth !== undefined) {
       data[endpointKey].keyHealth = keyHealth;
+    }
+    if (retryAttempts !== undefined) {
+      data[endpointKey].retryAttempts = retryAttempts;
     }
 
     fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
@@ -1857,6 +1880,14 @@ router.put("/api/settings", verifySession, (req: any, res: any) => {
       return res.status(400).json({ error: "Default key health must be a boolean" });
     }
     if (
+      updates.defaultEndpointRetryAttempts !== undefined &&
+      (!Number.isInteger(updates.defaultEndpointRetryAttempts) ||
+        updates.defaultEndpointRetryAttempts < 0 ||
+        updates.defaultEndpointRetryAttempts > 10)
+    ) {
+      return res.status(400).json({ error: "Default endpoint retry attempts must be an integer from 0 to 10" });
+    }
+    if (
       updates.defaultEndpointApiFormat !== undefined &&
       !["openai", "anthropic", "gemini", "openai-responses", "openai-codex"].includes(updates.defaultEndpointApiFormat)
     ) {
@@ -2163,6 +2194,13 @@ function validatePromptCaching(input: any) {
   }
 
   return { enabled, depth };
+}
+
+// Same-key retries are deliberately capped to prevent one endpoint from
+// multiplying request latency or upstream load without bound.
+function validateRetryAttempts(input: any) {
+  if (Number.isInteger(input) && input >= 0 && input <= 10) return input;
+  return null;
 }
 
 // Validate a keyRotation value. Returns "sticky" | "roundrobin", or null when

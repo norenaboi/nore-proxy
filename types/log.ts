@@ -35,6 +35,8 @@ export interface RoutingAttempt {
   tokenHash: string | null;
   targetAttempt: number | null;
   keyAttempt: number | null;
+  /** 0 on the first try; 1+ on same-key retries. Null when not applicable. */
+  retryAttempt?: number | null;
   outcome: string | null;
   retryReason: string | null;
   statusCode?: number | null;

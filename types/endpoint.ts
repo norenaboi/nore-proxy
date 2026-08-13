@@ -39,6 +39,12 @@ export interface Endpoint {
   keyRotation?: KeyRotation | null;
   /** Null/absent defers to the global default. */
   keyHealth?: boolean | null;
+  /**
+   * Extra attempts against the same key after a transient failure, before the
+   * request hops keys or falls back to another target. Null/absent defers to
+   * the global default.
+   */
+  retryAttempts?: number | null;
 }
 
 export type EndpointsDocument = Record<EndpointKey, Endpoint>;
@@ -54,6 +60,7 @@ export interface LoadedEndpoint extends Omit<Endpoint, "name" | "headers" | "api
   promptCaching: PromptCachingConfig | null;
   keyRotation: KeyRotation | null;
   keyHealth: boolean | null;
+  retryAttempts: number | null;
 }
 
 export interface EndpointMetadata {
@@ -69,6 +76,7 @@ export interface EndpointMetadata {
   promptCaching: PromptCachingConfig | null;
   keyRotation: KeyRotation | null;
   keyHealth: boolean | null;
+  retryAttempts: number | null;
 }
 
 /** A resolved endpoint with the selected upstream credential. */
@@ -92,4 +100,5 @@ export interface EndpointListItem {
   promptCaching: PromptCachingConfig | null;
   keyRotation: KeyRotation | null;
   keyHealth: boolean | null;
+  retryAttempts: number | null;
 }

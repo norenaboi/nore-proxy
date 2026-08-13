@@ -13,7 +13,7 @@
   interface GenDefault { enabled: boolean; value: number | null; }
   interface Endpoint {
     index: number; name?: string; url: string; token?: string; tokens?: string[];
-    apiFormat?: string; appendApiSuffix?: boolean; keyRotation?: string; keyHealth?: boolean;
+    apiFormat?: string; appendApiSuffix?: boolean; keyRotation?: string; keyHealth?: boolean; retryAttempts?: number;
     headers?: Record<string, string>;
     generationDefaults?: { temperature?: GenDefault; top_p?: GenDefault; max_tokens?: GenDefault };
     promptCaching?: { enabled: boolean; depth: number };
@@ -23,7 +23,7 @@
     totalRequests?: number; failedRequests?: number; codeCounts?: Record<string, number>;
   }
   interface Settings {
-    defaultEndpointApiFormat?: string; defaultEndpointKeyRotation?: string; defaultEndpointKeyHealth?: boolean;
+    defaultEndpointApiFormat?: string; defaultEndpointKeyRotation?: string; defaultEndpointKeyHealth?: boolean; defaultEndpointRetryAttempts?: number;
     defaultEndpointTemperatureEnabled?: boolean; defaultEndpointTemperature?: number | null;
     defaultEndpointTopPEnabled?: boolean; defaultEndpointTopP?: number | null;
     defaultEndpointMaxTokensEnabled?: boolean; defaultEndpointMaxTokens?: number | null;
@@ -48,6 +48,7 @@
   let fApiFormat = $state("openai");
   let fKeyRotation = $state("sticky");
   let fKeyHealth = $state(true);
+  let fRetryAttempts = $state(0);
   let fHeaders = $state("");
   let tokenInput = $state("");
   let bulkInput = $state("");
@@ -147,6 +148,7 @@
     fApiFormat = defaults?.defaultEndpointApiFormat || "openai";
     fKeyRotation = defaults?.defaultEndpointKeyRotation || "sticky";
     fKeyHealth = defaults?.defaultEndpointKeyHealth !== false;
+    fRetryAttempts = defaults?.defaultEndpointRetryAttempts ?? 0;
     if (defaults) {
       setGenDefaults({
         temperature: { enabled: defaults.defaultEndpointTemperatureEnabled ?? false, value: defaults.defaultEndpointTemperature ?? null },
@@ -172,6 +174,7 @@
     fApiFormat = ep.apiFormat || "openai";
     fKeyRotation = ep.keyRotation || "sticky";
     fKeyHealth = ep.keyHealth !== false;
+    fRetryAttempts = ep.retryAttempts ?? 0;
     setGenDefaults(ep.generationDefaults);
     setPromptCaching(ep.promptCaching);
     modalOpen = true;
@@ -203,6 +206,7 @@
     if (bulkInput.trim()) finalTokens = mergeBulkTokens(finalTokens, bulkInput).tokens;
 
     if (!url) return toast.show("Please enter a URL", "error");
+    if (!Number.isInteger(fRetryAttempts) || fRetryAttempts < 0 || fRetryAttempts > 10) return toast.show("Retry attempts must be 0–10", "error");
 
     let headers: Record<string, string> = {};
     if (fHeaders.trim()) {
@@ -214,7 +218,7 @@
 
     const payload: Record<string, unknown> = {
       name, url, tokens: finalTokens, headers, apiFormat: fApiFormat, appendApiSuffix: fAppendSuffix,
-      keyRotation: fKeyRotation, keyHealth: fKeyHealth,
+      keyRotation: fKeyRotation, keyHealth: fKeyHealth, retryAttempts: fRetryAttempts,
       generationDefaults: collectGenDefaults(), promptCaching: collectPromptCaching(),
     };
     if (editingIndex !== null) payload.index = editingIndex;
@@ -332,6 +336,7 @@
                 <span class="api-format-badge {fmt}"><i class="fa-solid fa-plug"></i>{fmtLabels[fmt] || fmt}</span>
                 <span class="gen-badge"><i class="fa-solid {ep.keyRotation === 'roundrobin' ? 'fa-arrows-rotate' : 'fa-thumbtack'}"></i>{ep.keyRotation === "roundrobin" ? "Round-robin" : "Sticky"}</span>
                 {#if ep.keyHealth === false}<span class="gen-badge health-off"><i class="fa-solid fa-heart-crack"></i>Health off</span>{/if}
+                {#if (ep.retryAttempts ?? 0) > 0}<span class="gen-badge"><i class="fa-solid fa-rotate-right"></i>Retries={ep.retryAttempts}</span>{/if}
                 {#if gd.temperature?.enabled && gd.temperature.value !== null}<span class="gen-badge"><i class="fa-solid fa-temperature-half"></i>T={gd.temperature.value}</span>{/if}
                 {#if gd.top_p?.enabled && gd.top_p.value !== null}<span class="gen-badge"><i class="fa-solid fa-chart-pie"></i>P={gd.top_p.value}</span>{/if}
                 {#if gd.max_tokens?.enabled && gd.max_tokens.value !== null}<span class="gen-badge"><i class="fa-solid fa-stopwatch"></i>Max={gd.max_tokens.value}</span>{/if}
@@ -388,6 +393,7 @@
           <div class="form-group"><label for="epFmt">API Format</label><select id="epFmt" bind:value={fApiFormat} class="form-select"><option value="openai">OpenAI — /v1/chat/completions (default)</option><option value="anthropic">Anthropic — /v1/messages</option><option value="gemini">Gemini — /v1beta/generateContent</option><option value="openai-responses">OpenAI Responses — /v1/responses</option><option value="openai-codex">OpenAI Codex — /v1/responses</option></select><p class="form-hint">Controls which API path is appended when forwarding requests to this endpoint.</p></div>
           <div class="form-group"><label for="epRot">Key Rotation</label><select id="epRot" bind:value={fKeyRotation} class="form-select"><option value="sticky">Sticky — use the first healthy key until it fails</option><option value="roundrobin">Round-robin — start at a random healthy key, then cycle</option></select><p class="form-hint">How this endpoint picks among its keys. On a 400/401/402/403/429, the request hops to the next healthy key automatically.</p></div>
           <div class="form-group"><label for="epHealth">Key Health</label><select id="epHealth" bind:value={fKeyHealth} class="form-select"><option value={true}>On — bench a key on 401/402/429</option><option value={false}>Off — never bench keys, just hop and return</option></select><p class="form-hint">When on, 401/402 marks a key invalid and 429 times it out temporarily. Turn this off for short-lived RPM/TPM limits so a good key is not parked for hours; requests still hop either way.</p></div>
+          <div class="form-group"><label for="epRetries">Retry Attempts</label><input id="epRetries" class="gen-input active" type="number" min="0" max="10" step="1" bind:value={fRetryAttempts} /><p class="form-hint">Extra attempts on the same key after a 5xx, timeout, or network error. 0 disables retries. Authentication and rate-limit errors hop keys immediately.</p></div>
         </div>
       </div>
 
