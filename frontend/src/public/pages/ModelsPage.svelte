@@ -4,6 +4,7 @@
   import { requestPublicJson } from "$frontend/lib/api/public";
   import {
     clearModelCache,
+    formatModelName,
     formatPrice,
     getProviderIcon,
     normalizeModels,
@@ -200,7 +201,7 @@
         <div class="card-top">
           <img src={getProviderIcon(model.provider)} class="model-icon" alt="" loading="lazy" onerror={hideBrokenImage} />
           <div class="card-id">
-            <span class="model-name" title={model.id}>{model.id}</span>
+            <span class="model-name" title={model.id}>{formatModelName(model.id)}</span>
             <span class="provider">{model.provider}</span>
           </div>
         </div>
@@ -308,7 +309,7 @@
     transition: 0.14s;
   }
 
-  .model-card:hover { border-color: var(--accent-ink); box-shadow: 0 10px 26px rgba(36, 27, 45, 0.08); }
+  .model-card:hover { border-color: var(--accent-ink); box-shadow: var(--shadow-sm); }
   .card-top { display: flex; align-items: center; gap: 11px; min-width: 0; padding-right: 0; }
   .model-icon { width: 34px; height: 34px; flex-shrink: 0; border-radius: 8px; object-fit: contain; }
   .card-id { min-width: 0; }

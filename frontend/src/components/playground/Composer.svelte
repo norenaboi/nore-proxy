@@ -68,9 +68,9 @@
   .composer {
     flex: none;
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 12px;
-    align-items: end;
+    align-items: stretch;
     padding: 14px;
   }
 
@@ -91,12 +91,12 @@
   .composer-actions { display: flex; gap: 8px; }
 
   .usage-button {
-    min-height: 44px;
+    min-height: 52px;
     padding: 9px 20px;
     border: 1px solid var(--accent-ink);
     border-radius: 8px;
     background: var(--accent-ink);
-    color: white;
+    color: var(--on-accent);
     font-weight: 700;
     cursor: pointer;
   }
@@ -104,12 +104,12 @@
   .usage-button:disabled { opacity: 0.45; cursor: not-allowed; }
 
   .composer-stop {
-    min-height: 44px;
+    min-height: 52px;
     padding: 9px 20px;
-    border: 1px solid #a43f55;
+    border: 1px solid var(--danger);
     border-radius: 8px;
     background: var(--surface);
-    color: #a43f55;
+    color: var(--danger);
     font-weight: 700;
     cursor: pointer;
   }
@@ -121,9 +121,5 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-
-  @media (max-width: 700px) {
-    .composer { grid-template-columns: 1fr; }
   }
 </style>

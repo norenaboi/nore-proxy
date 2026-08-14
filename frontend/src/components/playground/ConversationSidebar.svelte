@@ -166,7 +166,7 @@
     border: 1px solid var(--accent-ink);
     border-radius: 8px;
     background: var(--accent-ink);
-    color: white;
+    color: var(--on-accent);
     font-weight: 700;
     font-size: 12.5px;
     cursor: pointer;
@@ -319,7 +319,7 @@
   .settings:hover { border-color: var(--accent-ink); color: var(--accent-ink); }
 
   /* Marks Settings as needing attention while no key is stored. */
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: #a43f55; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); }
 
   .visually-hidden {
     position: absolute;

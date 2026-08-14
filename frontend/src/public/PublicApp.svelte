@@ -1,5 +1,11 @@
 <script lang="ts">
   import PublicShell from "../components/PublicShell.svelte";
+  import {
+    applyPublicTheme,
+    readPublicTheme,
+    setPublicTheme,
+    type PublicTheme,
+  } from "$frontend/lib/publicTheme";
   import HomePage from "./pages/HomePage.svelte";
   import LegalPage from "./pages/LegalPage.svelte";
   import ModelsPage from "./pages/ModelsPage.svelte";
@@ -8,6 +14,11 @@
   import UsagePage from "./pages/UsagePage.svelte";
 
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  let theme = $state<PublicTheme>(applyPublicTheme(readPublicTheme()));
+
+  function changeTheme(next: PublicTheme): void {
+    theme = setPublicTheme(next);
+  }
 
   // Express serves one document for every public path, so the tab title has to
   // be set here rather than in public.html.
@@ -26,7 +37,7 @@
   <title>{title}</title>
 </svelte:head>
 
-<PublicShell activePath={path}>
+<PublicShell activePath={path} {theme} onThemeChange={changeTheme}>
   {#if path === "/"}
     <HomePage />
   {:else if path === "/usage"}

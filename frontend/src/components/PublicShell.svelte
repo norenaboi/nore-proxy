@@ -1,7 +1,19 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import type { PublicTheme } from "$frontend/lib/publicTheme";
+  import PublicThemeToggle from "./PublicThemeToggle.svelte";
 
-  let { activePath, children }: { activePath: string; children: Snippet } = $props();
+  let {
+    activePath,
+    theme,
+    onThemeChange,
+    children,
+  }: {
+    activePath: string;
+    theme: PublicTheme;
+    onThemeChange: (theme: PublicTheme) => void;
+    children: Snippet;
+  } = $props();
 
   const isHome = $derived(activePath === "/");
   const isModels = $derived(activePath === "/models");
@@ -13,6 +25,12 @@
   const isNotFound = $derived(!isHome && !isModels && !isUsage && !isPlayground && !isLegal);
   const isWide = $derived(isModels || isPlayground);
 </script>
+
+<div class="public-utility">
+  <div class="public-utility-inner">
+    <PublicThemeToggle {theme} {onThemeChange} />
+  </div>
+</div>
 
 <header class="public-head">
   <a class="brand" href="/">

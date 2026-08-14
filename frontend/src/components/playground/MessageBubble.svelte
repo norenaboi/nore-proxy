@@ -346,7 +346,7 @@
     border: 1px solid var(--accent-ink);
     border-radius: 8px;
     background: var(--accent-ink);
-    color: white;
+    color: var(--on-accent);
     font-weight: 700;
     cursor: pointer;
   }
@@ -366,10 +366,10 @@
     max-width: 100%;
     margin: 0;
     padding: 9px 12px;
-    border: 1px solid rgba(164, 63, 85, 0.25);
+    border: 1px solid var(--danger-line);
     border-radius: 8px;
-    background: rgba(164, 63, 85, 0.08);
-    color: #a43f55;
+    background: var(--danger-soft);
+    color: var(--danger);
     font-size: 12.5px;
   }
 

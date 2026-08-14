@@ -5,12 +5,19 @@ import { numericInputValue, effectiveModelName, isDuplicateModelName } from "../
 import { mergeBulkTokens, removeTokenAt } from "../frontend/src/lib/endpoints/editor.js";
 import {
   clearModelCache,
+  formatModelName,
   formatPrice,
   getProvider,
   normalizeModels,
   readModelCache,
   writeModelCache,
 } from "../frontend/src/lib/models/catalog.js";
+import {
+  applyPublicTheme,
+  PUBLIC_THEME_KEY,
+  readPublicTheme,
+  setPublicTheme,
+} from "../frontend/src/lib/publicTheme.js";
 
 class MemoryStorage {
   values = new Map();
@@ -21,6 +28,31 @@ class MemoryStorage {
   removeItem(key) { this.values.delete(key); }
   setItem(key, value) { this.values.set(key, value); }
 }
+
+test("public theme normalizes, applies, persists, and tolerates storage failures", () => {
+  const storage = new MemoryStorage();
+  const root = { dataset: {} };
+
+  assert.equal(readPublicTheme(storage), "light");
+  storage.setItem(PUBLIC_THEME_KEY, "invalid");
+  assert.equal(readPublicTheme(storage), "light");
+  storage.setItem(PUBLIC_THEME_KEY, "dark");
+  assert.equal(readPublicTheme(storage), "dark");
+
+  assert.equal(applyPublicTheme("dark", root), "dark");
+  assert.equal(root.dataset.theme, "dark");
+  assert.equal(setPublicTheme("light", storage, root), "light");
+  assert.equal(root.dataset.theme, "light");
+  assert.equal(storage.getItem(PUBLIC_THEME_KEY), "light");
+
+  const throwingStorage = {
+    getItem() { throw new Error("unavailable"); },
+    setItem() { throw new Error("unavailable"); },
+  };
+  assert.equal(readPublicTheme(throwingStorage), "light");
+  assert.equal(setPublicTheme("dark", throwingStorage, root), "dark");
+  assert.equal(root.dataset.theme, "dark");
+});
 
 test("model catalog classifies, normalizes, caches, and formats models", () => {
   assert.equal(getProvider("claude-sonnet-5"), "Anthropic");
@@ -42,6 +74,9 @@ test("model catalog classifies, normalizes, caches, and formats models", () => {
   assert.deepEqual(readModelCache(storage), models);
   clearModelCache(storage);
   assert.equal(readModelCache(storage), null);
+  assert.equal(formatModelName("deepseek-v4-pro"), "Deepseek V4 Pro");
+  assert.equal(formatModelName("gpt-5"), "GPT 5");
+  assert.equal(formatModelName("glm-4.5-air"), "GLM 4.5 Air");
   assert.equal(formatPrice(0.003), "$0.003");
 });
 

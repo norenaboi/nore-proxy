@@ -191,7 +191,7 @@
     position: fixed;
     inset: 0;
     z-index: 90;
-    background: rgba(36, 27, 45, 0.34);
+    background: var(--scrim);
   }
 
   .dialog {
@@ -207,7 +207,7 @@
     border: 1px solid var(--line);
     border-radius: 12px;
     background: var(--surface);
-    box-shadow: 0 24px 60px rgba(36, 27, 45, 0.24);
+    box-shadow: var(--shadow-dialog);
   }
 
   .dialog-head {
@@ -301,7 +301,7 @@
     border: 1px solid var(--accent-ink);
     border-radius: 8px;
     background: var(--accent-ink);
-    color: white;
+    color: var(--on-accent);
     font-weight: 700;
     cursor: pointer;
   }

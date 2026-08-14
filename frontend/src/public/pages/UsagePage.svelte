@@ -146,7 +146,7 @@
     border: 1px solid var(--accent-ink);
     border-radius: 8px;
     background: var(--accent-ink);
-    color: white;
+    color: var(--on-accent);
     font-weight: 700;
     cursor: pointer;
   }
@@ -167,10 +167,10 @@
   .usage-error {
     margin: 18px 0;
     padding: 14px 16px;
-    border: 1px solid rgba(164, 63, 85, 0.25);
+    border: 1px solid var(--danger-line);
     border-radius: 8px;
-    background: rgba(164, 63, 85, 0.08);
-    color: #a43f55;
+    background: var(--danger-soft);
+    color: var(--danger);
   }
 
   .stats-section { overflow: hidden; }
@@ -189,7 +189,7 @@
   .stat-label { color: var(--muted); }
   .stat-value { font-weight: 700; font-variant-numeric: tabular-nums; }
   .stat-value.active { color: var(--success); }
-  .stat-value.inactive { color: #a43f55; }
+  .stat-value.inactive { color: var(--danger); }
 
   @media (max-width: 650px) {
     .usage-head { display: grid; }

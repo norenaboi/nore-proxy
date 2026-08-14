@@ -29,13 +29,13 @@
     width: max-content;
     max-width: min(620px, calc(100vw - 32px));
     padding: 14px 16px;
-    border: 1px solid rgba(164, 63, 85, 0.35);
+    border: 1px solid var(--danger-line);
     border-radius: 10px;
-    background: #fff2f4;
-    color: #8f2940;
+    background: var(--danger-soft);
+    color: var(--danger);
     font-size: 13px;
     line-height: 1.55;
-    box-shadow: 0 14px 36px rgba(36, 27, 45, 0.18);
+    box-shadow: var(--shadow-md);
   }
 
   .body { min-width: 0; overflow-wrap: anywhere; }
@@ -43,7 +43,7 @@
   .dismiss {
     flex: none;
     padding: 0 6px 3px;
-    border: 1px solid rgba(164, 63, 85, 0.35);
+    border: 1px solid var(--danger-line);
     border-radius: 7px;
     background: transparent;
     color: inherit;
@@ -52,5 +52,5 @@
     cursor: pointer;
   }
 
-  .dismiss:hover { background: rgba(164, 63, 85, 0.12); }
+  .dismiss:hover { background: var(--danger-hover); }
 </style>

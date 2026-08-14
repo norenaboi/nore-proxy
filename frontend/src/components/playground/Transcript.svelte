@@ -139,7 +139,7 @@
     color: var(--accent-ink);
     font-size: 11.5px;
     font-weight: 600;
-    box-shadow: 0 10px 26px rgba(36, 27, 45, 0.08);
+    box-shadow: var(--shadow-sm);
     cursor: pointer;
   }
 

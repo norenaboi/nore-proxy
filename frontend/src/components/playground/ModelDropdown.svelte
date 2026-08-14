@@ -1,6 +1,12 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { formatPrice, getProviderIcon, type CatalogModel, type Provider } from "$frontend/lib/models/catalog";
+  import {
+    formatModelName,
+    formatPrice,
+    getProviderIcon,
+    type CatalogModel,
+    type Provider,
+  } from "$frontend/lib/models/catalog";
 
   let {
     models,
@@ -132,7 +138,7 @@
   >
     {#if selectedModel}
       <img src={getProviderIcon(selectedModel.provider)} class="icon" alt="" loading="lazy" onerror={hideBrokenImage} />
-      <span class="trigger-id">{selectedModel.id}</span>
+      <span class="trigger-id">{formatModelName(selectedModel.id)}</span>
     {:else}
       <span class="trigger-id placeholder">{loading ? "Loading models…" : "Select a model"}</span>
     {/if}
@@ -191,7 +197,7 @@
               onclick={() => choose(model.id)}
             >
               <img src={getProviderIcon(model.provider)} class="icon" alt="" loading="lazy" onerror={hideBrokenImage} />
-              <span class="row-id">{model.id}</span>
+              <span class="row-id">{formatModelName(model.id)}</span>
               <span class="row-price">{formatPrice(model.pricing.input)} / {formatPrice(model.pricing.output)}</span>
             </button>
           {/each}
@@ -243,7 +249,7 @@
     border: 1px solid var(--line);
     border-radius: 10px;
     background: var(--surface);
-    box-shadow: 0 14px 36px rgba(36, 27, 45, 0.14);
+    box-shadow: var(--shadow-md);
   }
 
   .search-wrap { position: relative; }
@@ -352,10 +358,10 @@
   .panel-error {
     margin: 0;
     padding: 9px 11px;
-    border: 1px solid rgba(164, 63, 85, 0.25);
+    border: 1px solid var(--danger-line);
     border-radius: 8px;
-    background: rgba(164, 63, 85, 0.08);
-    color: #a43f55;
+    background: var(--danger-soft);
+    color: var(--danger);
     font-size: 12px;
   }
 

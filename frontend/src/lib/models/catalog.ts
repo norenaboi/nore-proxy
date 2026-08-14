@@ -6,6 +6,7 @@ import type {
 
 export const MODEL_CACHE_KEY = "nore-proxy:model-catalog:v1";
 const MODEL_CACHE_VERSION = 1;
+const MODEL_NAME_ABBREVIATIONS = new Set(["gpt", "glm"]);
 
 export type Provider =
   | "Anthropic"
@@ -55,6 +56,18 @@ export function getProviderIcon(provider: Provider): string {
     Others: "/icons/providers/other.png",
   };
   return icons[provider];
+}
+
+export function formatModelName(modelId: string): string {
+  return modelId
+    .split("-")
+    .filter(Boolean)
+    .map((word) =>
+      MODEL_NAME_ABBREVIATIONS.has(word.toLowerCase())
+        ? word.toUpperCase()
+        : word.charAt(0).toUpperCase() + word.slice(1),
+    )
+    .join(" ");
 }
 
 export function formatPrice(value: number): string {
