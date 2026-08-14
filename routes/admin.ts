@@ -2040,6 +2040,43 @@ router.get("/api/users/:keyId", verifySession, async (req: any, res: any) => {
     GET for model usage statistics from database
 */
 
+function modelUsageSourceName(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function modelUsageTargetName(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+async function manageModelUsage(req: any, res: any, action: "rename" | "conjoin" | "delete") {
+  const source = modelUsageSourceName(req.body?.source);
+  const target = action === "delete" ? undefined : modelUsageTargetName(req.body?.target);
+  if (!source.trim() || (action !== "delete" && !target)) {
+    return res.status(400).json({ error: action === "delete" ? "Source model name required" : "Source and target model names required" });
+  }
+  if (target === source) return res.status(400).json({ error: "Source and target model names must differ" });
+
+  try {
+    const names = await logManager.getModelUsageNames();
+    if (!names.includes(source)) return res.status(404).json({ error: "Source model usage not found" });
+    if (action === "rename" && names.includes(target)) {
+      return res.status(409).json({ error: "Target model usage already exists" });
+    }
+    if (action === "conjoin" && !names.includes(target)) {
+      return res.status(404).json({ error: "Target model usage not found" });
+    }
+    const counts = await logManager.manageModelUsage(action, source, target);
+    return res.json({ success: true, source, ...(target ? { target } : {}), ...counts });
+  } catch (error: any) {
+    console.error(`Error ${action}ing model usage:`, error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+router.post("/api/model-usage/rename", verifySession, (req: any, res: any) => manageModelUsage(req, res, "rename"));
+router.post("/api/model-usage/conjoin", verifySession, (req: any, res: any) => manageModelUsage(req, res, "conjoin"));
+router.delete("/api/model-usage", verifySession, (req: any, res: any) => manageModelUsage(req, res, "delete"));
+
 // Get model usage statistics from database
 router.get("/api/model-usage", verifySession, async (req: any, res: any) => {
   try {
@@ -2047,8 +2084,13 @@ router.get("/api/model-usage", verifySession, async (req: any, res: any) => {
     const modelsByName = new Map();
 
     for (const row of rows) {
-      const log = JSON.parse(row.data);
-      if (!log.model) continue;
+      let log: any;
+      try {
+        log = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
+      } catch {
+        continue;
+      }
+      if (!log || typeof log !== "object" || Array.isArray(log) || typeof log.model !== "string" || !log.model) continue;
 
       const model = modelsByName.get(log.model) || {
         model: log.model,

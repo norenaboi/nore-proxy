@@ -86,6 +86,22 @@ function parseJson(value: unknown): any {
   }
 }
 
+// Historical usage management deliberately treats only data.model as canonical.
+// This avoids conflating an upstream model with the configured name requested by
+// the client, and safely skips malformed legacy JSON.
+function requestUsageData(value: unknown): Record<string, any> | null {
+  const parsed = parseJson(value);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+}
+
+function renameConfiguredModelFields(data: Record<string, any>, source: string, target: string) {
+  const updated = { ...data };
+  for (const field of ["model", "requested_model", "auto_model", "target_model"]) {
+    if (updated[field] === source) updated[field] = target;
+  }
+  return updated;
+}
+
 function normalizeJsonForStorage(value: unknown): string | null {
   return serializeJson(parseJson(value));
 }
@@ -1041,7 +1057,7 @@ export class LogManager {
 
   async getModelUsageRows(): Promise<Array<{ data: string }>> {
     return this.db.prepare(
-      "SELECT data FROM request_logs WHERE type = 'request_end' AND model IS NOT NULL",
+      "SELECT data FROM request_logs WHERE type = 'request_end'",
     ).all();
   }
 
@@ -1155,6 +1171,59 @@ export class LogManager {
         label: row.key_name ? `${row.key_name} · ${row.api_key_masked}` : row.api_key_masked,
       }));
     return { models, apiKeys, statuses: ["success", "failed"] };
+  }
+
+  getModelUsageNames() {
+    const names = new Set<string>();
+    for (const row of this.db.prepare("SELECT data FROM request_logs WHERE type = 'request_end'").all()) {
+      const data = requestUsageData(row.data);
+      if (typeof data?.model === "string" && data.model) names.add(data.model);
+    }
+    return [...names].sort();
+  }
+
+  manageModelUsage(action: "rename" | "conjoin" | "delete", source: string, target?: string) {
+    const manage = this.db.transaction(() => {
+      const selected = this.db.prepare("SELECT id, request_id, data FROM request_logs WHERE type = 'request_end'").all()
+        .filter((row: any) => requestUsageData(row.data)?.model === source);
+      const requestIds = [...new Set(selected.map((row: any) => row.request_id).filter((id: unknown): id is string => typeof id === "string" && id.length > 0))];
+      let requestLogs = 0;
+      let errorLogs = 0;
+
+      if (action === "delete") {
+        if (selected.length) {
+          const deleteRequests = this.db.prepare("DELETE FROM request_logs WHERE id = ?");
+          for (const row of selected) requestLogs += deleteRequests.run(row.id).changes;
+        }
+        if (requestIds.length) {
+          const deleteErrors = this.db.prepare("DELETE FROM error_logs WHERE request_id = ?");
+          for (const requestId of requestIds) errorLogs += deleteErrors.run(requestId).changes;
+        }
+      } else {
+        const updateRequest = this.db.prepare(`UPDATE request_logs SET
+          model = ?, request_model = CASE WHEN request_model = ? THEN ? ELSE request_model END, data = ?
+          WHERE id = ?`);
+        for (const row of selected) {
+          const data = requestUsageData(row.data)!;
+          const result = updateRequest.run(target, source, target, serializeJson(renameConfiguredModelFields(data, source, target!)), row.id);
+          requestLogs += result.changes;
+        }
+        if (requestIds.length) {
+          const updateErrors = this.db.prepare(`UPDATE error_logs SET
+            model = CASE WHEN model = @source THEN @target ELSE model END,
+            auto_model = CASE WHEN auto_model = @source THEN @target ELSE auto_model END,
+            target_model = CASE WHEN target_model = @source THEN @target ELSE target_model END
+            WHERE request_id = @requestId AND (model = @source OR auto_model = @source OR target_model = @source)`);
+          for (const requestId of requestIds) {
+            errorLogs += updateErrors.run({ source, target, requestId }).changes;
+          }
+        }
+      }
+
+      this.rebuildRequestRollups();
+      return { requestLogs, errorLogs };
+    });
+    return manage();
   }
 
   renameModel(oldName: string, newName: string) {
@@ -1480,7 +1549,71 @@ class PostgresLogManager {
     const rows = await this.db.all(`SELECT data FROM request_logs WHERE type = ?${model ? " AND model = ?" : ""} ORDER BY id DESC LIMIT ? OFFSET ?`, model ? ["request_end", model, limit, offset] : ["request_end", limit, offset]);
     return rows.map((r: any) => parseJson(r.data));
   }
-  async getModelUsageRows(): Promise<Array<{ data: string }>> { return this.db.all("SELECT data FROM request_logs WHERE type = 'request_end' AND model IS NOT NULL") as any; }
+  async getModelUsageRows(): Promise<Array<{ data: string }>> { return this.db.all("SELECT data FROM request_logs WHERE type = 'request_end'") as any; }
+  async getModelUsageNames() {
+    const rows = await this.db.all<{ model: string }>("SELECT DISTINCT data->>'model' AS model FROM request_logs WHERE type = 'request_end' AND data->>'model' IS NOT NULL AND data->>'model' != '' ORDER BY model");
+    return rows.map((row) => row.model);
+  }
+  async manageModelUsage(action: "rename" | "conjoin" | "delete", source: string, target?: string) {
+    return this.db.transaction(async (tx) => {
+      const selected = await tx.all<{ id: number; request_id: string | null }>("SELECT id, request_id FROM request_logs WHERE type = 'request_end' AND data->>'model' = ?", [source]);
+      const requestIds = [...new Set(selected.map((row) => row.request_id).filter((id): id is string => typeof id === "string" && id.length > 0))];
+      if (action === "delete") {
+        const requestLogs = selected.length
+          ? (await tx.run(`DELETE FROM request_logs WHERE id = ANY($1::bigint[])`, [selected.map((row) => row.id)])).changes
+          : 0;
+        const errorLogs = requestIds.length
+          ? (await tx.run("DELETE FROM error_logs WHERE request_id = ANY($1::text[])", [requestIds])).changes
+          : 0;
+        return { requestLogs, errorLogs };
+      }
+      const requestLogs = selected.length
+        ? (await tx.run(`UPDATE request_logs SET
+            model = $1,
+            request_model = CASE WHEN request_model = $2 THEN $1 ELSE request_model END,
+            data = CASE WHEN data->>'target_model' = $2
+              THEN jsonb_set(
+                CASE WHEN data->>'auto_model' = $2
+                  THEN jsonb_set(
+                    CASE WHEN data->>'requested_model' = $2
+                      THEN jsonb_set(jsonb_set(data, '{model}', to_jsonb($1::text)), '{requested_model}', to_jsonb($1::text))
+                      ELSE jsonb_set(data, '{model}', to_jsonb($1::text))
+                    END,
+                    '{auto_model}', to_jsonb($1::text)
+                  )
+                  ELSE CASE WHEN data->>'requested_model' = $2
+                    THEN jsonb_set(jsonb_set(data, '{model}', to_jsonb($1::text)), '{requested_model}', to_jsonb($1::text))
+                    ELSE jsonb_set(data, '{model}', to_jsonb($1::text))
+                  END
+                END,
+                '{target_model}', to_jsonb($1::text)
+              )
+              ELSE CASE WHEN data->>'auto_model' = $2
+                THEN jsonb_set(
+                  CASE WHEN data->>'requested_model' = $2
+                    THEN jsonb_set(jsonb_set(data, '{model}', to_jsonb($1::text)), '{requested_model}', to_jsonb($1::text))
+                    ELSE jsonb_set(data, '{model}', to_jsonb($1::text))
+                  END,
+                  '{auto_model}', to_jsonb($1::text)
+                )
+                ELSE CASE WHEN data->>'requested_model' = $2
+                  THEN jsonb_set(jsonb_set(data, '{model}', to_jsonb($1::text)), '{requested_model}', to_jsonb($1::text))
+                  ELSE jsonb_set(data, '{model}', to_jsonb($1::text))
+                END
+              END
+            END
+            WHERE id = ANY($3::bigint[])`, [target, source, selected.map((row) => row.id)])).changes
+        : 0;
+      const errorLogs = requestIds.length
+        ? (await tx.run(`UPDATE error_logs SET
+            model = CASE WHEN model = $1 THEN $2 ELSE model END,
+            auto_model = CASE WHEN auto_model = $1 THEN $2 ELSE auto_model END,
+            target_model = CASE WHEN target_model = $1 THEN $2 ELSE target_model END
+            WHERE request_id = ANY($3::text[]) AND (model = $1 OR auto_model = $1 OR target_model = $1)`, [source, target, requestIds])).changes
+        : 0;
+      return { requestLogs, errorLogs };
+    });
+  }
   async getDashboardRequestLogs() { return (await this.requestRows()).map(normalizeRequestRow); }
   async getRequestHistory(filters: any = {}) { const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 50); const rows = await this.requestRows(filters, limit + 1); const visible = rows.slice(0, limit).map(normalizeRequestRow); return { requests: visible, hasMore: rows.length > limit, nextCursor: rows.length > limit && visible.length ? visible.at(-1)?.id : null }; }
   async getRequestHistoryById(id: unknown) { return normalizeRequestDetail(await this.db.get("SELECT * FROM request_logs WHERE id = ? AND type = 'request_end'", [id])); }
