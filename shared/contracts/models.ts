@@ -18,3 +18,7 @@ export interface PublicModelsResponse {
   object: "list";
   data: PublicModelDto[];
 }
+
+export type ModelTestResult =
+  | { ok: true; latency_ms: number }
+  | { ok: false; error: string; latency_ms?: number };

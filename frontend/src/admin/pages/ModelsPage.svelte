@@ -5,6 +5,7 @@
   import { motionDuration } from "$frontend/lib/motion";
   import { pageHeaderActions, toast } from "$frontend/lib/stores";
   import { effectiveModelName, isDuplicateModelName, numericInputValue, type NumericInputValue } from "$frontend/admin/modelForm";
+  import type { ModelTestResult } from "$contracts/models";
 
   interface Pricing { input?: number; output?: number; cache_write?: number; cache_read?: number; }
   interface PricingForm {
@@ -19,7 +20,7 @@
     targets?: string[]; targetSelection?: "sticky" | "roundrobin"; maxTargetAttempts?: number | null;
   }
   interface Endpoint { index: number; name?: string; }
-  interface TestResult { ok: boolean; latency_ms?: number; error?: string; }
+  type TestResult = ModelTestResult;
   type GroupKind = "auto" | "endpoint" | "unknown";
   type ModelStateFilter = "all" | "enabled" | "disabled";
   type VisibilityFilter = "all" | "public" | "hidden";
@@ -77,6 +78,9 @@
   let availableModels = $state<string[]>([]);
   let upstreamFetched = $state(false);
   let fetchingModels = $state(false);
+  let testingDraft = $state(false);
+  let draftTestResult = $state<ModelTestResult | null>(null);
+  let draftTestGeneration = 0;
 
   const isAuto = (m: Model) => m.modelType === "auto";
 
@@ -268,7 +272,14 @@
     return v != null && Number.isFinite(Number(v)) ? Number(v).toFixed(2) : "0.00";
   }
 
+  function resetDraftTest() {
+    draftTestGeneration++;
+    testingDraft = false;
+    draftTestResult = null;
+  }
+
   function resetForm() {
+    resetDraftTest();
     editingModel = null; modalMode = "add"; fName = ""; fType = "concrete"; fDisabled = false; fHidden = false;
     fVersion = ""; fBackend = ""; fPricing = { input: "", output: "", cache_write: "", cache_read: "" };
     fTargets = []; fTargetSelection = "sticky"; fMaxAttempts = ""; fTargetCandidate = "";
@@ -333,6 +344,39 @@
     fTargets = next;
   }
   function removeTarget(i: number) { fTargets = fTargets.filter((_, idx) => idx !== i); }
+
+  async function testDraftModel() {
+    if (testingDraft) return;
+    const version = fVersion.trim();
+    const backend = fBackend.trim();
+    if (!version) return toast.show("Please select an endpoint first", "error");
+    if (!backend) return toast.show("Please enter a backend name", "error");
+
+    const generation = ++draftTestGeneration;
+    testingDraft = true;
+    draftTestResult = null;
+    try {
+      const data = await requestAdminJson<ModelTestResult>("/api/models/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version, backend }),
+      });
+      if (!modalOpen || fType !== "concrete" || fVersion.trim() !== version || fBackend.trim() !== backend || draftTestGeneration !== generation) return;
+      draftTestResult = data;
+      toast.show(data.ok ? `${backend}: OK (${data.latency_ms}ms)` : `${backend}: ${data.error}`, data.ok ? "success" : "error");
+    } catch (e) {
+      if (modalOpen && fType === "concrete" && fVersion.trim() === version && fBackend.trim() === backend && draftTestGeneration === generation) {
+        draftTestResult = { ok: false, error: e instanceof Error ? e.message : "Failed" };
+        toast.show(e instanceof Error ? e.message : "Failed", "error");
+      }
+    } finally {
+      if (draftTestGeneration === generation) testingDraft = false;
+    }
+  }
+
+  function invalidateDraftTest() {
+    if (testingDraft || draftTestResult) resetDraftTest();
+  }
 
   async function fetchUpstream() {
     if (!fVersion) return toast.show("Please select an endpoint first", "error");
@@ -643,7 +687,7 @@
 
       <div class="form-group">
         <label for="mType">Model Type</label>
-        <select id="mType" bind:value={fType} class="form-select" style="width:100%;">
+        <select id="mType" bind:value={fType} onchange={invalidateDraftTest} class="form-select" style="width:100%;" disabled={testingDraft}>
           <option value="concrete">Concrete (single backend)</option>
           <option value="auto">Automatic (routes across targets)</option>
         </select>
@@ -652,21 +696,34 @@
       {#if fType === "concrete"}
         <div class="form-group">
           <label for="mVersion">Endpoint</label>
-          <select id="mVersion" bind:value={fVersion} onchange={() => { availableModels = []; upstreamFetched = false; }} class="form-select" style="width:100%;" disabled={fetchingModels}>
+          <select id="mVersion" bind:value={fVersion} onchange={() => { availableModels = []; upstreamFetched = false; invalidateDraftTest(); }} class="form-select" style="width:100%;" disabled={fetchingModels || testingDraft}>
             <option value="">Select an endpoint</option>
             {#each versionKeys as v}<option value={v}>{endpoints[v]?.name || v}</option>{/each}
           </select>
         </div>
         <div class="form-group">
           <label for="mBackend">Backend Model</label>
-          <div style="display:flex;gap:8px;">
-            <input id="mBackend" type="text" bind:value={fBackend} placeholder="Backend model name" style="flex:1;" />
-            <button class="btn btn-secondary btn-sm" type="button" onclick={fetchUpstream} disabled={fetchingModels || !fVersion} aria-busy={fetchingModels}>
-              {#if fetchingModels}<span class="button-spinner" aria-hidden="true"></span> Fetching…{:else}Fetch{/if}
-            </button>
+          <div class="backend-test-row">
+            <input id="mBackend" type="text" bind:value={fBackend} oninput={invalidateDraftTest} placeholder="Backend model name" />
+            <div class="backend-test-actions">
+              <button class="btn btn-secondary btn-sm" type="button" onclick={fetchUpstream} disabled={fetchingModels || testingDraft || !fVersion} aria-busy={fetchingModels}>
+                {#if fetchingModels}<span class="button-spinner" aria-hidden="true"></span> Fetching…{:else}Fetch{/if}
+              </button>
+              <button class="btn btn-secondary btn-sm" type="button" onclick={testDraftModel} disabled={testingDraft || fetchingModels || submitting || !fVersion || !fBackend.trim()} aria-busy={testingDraft} aria-label="Test draft backend model" title="Test model (silent — not logged)">
+                {#if testingDraft}<span class="button-spinner" aria-hidden="true"></span> Testing…{:else}Test{/if}
+              </button>
+            </div>
           </div>
+          {#if draftTestResult}
+            <div class="draft-test-status" role="status" aria-live="polite">
+              <span class:ok={draftTestResult.ok} class:fail={!draftTestResult.ok} class="test-result-badge" title={draftTestResult.ok ? "Model test succeeded" : draftTestResult.error}>
+                <i class={`fa-solid ${draftTestResult.ok ? "fa-check" : "fa-xmark"}`} aria-hidden="true"></i>
+                {draftTestResult.ok ? `${draftTestResult.latency_ms}ms` : "fail"}
+              </span>
+            </div>
+          {/if}
           {#if upstreamFetched && availableModels.length}
-            <select onchange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; if (v) fBackend = v; }} class="form-select" style="width:100%;margin-top:8px;">
+            <select onchange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; if (v) { fBackend = v; invalidateDraftTest(); } }} class="form-select" style="width:100%;margin-top:8px;">
               <option value="">Select a fetched model</option>
               {#each availableModels as m}<option value={m}>{m}</option>{/each}
             </select>
@@ -851,6 +908,10 @@
   .form-section-label { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; padding-top: 12px; border-top: 1px solid var(--border-color); color: var(--text-secondary); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
   .form-help { margin: 7px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
   .backend-select-row { display: flex; align-items: stretch; gap: 8px; }
+  .backend-test-row { display: flex; align-items: stretch; gap: 8px; }
+  .backend-test-row > input { min-width: 0; flex: 1; }
+  .backend-test-actions { display: flex; flex-shrink: 0; gap: 8px; }
+  .draft-test-status { display: flex; margin-top: 8px; }
   .target-picker { margin-bottom: 0; }
   .auto-controls { padding: 18px; border: 1px solid var(--primary-alpha-035); border-radius: 12px; background: var(--primary-alpha-01); }
   .selected-targets { display: flex; min-height: 48px; flex-direction: column; gap: 7px; margin-top: 10px; padding: 8px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); }
@@ -889,5 +950,8 @@
     .model-icon { width: 34px; height: 34px; }
     .model-actions { width: 100%; justify-content: flex-end; }
     .action-popover { right: 0; width: min(210px, calc(100vw - 64px)); }
+    .backend-test-row { flex-wrap: wrap; }
+    .backend-test-row > input { flex-basis: 100%; }
+    .backend-test-actions { margin-left: auto; }
   }
 </style>

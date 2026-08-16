@@ -9,9 +9,9 @@ import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
 import keyStateManager from "../services/keyStateManager.js";
 import Config from "../config/index.js";
-import { loadModelsFromFile, normalizeEndpointUrl, getModelsUrl, getEndpointForModel, getFullUrl, maskKey } from "../utils/helpers.js";
-import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
+import { loadModelsFromFile, normalizeEndpointUrl, getModelsUrl, getEndpointForModel, maskKey } from "../utils/helpers.js";
 import axios from "axios";
+import { testUpstreamModel } from "../utils/modelTest.js";
 import { calculateCost } from "../utils/logging.js";
 import { getApiKeyId } from "../utils/keyIdentity.js";
 import crypto from "crypto";
@@ -1038,13 +1038,54 @@ router.patch("/api/models/toggle", verifySession, async (req: any, res: any) => 
   }
 });
 
-// POST /api/models/test — fire a silent ping to the upstream for a model.
-// Does NOT touch logs, dashboard, stats, or rate-limit counters.
+// POST /api/models/test — fire a silent ping for either a persisted model name
+// or an unsaved concrete endpoint/backend pair. Does NOT touch logs, dashboard,
+// stats, rate-limit counters, routing state, or persistence.
 router.post("/api/models/test", verifySession, async (req: any, res: any) => {
-  try {
-    const { name } = req.body;
-    if (!name) return res.status(400).json({ ok: false, error: "Model name required" });
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  const version = typeof req.body?.version === "string" ? req.body.version.trim() : "";
+  const backend = typeof req.body?.backend === "string" ? req.body.backend.trim() : "";
+  const hasSavedFields = Boolean(name);
+  const hasDraftFields = Boolean(version || backend);
 
+  if (hasSavedFields && hasDraftFields) {
+    return res.status(400).json({ ok: false, error: "Provide either a model name or an endpoint and backend, not both" });
+  }
+
+  if (hasDraftFields) {
+    if (!/^v\d+$/.test(version)) {
+      return res.status(400).json({ ok: false, error: "Valid endpoint version required" });
+    }
+    if (!backend) {
+      return res.status(400).json({ ok: false, error: "Backend model required" });
+    }
+    if (backend.length > 512) {
+      return res.status(400).json({ ok: false, error: "Backend model is too long" });
+    }
+
+    const endpoint = Config.ENDPOINTS[version];
+    if (!endpoint) {
+      return res.status(404).json({ ok: false, error: "Endpoint not found" });
+    }
+    const token = endpoint.tokens?.[0] || endpoint.token;
+    if (!token) {
+      return res.status(400).json({ ok: false, error: "Model endpoint has no configured keys" });
+    }
+
+    const result = await testUpstreamModel({
+      url: endpoint.url,
+      token,
+      backend,
+      customHeaders: endpoint.headers,
+      apiFormat: endpoint.apiFormat,
+      appendApiSuffix: endpoint.appendApiSuffix,
+    });
+    return res.json(result);
+  }
+
+  if (!name) return res.status(400).json({ ok: false, error: "Model name required" });
+
+  try {
     const modelsData = readModelsDocument();
     const modelConfig = modelsData.models[name];
     if (!modelConfig) {
@@ -1067,78 +1108,17 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
       return res.status(400).json({ ok: false, error: "Model endpoint has no configured keys" });
     }
 
-    const { url: backendUrl, token: backendToken, actualModel, customHeaders, apiFormat } = endpointInfo;
-    const fullUrl = getFullUrl(backendUrl, apiFormat, actualModel, false, endpointInfo.appendApiSuffix);
-
-    const start = Date.now();
-
-    // Gemini uses a different auth + body shape
-    const isGemini = apiFormat === 'gemini';
-    // Stable identifier for this ping so the Codex cache key and ID headers
-    // stay internally consistent for the single test request.
-    const testRequestId = `models-test-${crypto.randomUUID()}`;
-    // Codex needs its marker/ID headers on the ping; other formats are left
-    // exactly as before. These merge before auth/content-type so they can never
-    // override the bearer token or content type.
-    const codexHeaders =
-      apiFormat === 'openai-codex'
-        ? getExtraHeaders(apiFormat, { requestId: testRequestId, isStreaming: false })
-        : {};
-    const requestHeaders = {
-      ...customHeaders,
-      ...codexHeaders,
-      "Content-Type": "application/json",
-      ...(isGemini ? {} : { Authorization: `Bearer ${backendToken}` }),
-    };
-    const requestUrl = isGemini ? `${fullUrl}?key=${backendToken}` : fullUrl;
-    let requestBody;
-    if (isGemini) {
-      requestBody = { contents: [{ parts: [{ text: "ping" }] }] };
-    } else if (apiFormat === 'anthropic') {
-      // Anthropic requires max_tokens — keep it but don't send temperature/top_p
-      requestBody = { model: actualModel, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false };
-    } else if (apiFormat === 'openai-codex') {
-      // Codex requires an array-shaped input, populated `include`, and a
-      // non-empty prompt_cache_key. Build via the adapter so the ping matches
-      // the enforced envelope rather than hand-rolling it here.
-      const pingReq = { model: actualModel, messages: [{ role: "user", content: "ping" }] };
-      requestBody = getAdapter(apiFormat).transformRequest(pingReq, actualModel, {
-        requestId: testRequestId,
-        isStreaming: false,
-      });
-      requestBody.stream = false;
-    } else if (apiFormat === 'openai-responses') {
-      // Responses API uses input instead of messages; don't persist the ping
-      requestBody = { model: actualModel, input: "ping", store: false, stream: false };
-    } else {
-      // OpenAI format — newer reasoning models reject max_tokens, temperature, top_p
-      // This is just a connectivity ping, so send the bare minimum.
-      requestBody = { model: actualModel, messages: [{ role: "user", content: "ping" }], stream: false };
-    }
-
-    const response = await axios({
-      method: "post",
-      url: requestUrl,
-      headers: requestHeaders,
-      data: requestBody,
-      timeout: 15000,
+    const result = await testUpstreamModel({
+      url: endpointInfo.url,
+      token: endpointInfo.token,
+      backend: endpointInfo.actualModel,
+      customHeaders: endpointInfo.customHeaders,
+      apiFormat: endpointInfo.apiFormat,
+      appendApiSuffix: endpointInfo.appendApiSuffix,
     });
-
-    const latency_ms = Date.now() - start;
-
-    if (response.status !== 200) {
-      return res.json({ ok: false, error: `Upstream returned HTTP ${response.status}`, latency_ms });
-    }
-
-    return res.json({ ok: true, latency_ms });
+    return res.json(result);
   } catch (error: any) {
-    const latency_ms = Date.now();
-    const status = error.response?.status;
-    const msg = error.response?.data?.error?.message
-      || error.response?.data?.message
-      || error.message
-      || "Request failed";
-    return res.json({ ok: false, error: status ? `HTTP ${status}: ${msg}` : msg });
+    return res.json({ ok: false, error: error.message || "Request failed" });
   }
 });
 
