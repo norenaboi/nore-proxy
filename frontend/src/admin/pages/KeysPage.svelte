@@ -132,7 +132,17 @@
   </div>
   <div class="keys-table-container">
     {#if loading}
-      <div class="loading"><div class="loading-spinner"></div><span>Loading keys…</span></div>
+      <div class="skeleton-rows skeleton" aria-hidden="true">
+        {#each Array(5) as _}
+          <div class="skeleton-row">
+            <span class="skeleton-block skeleton-cell narrow"></span>
+            <span class="skeleton-block skeleton-cell wide"></span>
+            <span class="skeleton-block skeleton-cell"></span>
+            <span class="skeleton-block skeleton-cell"></span>
+          </div>
+        {/each}
+      </div>
+      <span class="sr-only" role="status">Loading keys…</span>
     {:else if keys.length === 0}
       <div class="empty-state"><i class="fa-solid fa-key"></i><p>No API keys found. Add one to get started!</p></div>
     {:else}
@@ -208,7 +218,6 @@
   .edit-input { width: 100%; padding: 9px 10px; border: 1px solid var(--primary); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); }
   .numeric-input { width: 72px; } .context-input { width: 90px; }
   .badge { padding: 4px 12px; border-radius: 999px; background: var(--primary-light); color: var(--primary-dark); font-size: 12px; font-weight: 600; }
-  .loading { min-height: 170px; }
   .empty-state { padding: 60px 24px; }
   .delete-modal { max-width: 420px; }
   .modal-body { padding: 22px 24px; color: var(--text-secondary); line-height: 1.6; }

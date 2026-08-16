@@ -54,10 +54,9 @@
   <div>
     <p class="eyebrow">Unified model access</p>
     <h1>One API for all the models you need.</h1>
-    <p class="lead">A compact proxy for routing requests, tracking usage, and keeping model access in one place.</p>
   </div>
   <dl class="live-facts">
-    <div><dt>Service</dt><dd><i></i>Available</dd></div>
+    <div><dt>Service</dt><dd><i></i>Operational</dd></div>
     <div><dt>Uptime · 24h</dt><dd>{percentage(summary.successful, summary.daily_requests)}</dd></div>
     <div><dt>Uptime · all time</dt><dd>{percentage(summary.all_time_successful, summary.all_time_requests)}</dd></div>
     <div><dt>Runtime</dt><dd>{summary.uptime == null ? "—" : formatDuration(summary.uptime)}</dd></div>

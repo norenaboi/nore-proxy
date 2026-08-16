@@ -184,7 +184,13 @@
       <thead><tr><th>Time</th><th>Status</th><th>Model</th><th>Upstream</th><th>Endpoint</th><th>Type</th><th>Message</th></tr></thead>
       <tbody>
         {#if loading}
-          <tr><td colspan="7" class="table-state">Loading…</td></tr>
+          {#each Array(6) as _}
+            <tr class="skeleton" aria-hidden="true">
+              {#each Array(7) as __}
+                <td><span class="skeleton-block skeleton-line"></span></td>
+              {/each}
+            </tr>
+          {/each}
         {:else if listError}
           <tr><td colspan="7" class="table-state table-state-error"><span role="alert">{listError}</span></td></tr>
         {:else if errors.length === 0}

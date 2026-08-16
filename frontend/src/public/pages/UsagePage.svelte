@@ -58,7 +58,6 @@
   <div>
     <p class="eyebrow">Account usage</p>
     <h1>Review an API key.</h1>
-    <p class="lead">Your key is sent only as authorization for this lookup and remains masked in the interface.</p>
   </div>
   <a class="back-link" href="/">← Overview</a>
 </header>

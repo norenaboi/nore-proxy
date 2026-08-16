@@ -156,7 +156,51 @@
 </script>
 
 {#if loading}
-  <div class="loading dashboard-loading"><div class="loading-spinner"></div><span>Loading dashboard data…</span></div>
+  <!-- Stands in for the loaded layout below: three summary cells, four token
+       cells, then the two table cards. -->
+  <section class="summary-strip skeleton" aria-hidden="true">
+    {#each Array(3) as _}
+      <article>
+        <div class="skeleton-metric">
+          <span class="skeleton-block skeleton-metric-label"></span>
+          <span class="skeleton-block skeleton-metric-value"></span>
+          <span class="skeleton-block skeleton-metric-caption"></span>
+        </div>
+      </article>
+    {/each}
+  </section>
+  <section class="token-ledger skeleton" aria-hidden="true">
+    {#each Array(4) as _}
+      <article>
+        <div class="skeleton-metric">
+          <span class="skeleton-block skeleton-metric-label"></span>
+          <span class="skeleton-block skeleton-metric-value"></span>
+          <span class="skeleton-block skeleton-metric-caption"></span>
+        </div>
+      </article>
+    {/each}
+  </section>
+  <div class="tables-grid">
+    {#each [5, 6] as rows}
+      <section class="table-card skeleton" aria-hidden="true">
+        <div class="skeleton-head">
+          <span class="skeleton-block skeleton-eyebrow"></span>
+          <span class="skeleton-block skeleton-heading"></span>
+        </div>
+        <div class="skeleton-rows">
+          {#each Array(rows) as _}
+            <div class="skeleton-row">
+              <span class="skeleton-block skeleton-cell wide"></span>
+              <span class="skeleton-block skeleton-cell"></span>
+              <span class="skeleton-block skeleton-cell"></span>
+              <span class="skeleton-block skeleton-cell narrow"></span>
+            </div>
+          {/each}
+        </div>
+      </section>
+    {/each}
+  </div>
+  <span class="sr-only" role="status">Loading dashboard data…</span>
 {:else if errorMsg && !data}
   <div class="page-error" role="alert">{errorMsg}</div>
 {:else if data}
@@ -326,17 +370,6 @@
     color: var(--primary-dark);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 12px;
-  }
-  .dashboard-loading {
-    min-height: 65vh;
-    flex-direction: column;
-    justify-content: center;
-  }
-  .dashboard-loading :global(.loading-spinner) {
-    width: 38px;
-    height: 38px;
-    margin-bottom: 2px;
-    border-width: 3px;
   }
   .request-history-toggle {
     display: inline-flex;

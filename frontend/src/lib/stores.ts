@@ -33,16 +33,20 @@ export const pageHeaderActions = writable<PageHeaderActions | null>(null);
 function createThemeStore() {
   const saved = typeof localStorage !== "undefined" ? (localStorage.getItem("admin-theme") ?? "light") : "light";
   if (typeof document !== "undefined") document.documentElement.setAttribute("data-theme", saved);
-  const { subscribe, set, update } = writable<string>(saved);
+  const { subscribe, set } = writable<string>(saved);
   return {
     subscribe,
-    toggle() {
-      update((current) => {
-        const next = current === "light" ? "dark" : "light";
-        document.documentElement.setAttribute("data-theme", next);
-        localStorage.setItem("admin-theme", next);
-        return next;
-      });
+    // The segmented toggle picks a theme outright rather than flipping the
+    // current one.
+    select(next: string) {
+      const value = next === "dark" ? "dark" : "light";
+      if (typeof document !== "undefined") document.documentElement.setAttribute("data-theme", value);
+      try {
+        localStorage.setItem("admin-theme", value);
+      } catch {
+        // The selected appearance still applies when browser storage is unavailable.
+      }
+      set(value);
     },
     init() {
       const t = localStorage.getItem("admin-theme") ?? "light";

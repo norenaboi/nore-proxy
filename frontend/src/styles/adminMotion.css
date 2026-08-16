@@ -1,0 +1,189 @@
+/*
+ * Motion layer for the admin frontend.
+ *
+ * The public counterpart is frontend/src/styles/publicMotion.css and this file
+ * follows the same rules, tuned for a denser interface: a shorter travel
+ * distance and a faster curve, because admin pages are read repeatedly rather
+ * than visited once.
+ *
+ * Loaded after admin.css and only ever adds animation, transform, and
+ * transition declarations.
+ *
+ * Budget and constraints:
+ * - Only `transform` and `opacity` are animated, so every effect stays on the
+ *   compositor.
+ * - Entrance animations use `animation-fill-mode: backwards`, so no transform
+ *   survives the animation. That matters here because several pages render
+ *   `position: fixed` overlays (`.modal-backdrop`, `.detail-panel`,
+ *   `.action-popover`) inside the animated subtree, and a retained ancestor
+ *   transform would become their containing block.
+ * - Table rows are deliberately not animated. Pages load fifty rows at a time
+ *   and the dashboard appends more on scroll, so per-row entrances would both
+ *   cost the most and replay in the middle of reading.
+ * - Loading placeholders pulse once per container, not once per block. A single
+ *   skeleton can hold sixty blocks, and one animated ancestor costs one
+ *   composited layer where sixty would cost sixty.
+ * - Blocks are listed explicitly rather than matched with `.main-content > *`.
+ *   Some pages render their modal and drawer backdrops as direct children of
+ *   `.main-content`; those are normally `opacity: 0`, and an animation would
+ *   override that and flash a dark overlay across the page on load.
+ * - The sidebar has no entrance animation. It is the one element present on
+ *   every admin page, so animating it replayed the same sequence on every
+ *   navigation; only its hover states move.
+ */
+
+:root {
+  --admin-reveal: admin-reveal;
+  --admin-fade: admin-fade;
+  --admin-skeleton: admin-skeleton;
+  --admin-halo: admin-halo;
+  --admin-duration: 0.5s;
+  --admin-fade-duration: 0.4s;
+  --admin-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --admin-shift: 12px;
+}
+
+@keyframes admin-reveal {
+  from { opacity: 0; transform: translateY(var(--admin-shift, 12px)); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes admin-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes admin-skeleton {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@keyframes admin-halo {
+  from { opacity: 0.5; transform: scale(0.5); }
+  55%, 100% { opacity: 0; transform: scale(1.5); }
+}
+
+/* The sidebar has no entrance animation; see the note in the header comment. */
+
+/* --------------------------------------------------------------------- shell */
+
+.header-eyebrow,
+.header h1,
+.header-tools {
+  animation: var(--admin-reveal) var(--admin-duration) var(--admin-ease) var(--admin-delay, 0s) backwards;
+}
+
+.header-eyebrow { --admin-delay: 0.04s; }
+.header h1 { --admin-delay: 0.08s; }
+.header-tools { --admin-delay: 0.16s; }
+
+.admin-utility {
+  animation: var(--admin-fade) var(--admin-fade-duration) ease 0.24s backwards;
+}
+
+/* --------------------------------------------------------------- page blocks */
+
+/* Positional cascade. Only a custom property is set here, so the fixed overlays
+   that some pages render alongside their content inherit a delay but are never
+   animated — they are absent from the selector list below. Child 1 is always
+   the page header. */
+.main-content > *:nth-child(2) { --admin-delay: 0.14s; }
+.main-content > *:nth-child(3) { --admin-delay: 0.2s; }
+.main-content > *:nth-child(n + 4) { --admin-delay: 0.26s; }
+
+.card,
+.table-card,
+.errors-card,
+.logs-card,
+.models-table-card,
+.summary-strip,
+.token-ledger,
+.summary-card,
+.settings-card,
+.toolbar,
+.users-toolbar,
+.detail-header,
+.controls-section,
+.logs-container,
+.empty-state,
+.page-error,
+.loading {
+  animation: var(--admin-reveal) var(--admin-duration) var(--admin-ease) var(--admin-delay, 0s) backwards;
+}
+
+/* A skeleton is the placeholder, so it must appear immediately rather than
+   reveal. This rule follows the block list above and replaces the whole
+   animation shorthand for any element that also carries a block class. One
+   pulse per placeholder container keeps the animated element count in single
+   digits no matter how many blocks it holds. */
+.skeleton {
+  animation: var(--admin-skeleton) 1.8s ease-in-out infinite;
+}
+
+/* Repeated cards sit inside a wrapper, so they inherit one delay from the
+   cascade above. These override it to stagger within the group. */
+.summary-card:nth-child(1),
+.settings-card:nth-child(1) { --admin-delay: 0.16s; }
+.summary-card:nth-child(2),
+.settings-card:nth-child(2) { --admin-delay: 0.21s; }
+.summary-card:nth-child(3),
+.settings-card:nth-child(3) { --admin-delay: 0.26s; }
+.summary-card:nth-child(n + 4),
+.settings-card:nth-child(n + 4) { --admin-delay: 0.31s; }
+
+/* Slow halo around the console's live connection indicator, matching the
+   service indicator on the public overview. The dot's own colour is a
+   background, so the ring borrows --success directly. Both rules are qualified
+   with .connected: the keys table reuses .status-dot for a per-row active flag,
+   which must not gain a ring or a stacking context. */
+.status-dot.connected { position: relative; }
+.status-dot.connected::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 1px solid var(--success);
+  border-radius: 50%;
+  animation: var(--admin-halo) 2.6s ease-out infinite;
+}
+
+/* -------------------------------------------------------- micro-interactions */
+
+/* Both of these already declare an explicit transition list, so the existing
+   properties are restated rather than replaced — narrowing the list would make
+   the hover colour and background snap. */
+.nav-item {
+  transition: color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.btn {
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.16s ease;
+}
+
+.logout {
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+
+.nav-item:hover,
+.logout:hover { transform: translateX(2px); }
+.btn:not(:disabled):hover { transform: translateY(-1px); }
+
+/* ------------------------------------------------------------ reduced motion */
+
+/* admin.css already clamps every animation and transition duration under this
+   query. Blanking the names as well removes the entrance delays, which that
+   clamp does not cover: an element would otherwise stay hidden by its backwards
+   fill for up to 0.31s before snapping into view. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --admin-reveal: none;
+    --admin-fade: none;
+    --admin-skeleton: none;
+    --admin-halo: none;
+  }
+
+  .nav-item:hover,
+  .logout:hover,
+  .btn:not(:disabled):hover {
+    transform: none;
+  }
+}

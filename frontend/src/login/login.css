@@ -150,3 +150,40 @@ button:disabled {
     padding: 28px 22px;
   }
 }
+
+/*
+ * Entrance motion, matching the admin and public layers: transform and opacity
+ * only, and `animation-fill-mode: backwards` so nothing here leaves a transform
+ * applied or hides content when the animation does not run.
+ */
+
+:root {
+  --login-reveal: login-reveal;
+}
+
+@keyframes login-reveal {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+.brand,
+.container,
+.back-link {
+  animation: var(--login-reveal) 0.5s cubic-bezier(0.22, 1, 0.36, 1) var(--login-delay, 0s) backwards;
+}
+
+.brand { --login-delay: 0.04s; }
+.container { --login-delay: 0.1s; }
+.back-link { --login-delay: 0.22s; }
+
+.back-link {
+  transition: transform 0.18s ease;
+}
+
+.back-link:hover { transform: translateX(-3px); }
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --login-reveal: none; }
+  .back-link { transition: none; }
+  .back-link:hover { transform: none; }
+}

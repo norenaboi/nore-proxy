@@ -505,7 +505,23 @@
 </script>
 
 {#if loading}
-  <div class="loading"><div class="loading-spinner"></div><span>Loading models…</span></div>
+  <div class="card skeleton" aria-hidden="true">
+    <div class="skeleton-head">
+      <span class="skeleton-block skeleton-eyebrow"></span>
+      <span class="skeleton-block skeleton-heading"></span>
+    </div>
+    <div class="skeleton-rows">
+      {#each Array(6) as _}
+        <div class="skeleton-row">
+          <span class="skeleton-block skeleton-cell wide"></span>
+          <span class="skeleton-block skeleton-cell"></span>
+          <span class="skeleton-block skeleton-cell"></span>
+          <span class="skeleton-block skeleton-cell narrow"></span>
+        </div>
+      {/each}
+    </div>
+  </div>
+  <span class="sr-only" role="status">Loading models…</span>
 {:else if errorMsg}
   <div class="page-error" role="alert">{errorMsg}</div>
 {:else if models.length === 0}

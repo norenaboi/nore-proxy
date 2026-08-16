@@ -1,0 +1,224 @@
+/*
+ * Motion layer for the public frontend.
+ *
+ * Kept in its own file so the whole motion system can be read, tuned, or removed
+ * in one place instead of being spread across every page component. It is loaded
+ * after public.css and only ever adds animation, transform, and transition
+ * declarations; nothing here changes layout, colour, or type.
+ *
+ * Budget and constraints:
+ * - Only `transform` and `opacity` are animated, so every effect stays on the
+ *   compositor and none of them trigger layout or paint.
+ * - Entrance animations use `animation-fill-mode: backwards`, which applies the
+ *   `from` state during the delay and then hands the element back to its
+ *   declarative styles. `forwards` would leave a transform applied forever, and
+ *   a retained ancestor transform becomes the containing block for
+ *   `position: fixed` descendants — that would break the models copy
+ *   notification and the playground overlays.
+ * - Because of that fill mode, no element here declares a base `opacity: 0`.
+ *   If the animation never runs, the content is simply visible.
+ * - Stagger delays are capped per list, so a long catalog cannot push its last
+ *   cards into a visibly late entrance.
+ * - Hover transforms are only added where the element's existing `transition`
+ *   shorthand already covers every property (`transition: .14s` means
+ *   `all .14s`), so no transition declaration has to be overridden here.
+ */
+
+:root {
+  --motion-reveal: motion-reveal;
+  --motion-fade: motion-fade;
+  --motion-sweep: motion-sweep;
+  --motion-halo: motion-halo;
+  --motion-duration: 0.65s;
+  --motion-fade-duration: 0.5s;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-shift: 18px;
+}
+
+@keyframes motion-reveal {
+  from { opacity: 0; transform: translateY(var(--motion-shift, 18px)); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes motion-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes motion-sweep {
+  from { opacity: 0; transform: scaleX(0); }
+  40% { opacity: 1; }
+  to { opacity: 0; transform: scaleX(1); }
+}
+
+@keyframes motion-halo {
+  from { opacity: 0.55; transform: scale(0.45); }
+  55%, 100% { opacity: 0; transform: scale(1.4); }
+}
+
+/* ---------------------------------------------------------------- entrances */
+
+.public-head,
+.public-footer,
+.intro .eyebrow,
+.intro h1,
+.intro .lead,
+.live-facts > div,
+.service-strip,
+.destinations > a,
+.catalog-head,
+.toolbar,
+.result-meta,
+.model-grid > *,
+.usage-head,
+.input-group,
+.usage-error,
+.stats-header,
+.stat-row,
+.legal-main > .eyebrow,
+.legal-main > h1,
+.legal-main > .lead,
+.legal-copy > section,
+.not-found > * {
+  animation: var(--motion-reveal) var(--motion-duration) var(--motion-ease) var(--motion-delay, 0s) backwards;
+}
+
+.public-utility,
+.stats-section,
+.legal-copy,
+.playground {
+  animation: var(--motion-fade) var(--motion-fade-duration) ease var(--motion-delay, 0s) backwards;
+}
+
+/* Shell */
+.public-head { --motion-delay: 0.04s; position: relative; }
+.public-utility { --motion-delay: 0.3s; }
+.public-footer { --motion-delay: 0.34s; }
+
+/* Accent sweep along the header's bottom border. */
+.public-head::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  background: var(--accent-ink);
+  transform-origin: left;
+  opacity: 0;
+  animation: var(--motion-sweep) 0.9s var(--motion-ease) 0.12s backwards;
+}
+
+/* Overview */
+.intro .eyebrow { --motion-delay: 0.06s; }
+.intro h1 { --motion-delay: 0.12s; }
+.intro .lead { --motion-delay: 0.2s; }
+.live-facts > div:nth-child(1) { --motion-delay: 0.18s; }
+.live-facts > div:nth-child(2) { --motion-delay: 0.22s; }
+.live-facts > div:nth-child(3) { --motion-delay: 0.26s; }
+.live-facts > div:nth-child(4) { --motion-delay: 0.3s; }
+.live-facts > div:nth-child(n + 5) { --motion-delay: 0.34s; }
+.service-strip { --motion-delay: 0.28s; }
+.destinations > a:nth-child(1) { --motion-delay: 0.36s; }
+.destinations > a:nth-child(n + 2) { --motion-delay: 0.42s; }
+
+/* Slow halo around the live service indicator. The dot's own colour is a
+   background, so the ring borrows --success directly rather than currentColor. */
+.live-facts dd i { position: relative; }
+.live-facts dd i::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 1px solid var(--success);
+  border-radius: 50%;
+  animation: var(--motion-halo) 2.8s ease-out infinite;
+}
+
+/* Models — every card reveals, with the delay held flat past the first few rows
+   so a long catalog cannot push the last cards into a visibly late entrance. */
+.catalog-head { --motion-delay: 0.06s; }
+.toolbar { --motion-delay: 0.14s; }
+.result-meta { --motion-delay: 0.2s; }
+.model-grid > *:nth-child(-n + 4) { --motion-delay: 0.24s; }
+.model-grid > *:nth-child(n + 5):nth-child(-n + 8) { --motion-delay: 0.3s; }
+.model-grid > *:nth-child(n + 9) { --motion-delay: 0.36s; }
+
+/* Usage */
+.usage-error { --motion-delay: 0.04s; }
+.usage-head { --motion-delay: 0.06s; }
+.input-group { --motion-delay: 0.14s; }
+.stats-header { --motion-delay: 0.08s; }
+.stat-row:nth-child(-n + 4) { --motion-delay: 0.14s; }
+.stat-row:nth-child(n + 5):nth-child(-n + 7) { --motion-delay: 0.2s; }
+.stat-row:nth-child(n + 8) { --motion-delay: 0.26s; }
+
+/* Legal */
+.legal-main > .eyebrow { --motion-delay: 0.06s; }
+.legal-main > h1 { --motion-delay: 0.12s; }
+.legal-main > .lead { --motion-delay: 0.2s; }
+.legal-copy { --motion-delay: 0.24s; }
+.legal-copy > section:nth-child(1) { --motion-delay: 0.28s; }
+.legal-copy > section:nth-child(2) { --motion-delay: 0.32s; }
+.legal-copy > section:nth-child(3) { --motion-delay: 0.36s; }
+.legal-copy > section:nth-child(4) { --motion-delay: 0.4s; }
+.legal-copy > section:nth-child(n + 5) { --motion-delay: 0.44s; }
+
+/* Not found */
+.not-found > *:nth-child(1) { --motion-delay: 0.06s; }
+.not-found > *:nth-child(2) { --motion-delay: 0.12s; }
+.not-found > *:nth-child(3) { --motion-delay: 0.2s; }
+.not-found > *:nth-child(n + 4) { --motion-delay: 0.28s; }
+
+/* Playground — the chat layout locks page overflow and relies on fixed and
+   sticky children, so this page fades only and is never transformed. */
+.playground { --motion-delay: 0.06s; }
+
+/* -------------------------------------------------------- micro-interactions */
+
+/* These four have no transition of their own, so the transform needs one here.
+   .model-card and .chip are absent on purpose: their `transition: .14s` and
+   `transition: .12s` shorthands already animate every property, transform
+   included. */
+.destinations > a > b,
+.home-action,
+.back-link,
+.usage-button {
+  transition: transform 0.18s ease;
+}
+
+.destinations > a > b { display: inline-block; }
+.destinations > a:hover > b { transform: translateX(4px); }
+.home-action:hover,
+.usage-button:not(:disabled):hover { transform: translateY(-2px); }
+.back-link:hover { transform: translateX(-3px); }
+.model-card:hover,
+.chip:hover { transform: translateY(-2px); }
+
+/* ------------------------------------------------------------ reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Blanking the animation names removes every entrance, sweep, and ambient
+     loop above while leaving all content immediately visible. */
+  :root {
+    --motion-reveal: none;
+    --motion-fade: none;
+    --motion-sweep: none;
+    --motion-halo: none;
+  }
+
+  .destinations > a > b,
+  .home-action,
+  .back-link,
+  .usage-button {
+    transition: none;
+  }
+
+  .destinations > a:hover > b,
+  .home-action:hover,
+  .usage-button:not(:disabled):hover,
+  .back-link:hover,
+  .model-card:hover,
+  .chip:hover {
+    transform: none;
+  }
+}

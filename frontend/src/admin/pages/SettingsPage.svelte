@@ -67,7 +67,7 @@
 {#if loading}
   <div class="settings-skeleton" aria-hidden="true">
     {#each [3, 3, 6] as rows}
-      <section class="settings-card skeleton-card">
+      <section class="settings-card skeleton-card skeleton">
         <div class="card-header"><span class="skeleton-block skeleton-icon"></span><span class="skeleton-block skeleton-title"></span><span class="skeleton-block skeleton-subtitle"></span></div>
         <div class="card-body">
           {#each Array(rows) as _}
@@ -205,6 +205,5 @@
   .skeleton-label { width: min(210px, 60%); height: 16px; }
   .skeleton-description { width: min(480px, 90%); height: 12px; }
   .skeleton-control { width: 100px; height: 42px; flex-shrink: 0; }
-  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
   @media (max-width: 768px) { .setting-row { flex-direction: column; gap: 12px; } .setting-control, .select-control { width: 100%; } .toggle-control { justify-content: flex-end; } .card-header, .card-body { padding-left: 18px; padding-right: 18px; } .card-subtitle { font-size: 11px; } }
 </style>

@@ -4,6 +4,7 @@
   import { logout } from "$frontend/lib/api/admin";
   import { motionDuration } from "$frontend/lib/motion";
   import { toast, theme } from "$frontend/lib/stores";
+  import ThemeTogglePill from "../ThemeTogglePill.svelte";
 
   let {
     activePath,
@@ -29,6 +30,10 @@
 
 <a class="skip-link" href="#main">Skip to content</a>
 
+<div class="admin-utility">
+  <ThemeTogglePill theme={$theme} onThemeChange={(next) => theme.select(next)} />
+</div>
+
 <aside class="sidebar">
   <div class="logo">
     <img class="logo-icon" src="/favicon.ico" alt="" />
@@ -46,17 +51,6 @@
       </a>
     {/each}
   </nav>
-  <div class="sidebar-theme-control">
-    <span>Theme Toggle</span>
-    <button
-      class="theme-toggle"
-      type="button"
-      aria-label="Toggle theme"
-      onclick={() => theme.toggle()}
-    >
-      <span class="theme-toggle-slider"><i class="fa-solid fa-sun"></i></span>
-    </button>
-  </div>
   <button class="logout" type="button" onclick={logout}>
     <i class="fa-solid fa-right-from-bracket"></i>
     <span>Logout</span>

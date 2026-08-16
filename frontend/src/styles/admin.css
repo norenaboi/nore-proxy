@@ -66,9 +66,6 @@ a { color: inherit; }
 .nav-item i { width: 17px; text-align: center; }
 .logout { display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 11px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--danger); cursor: pointer; }
 .logout:hover { background: var(--danger-alpha-01); border-color: var(--danger-alpha-02); }
-.sidebar-theme-control { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; padding: 9px 8px; color: var(--sidebar-text); }
-.sidebar-theme-control > span { font-size: 13px; white-space: nowrap; }
-.sidebar-theme-control .theme-toggle { flex-shrink: 0; }
 
 /* Layout */
 .main-content { width: min(1244px, calc(100% - 64px)); min-height: 100vh; margin-inline: auto; padding: 46px 0 80px; }
@@ -76,10 +73,25 @@ a { color: inherit; }
 .header h1, h1 { color: var(--text-primary); font: 500 clamp(30px,4vw,44px)/1.08 Georgia,"Times New Roman",serif; letter-spacing: -.025em; }
 .header-eyebrow { margin: 0 0 8px; color: var(--primary-dark); font: 800 10px/1.2 Inter,sans-serif; letter-spacing: .12em; text-transform: uppercase; }
 .header-tools { display: flex; align-items: center; gap: 12px; margin-top: auto; }
-.theme-toggle { position: relative; width: 54px; height: 29px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-secondary); cursor: pointer; }
-.theme-toggle-slider { position: absolute; top: 3px; left: 3px; width: 21px; height: 21px; display: grid; place-items: center; border-radius: 50%; background: var(--primary-dark); color: #fff; transition: transform .2s ease; }
-.theme-toggle-slider i { font-size: 10px; }
-[data-theme="dark"] .theme-toggle-slider { transform: translateX(25px); background: var(--primary); color: #241b2d; }
+
+/* Theme control, pinned to the viewport top-right on every admin page. Sits
+   above the sidebar (z-index 100) but below modals (500). */
+.admin-utility { position: fixed; top: max(12px, env(safe-area-inset-top)); right: 16px; z-index: 110; }
+/* Palette for the shared ThemeTogglePill component, mapped onto the admin
+   tokens so the dark values come from the [data-theme="dark"] block. */
+:root {
+  --pill-line: var(--border-color);
+  --pill-surface: var(--bg-secondary);
+  --pill-muted: var(--text-secondary);
+  --pill-ink: var(--text-primary);
+  --pill-active-surface: var(--primary-light);
+  --pill-active-ink: var(--primary-dark);
+  --pill-shadow: 0 1px 2px rgba(63, 40, 100, .1);
+  /* Approximate width of the pinned pill. Used only to keep the collapsed
+     sidebar's absolutely-positioned logout button clear of it. */
+  --pill-reserve: 172px;
+}
+@media (max-width: 700px) { :root { --pill-reserve: 84px; } }
 
 /* Cards / Tables */
 .card, .table-card, .settings-card, .form-card, .content-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; }
@@ -120,8 +132,32 @@ button { border-radius: 8px; }
 .loading-spinner { width: 22px; height: 22px; }
 .button-spinner { width: 13px; height: 13px; border-color: currentColor; border-right-color: transparent; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-.skeleton-block { border-radius: 7px; background: linear-gradient(90deg, var(--gray-100) 25%, var(--gray-200) 50%, var(--gray-100) 75%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
+
+/* Skeleton placeholders. Pages stand in for their own loaded layout while data
+   is in flight, so the shapes below are sized to the real content rather than
+   being generic bars.
+
+   The tone is flat rather than a travelling gradient: a page can hold sixty of
+   these blocks at once, and animating each one's background-position repaints
+   every block on every frame. The pulse that signals "still loading" is applied
+   once, to the container, in adminMotion.css. */
+.skeleton { pointer-events: none; }
+.skeleton-block { display: block; border-radius: 7px; background: var(--gray-200); }
+.skeleton-line { height: 13px; }
+.skeleton-head { display: flex; flex-direction: column; gap: 10px; padding: 22px 24px; border-bottom: 1px solid var(--border-color); }
+.skeleton-eyebrow { width: 76px; height: 10px; }
+.skeleton-heading { width: 186px; height: 21px; }
+.skeleton-rows { display: flex; flex-direction: column; }
+.skeleton-row { display: flex; align-items: center; gap: 22px; padding: 16px 24px; border-bottom: 1px solid var(--border-color); }
+.skeleton-rows > .skeleton-row:last-child { border-bottom: 0; }
+.skeleton-cell { flex: 1; height: 13px; }
+.skeleton-cell.wide { flex: 2.6; }
+.skeleton-cell.narrow { flex: 0 0 52px; }
+.skeleton-metric { display: flex; flex-direction: column; gap: 13px; }
+.skeleton-metric-label { width: 88px; height: 12px; }
+.skeleton-metric-value { width: 122px; height: 30px; }
+.skeleton-metric-caption { width: 106px; height: 11px; }
 .usage-bar { width: 100%; height: 5px; overflow: hidden; border-radius: 999px; background: var(--gray-200); }
 .usage-bar-fill { height: 100%; border-radius: inherit; background: var(--success); transition: width .3s ease; }
 .page-error { padding: 24px; border-radius: 10px; border: 1px solid var(--danger-alpha-03); background: var(--danger-alpha-01); color: var(--danger-dark); }
@@ -180,9 +216,8 @@ pre.detail-pre { background: var(--bg-tertiary); border: 1px solid var(--border-
   .logo::after, .logout span { display: none; }
   .nav-menu { display: flex; gap: 4px; margin: 0; overflow-x: auto; padding-bottom: 4px; }
   .nav-item { flex: 0 0 auto; white-space: nowrap; }
-  .sidebar-theme-control { position: absolute; top: 20px; right: 58px; width: auto; margin: 0; padding: 0; }
-  .sidebar-theme-control > span { display: none; }
-  .logout { position: absolute; top: 20px; right: 16px; width: auto; }
+  /* Kept clear of the pinned theme pill, which holds the top-right corner. */
+  .logout { position: absolute; top: 20px; right: calc(16px + var(--pill-reserve) + 12px); width: auto; }
   .main-content { width: 100%; margin-left: 0; padding-top: 30px; }
 }
 @media (max-width: 640px) {

@@ -77,6 +77,10 @@ test("model catalog classifies, normalizes, caches, and formats models", () => {
   assert.equal(formatModelName("deepseek-v4-pro"), "Deepseek V4 Pro");
   assert.equal(formatModelName("gpt-5"), "GPT 5");
   assert.equal(formatModelName("glm-4.5-air"), "GLM 4.5 Air");
+  assert.equal(formatModelName("claude-opus-4-8"), "Claude Opus 4.8");
+  assert.equal(formatModelName("claude-3-5-sonnet"), "Claude 3.5 Sonnet");
+  assert.equal(formatModelName("claude-3-7-sonnet-20250219"), "Claude 3.7 Sonnet 20250219");
+  assert.equal(formatModelName("gpt-4-32k"), "GPT 4 32k");
   assert.equal(formatPrice(0.003), "$0.003");
 });
 

@@ -76,7 +76,24 @@
   {:else if PageComponent}
     <PageComponent />
   {:else}
-    <div class="loading"><div class="loading-spinner"></div><span>Loading…</span></div>
+    <!-- The page chunk is still loading, so its layout is not known yet; this is
+         the one placeholder here that cannot mirror real content. -->
+    <div class="card skeleton" aria-hidden="true">
+      <div class="skeleton-head">
+        <span class="skeleton-block skeleton-eyebrow"></span>
+        <span class="skeleton-block skeleton-heading"></span>
+      </div>
+      <div class="skeleton-rows">
+        {#each Array(5) as _}
+          <div class="skeleton-row">
+            <span class="skeleton-block skeleton-cell wide"></span>
+            <span class="skeleton-block skeleton-cell"></span>
+            <span class="skeleton-block skeleton-cell narrow"></span>
+          </div>
+        {/each}
+      </div>
+    </div>
+    <span class="sr-only" role="status">Loading…</span>
   {/if}
 </AdminShell>
 

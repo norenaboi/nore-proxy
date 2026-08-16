@@ -201,7 +201,24 @@
 </script>
 
 {#if loading}
-  <div class="loading"><div class="loading-spinner"></div><span>Loading model usage…</span></div>
+  <section class="models-table-card skeleton" aria-hidden="true">
+    <div class="skeleton-head">
+      <span class="skeleton-block skeleton-eyebrow"></span>
+      <span class="skeleton-block skeleton-heading"></span>
+    </div>
+    <div class="skeleton-rows">
+      {#each Array(8) as _}
+        <div class="skeleton-row">
+          <span class="skeleton-block skeleton-cell narrow"></span>
+          <span class="skeleton-block skeleton-cell wide"></span>
+          <span class="skeleton-block skeleton-cell"></span>
+          <span class="skeleton-block skeleton-cell"></span>
+          <span class="skeleton-block skeleton-cell"></span>
+        </div>
+      {/each}
+    </div>
+  </section>
+  <span class="sr-only" role="status">Loading model usage…</span>
 {:else if errorMsg}
   <div class="page-error" role="alert">{errorMsg}</div>
 {:else}

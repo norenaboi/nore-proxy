@@ -69,8 +69,7 @@
   >
     {#if messages.length === 0}
       <p class="empty">
-        Send a message to start. Pick a model above and add a client API key in Settings; the conversation stays in this
-        browser.
+        Send a message to start chatting...
       </p>
     {:else}
       {#each messages as message, index (message.id)}

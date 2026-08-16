@@ -142,7 +142,6 @@
   <div>
     <p class="eyebrow">Model catalog</p>
     <h1>Available models</h1>
-    <p class="lead">Search the catalog, filter by provider, and copy any exact identifier.</p>
   </div>
   <a class="back-link" href="/">← Overview</a>
 </header>

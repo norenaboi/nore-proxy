@@ -117,7 +117,20 @@
   </div>
 
   {#if loading}
-    <div class="loading"><div class="loading-spinner"></div><span>Loading users…</span></div>
+    <div class="users-grid skeleton" aria-hidden="true">
+      {#each Array(6) as _}
+        <div class="user-card">
+          <div class="user-header">
+            <span class="skeleton-block skeleton-avatar"></span>
+            <div class="skeleton-copy">
+              <span class="skeleton-block skeleton-name"></span>
+              <span class="skeleton-block skeleton-key"></span>
+            </div>
+          </div>
+        </div>
+      {/each}
+    </div>
+    <span class="sr-only" role="status">Loading users…</span>
   {:else if errorMsg}
     <div class="page-error" role="alert">{errorMsg}</div>
   {:else if visible.length === 0}
@@ -146,6 +159,10 @@
   .user-avatar { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 50%; background: var(--gradient-primary); color: white; font-size: 20px; font-weight: 600; }
   .user-info h3 { margin: 0 0 4px; color: var(--text-primary); font-size: 18px; }
   .user-key { color: var(--text-secondary); font: 13px/1.4 monospace; overflow-wrap: anywhere; }
+  .skeleton-avatar { flex-shrink: 0; width: 48px; height: 48px; border-radius: 50%; }
+  .skeleton-copy { display: flex; flex: 1; flex-direction: column; gap: 9px; }
+  .skeleton-name { width: min(150px, 70%); height: 18px; }
+  .skeleton-key { width: min(220px, 90%); height: 13px; }
   .detail-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 32px; padding-bottom: 18px; border-bottom: 1px solid var(--border-color); }
   .detail-header h1 { margin: 0; color: var(--text-primary); font: 500 clamp(30px, 4vw, 44px)/1.08 Georgia, "Times New Roman", serif; }
   .detail-header h1::before { content: "Individual usage"; display: block; margin-bottom: 8px; color: var(--primary-dark); font: 800 10px/1.2 Inter, sans-serif; letter-spacing: .12em; text-transform: uppercase; }

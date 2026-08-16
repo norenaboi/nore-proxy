@@ -7,6 +7,7 @@ import type {
 export const MODEL_CACHE_KEY = "nore-proxy:model-catalog:v1";
 const MODEL_CACHE_VERSION = 1;
 const MODEL_NAME_ABBREVIATIONS = new Set(["gpt", "glm"]);
+const MODEL_VERSION_SEGMENT = /^\d+(?:\.\d+)*$/;
 
 export type Provider =
   | "Anthropic"
@@ -62,6 +63,15 @@ export function formatModelName(modelId: string): string {
   return modelId
     .split("-")
     .filter(Boolean)
+    .reduce<string[]>((words, word) => {
+      const previous = words[words.length - 1];
+      if (previous !== undefined && MODEL_VERSION_SEGMENT.test(previous) && MODEL_VERSION_SEGMENT.test(word)) {
+        words[words.length - 1] = `${previous}.${word}`;
+        return words;
+      }
+      words.push(word);
+      return words;
+    }, [])
     .map((word) =>
       MODEL_NAME_ABBREVIATIONS.has(word.toLowerCase())
         ? word.toUpperCase()

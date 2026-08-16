@@ -44,20 +44,17 @@ a { color: inherit; }
   pointer-events: none;
 }
 .public-utility-inner { display: flex; justify-content: flex-end; }
-.public-utility .public-theme-toggle { pointer-events: auto; }
-.public-theme-toggle {
-  display: inline-flex; align-items: center; gap: 3px; padding: 3px;
-  border: 1px solid var(--line); border-radius: 999px;
-  background: var(--surface); box-shadow: var(--shadow-sm);
-}
-.public-theme-toggle button {
-  min-width: 72px; min-height: 44px; padding: 8px 12px;
-  border: 0; border-radius: 999px; background: transparent;
-  color: var(--muted); font-size: 12px; cursor: pointer;
-}
-.public-theme-toggle button:hover { color: var(--ink); }
-.public-theme-toggle button[aria-pressed="true"] {
-  background: var(--accent-soft); color: var(--accent-ink); font-weight: 700;
+.public-utility .theme-pill { pointer-events: auto; }
+/* Palette for the shared ThemeTogglePill component. These follow the theme
+   tokens above, so the dark values come from the [data-theme="dark"] block. */
+:root {
+  --pill-line: var(--line);
+  --pill-surface: var(--surface);
+  --pill-muted: var(--muted);
+  --pill-ink: var(--ink);
+  --pill-active-surface: var(--accent-soft);
+  --pill-active-ink: var(--accent-ink);
+  --pill-shadow: var(--shadow-sm);
 }
 .public-head, .public-footer {
   width: min(1200px, calc(100% - 48px)); min-height: 76px; margin: 0 auto;
@@ -192,7 +189,6 @@ button, input { font: inherit; }
   .service-strip div:last-child { border-bottom: 0; }
 }
 @media (max-width: 700px) {
-  .public-utility-inner { width: calc(100% - 32px); }
   .public-head, .public-footer { width: calc(100% - 32px); align-items: flex-start; padding: 18px 0; }
   .public-head { display: grid; }
   .public-main { width: calc(100% - 32px); padding-top: 38px; }

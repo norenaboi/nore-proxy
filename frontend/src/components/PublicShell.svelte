@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { PublicTheme } from "$frontend/lib/publicTheme";
-  import PublicThemeToggle from "./PublicThemeToggle.svelte";
+  import ThemeTogglePill from "./ThemeTogglePill.svelte";
 
   let {
     activePath,
@@ -28,7 +28,7 @@
 
 <div class="public-utility">
   <div class="public-utility-inner">
-    <PublicThemeToggle {theme} {onThemeChange} />
+    <ThemeTogglePill {theme} {onThemeChange} />
   </div>
 </div>
 
@@ -39,11 +39,8 @@
   </a>
   <nav aria-label="Public navigation">
     <a href="/playground" aria-current={isPlayground ? "page" : undefined}>Playground</a>
-    <a href="/usage" aria-current={isUsage ? "page" : undefined}>Usage</a>
+    <a href="/usage" aria-current={isUsage ? "page" : undefined}>Check Usage</a>
     <a href="/models" aria-current={isModels ? "page" : undefined}>Models</a>
-    {#if !isHome && !isNotFound}
-      <a href="/">Overview</a>
-    {/if}
   </nav>
 </header>
 
@@ -59,22 +56,11 @@
 <footer class="public-footer">
   {#if isHome}
     <span class="public-footer-copy">We do not store prompt content in request logs. We retain operational metadata such as request status, duration, and token counts.</span>
-    <span class="public-footer-links">
-      <a href="/terms">Terms of Service</a>
-      <a href="/privacy">Privacy Policy</a>
-      <a href="/admin/login">Admin</a>
-    </span>
-  {:else if isModels}
-    <span>Nore Proxy</span><a href="/usage">Review usage</a>
-  {:else if isUsage}
-    <span>Nore Proxy</span><a href="/models">Browse models</a>
-  {:else if isPlayground}
-    <span>Nore Proxy</span><a href="/models">Browse models</a>
-  {:else if isTerms}
-    <span class="public-footer-links"><a href="/privacy">Privacy Policy</a><a href="/">Overview</a></span>
-  {:else if isPrivacy}
-    <span class="public-footer-links"><a href="/terms">Terms of Service</a><a href="/">Overview</a></span>
-  {:else}
-    <span>Nore Proxy</span><span>Unified model access</span>
   {/if}
+  <span class="public-footer-links">
+    <a href="/terms" aria-current={isTerms ? "page" : undefined}>Terms of Service</a>
+    <a href="/privacy" aria-current={isPrivacy ? "page" : undefined}>Privacy Policy</a>
+    <a href="/admin/login">Admin</a>
+    <a href="https://github.com/norenaboi/nore-proxy">Nore-Proxy</a>
+  </span>
 </footer>

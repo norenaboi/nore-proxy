@@ -122,11 +122,6 @@
             </div>
           </form>
         {/if}
-        <p class="note">
-          The key is kept in this browser's local storage so the playground remembers it between visits. Anyone with
-          access to this browser profile can read it.
-        </p>
-        <p class="note">Every message counts against the key's request and token limits.</p>
       </section>
 
       <section class="group">
@@ -168,13 +163,11 @@
             />
           </div>
         </div>
-        <p class="note">Blank values are omitted from the request so the model's own defaults apply.</p>
 
         <label class="toggle">
           <input bind:checked={settings.stream} type="checkbox" {disabled} />
           <span class="toggle-copy">
-            <strong>Stream responses</strong>
-            <span class="note">Off waits for the whole reply, so nothing appears until it is finished.</span>
+            <strong>Streaming</strong>
           </span>
         </label>
       </section>

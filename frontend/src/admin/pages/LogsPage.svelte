@@ -197,6 +197,15 @@
     <table>
       <thead><tr><th>Time</th><th>Name</th><th>Model</th><th>Endpoint</th><th class="numeric-cell">Input</th><th class="numeric-cell">Output</th><th class="numeric-cell">Cache W</th><th class="numeric-cell">Cache R</th><th class="numeric-cell">Duration</th><th class="numeric-cell">Cost</th><th>Status</th></tr></thead>
       <tbody>
+        {#if loading && requests.length === 0}
+          {#each Array(6) as _}
+            <tr class="skeleton" aria-hidden="true">
+              {#each Array(11) as __}
+                <td><span class="skeleton-block skeleton-line"></span></td>
+              {/each}
+            </tr>
+          {/each}
+        {/if}
         {#each requests as req (req.id)}
           <tr tabindex="0" style="cursor:pointer;" onclick={() => openDetail(req.id)} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(req.id); } }}>
             <td class="timestamp">{fmtTime(req.timestamp)}</td>
