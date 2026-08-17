@@ -9,7 +9,7 @@ import settingsManager from "./settingsManager.js";
 
 export const ACTIONABLE_CODES = new Set([400, 401, 402, 403, 404, 429]);
 export const INVALID_CODES = new Set([401, 403, 404]);
-export const TIMEOUT_CODE = 429;
+export const TIMEOUT_CODE = new Set([402, 429]);
 
 interface KeyStateRow {
   status: string;
@@ -141,7 +141,7 @@ class KeyStateManager {
       if (!sideline) return;
       if (INVALID_CODES.has(code)) {
         await db.run("UPDATE key_states SET status = 'invalid', disabled_until = NULL WHERE endpoint_key = ? AND token_hash = ?", [endpointKey, tokenHash]);
-      } else if (code === TIMEOUT_CODE) {
+      } else if (TIMEOUT_CODE.has(code)) {
         const hours = Number(settingsManager.get("keyTimeoutHours")) || 24;
         await db.run("UPDATE key_states SET status = 'timeout', disabled_until = ? WHERE endpoint_key = ? AND token_hash = ?", [now + hours * 60 * 60 * 1000, endpointKey, tokenHash]);
       }
