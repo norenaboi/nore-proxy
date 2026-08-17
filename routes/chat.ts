@@ -93,18 +93,20 @@ function autoExhausted(lastError: any, state: any) {
 function prepareAttempt(baseRequest: any, endpoint: any, requestId: any, isStreaming: any) {
   const request = clone(baseRequest);
   let cacheDepth = -1;
+  let cacheTtl: "1h" | undefined;
   if (request.cache_depth !== undefined) {
     const parsed = parseInt(request.cache_depth, 10);
     cacheDepth = Number.isNaN(parsed) ? -1 : parsed;
   } else if (endpoint.promptCaching?.enabled === true && isClaudeModel(endpoint.actualModel)) {
     cacheDepth = endpoint.promptCaching.depth;
+    cacheTtl = endpoint.promptCaching.ttl;
   }
   delete request.cache_depth;
   delete request.frequency_penalty;
   delete request.presence_penalty;
   request.model = endpoint.targetModel;
   if (endpoint.generationDefaults) applyGenerationPolicy(request, endpoint.generationDefaults);
-  if (isClaudeModel(endpoint.actualModel) && cacheDepth !== -1) request.messages = applyClaudePromptCaching(request.messages || [], cacheDepth);
+  if (isClaudeModel(endpoint.actualModel) && cacheDepth !== -1) request.messages = applyClaudePromptCaching(request.messages || [], cacheDepth, cacheTtl);
 
   const ctx = { requestId, isStreaming };
   const adapter = getAdapter(endpoint.apiFormat);

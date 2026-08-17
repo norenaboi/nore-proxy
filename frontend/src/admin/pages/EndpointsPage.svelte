@@ -16,7 +16,7 @@
     apiFormat?: string; appendApiSuffix?: boolean; keyRotation?: string; keyHealth?: boolean; retryAttempts?: number;
     headers?: Record<string, string>;
     generationDefaults?: { temperature?: GenDefault; top_p?: GenDefault; max_tokens?: GenDefault };
-    promptCaching?: { enabled: boolean; depth: number };
+    promptCaching?: { enabled: boolean; depth: number; ttl?: "1h" };
   }
   interface KeyState {
     tokenHash?: string; maskedKey?: string; status?: string; disabledUntil?: number;
@@ -58,7 +58,7 @@
   let gTempEnabled = $state(false); let gTemp = $state("");
   let gTopPEnabled = $state(false); let gTopP = $state("");
   let gMaxEnabled = $state(false); let gMax = $state("");
-  let gCacheEnabled = $state(false); let gCacheDepth = $state("");
+  let gCacheEnabled = $state(false); let gCacheDepth = $state(""); let gCacheOneHour = $state(false);
 
   // Delete modal
   let deletingIndex = $state<number | null>(null);
@@ -135,6 +135,7 @@
   function setPromptCaching(pc: Endpoint["promptCaching"]) {
     gCacheEnabled = pc?.enabled === true;
     gCacheDepth = pc?.depth != null ? String(pc.depth) : "";
+    gCacheOneHour = pc?.ttl === "1h";
   }
 
   async function openAdd() {
@@ -193,7 +194,11 @@
   }
   function collectPromptCaching() {
     const depth = gCacheEnabled && gCacheDepth !== "" ? Math.max(0, Math.floor(Number(gCacheDepth))) : 0;
-    return { enabled: gCacheEnabled, depth };
+    return {
+      enabled: gCacheEnabled,
+      depth,
+      ...(gCacheEnabled && gCacheOneHour ? { ttl: "1h" as const } : {}),
+    };
   }
 
   async function submit() {
@@ -355,7 +360,7 @@
                 {#if gd.temperature?.enabled && gd.temperature.value !== null}<span class="gen-badge"><i class="fa-solid fa-temperature-half"></i>T={gd.temperature.value}</span>{/if}
                 {#if gd.top_p?.enabled && gd.top_p.value !== null}<span class="gen-badge"><i class="fa-solid fa-chart-pie"></i>P={gd.top_p.value}</span>{/if}
                 {#if gd.max_tokens?.enabled && gd.max_tokens.value !== null}<span class="gen-badge"><i class="fa-solid fa-stopwatch"></i>Max={gd.max_tokens.value}</span>{/if}
-                {#if ep.promptCaching?.enabled}<span class="gen-badge cache"><i class="fa-solid fa-bolt"></i>Cache={ep.promptCaching.depth}</span>{/if}
+                {#if ep.promptCaching?.enabled}<span class="gen-badge cache"><i class="fa-solid fa-bolt"></i>Cache={ep.promptCaching.depth}{ep.promptCaching.ttl === "1h" ? " · 1h" : ""}</span>{/if}
                 {#if ep.headers && Object.keys(ep.headers).length > 0}<span class="gen-badge"><i class="fa-solid fa-code"></i>{Object.keys(ep.headers).length} custom header{Object.keys(ep.headers).length !== 1 ? "s" : ""}</span>{/if}
               </div>
               <div class="model-mapping">{ep.url}</div>
@@ -402,7 +407,7 @@
             <div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gTopPEnabled} /><span class="gen-toggle-slider"></span><span>Top P</span></label><input class="gen-input" class:active={gTopPEnabled} disabled={!gTopPEnabled} type="number" step="0.05" min="0" max="1" bind:value={gTopP} placeholder="1" /></div>
             <div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gMaxEnabled} /><span class="gen-toggle-slider"></span><span>Max Tokens</span></label><input class="gen-input" class:active={gMaxEnabled} disabled={!gMaxEnabled} type="number" step="1" min="1" bind:value={gMax} placeholder="4096" /></div>
           </div>
-          <div class="form-group"><div class="section-label">Prompt Caching for Claude</div><p class="form-hint gen-hint">When enabled, cache_control breakpoints are injected into Claude messages. No effect on non-Claude models.</p><div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gCacheEnabled} /><span class="gen-toggle-slider"></span><span>Enable caching</span></label><input class="gen-input" class:active={gCacheEnabled} disabled={!gCacheEnabled} type="number" step="1" min="0" bind:value={gCacheDepth} placeholder="2" /></div></div>
+          <div class="form-group"><div class="section-label">Prompt Caching for Claude</div><p class="form-hint gen-hint">When enabled, cache_control breakpoints are injected into Claude messages. No effect on non-Claude models.</p><div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gCacheEnabled} /><span class="gen-toggle-slider"></span><span>Enable caching</span></label><input class="gen-input" class:active={gCacheEnabled} disabled={!gCacheEnabled} type="number" step="1" min="0" bind:value={gCacheDepth} placeholder="2" /></div><div class="gen-setting-row cache-ttl-row"><label class="gen-toggle" class:disabled={!gCacheEnabled}><input type="checkbox" bind:checked={gCacheOneHour} disabled={!gCacheEnabled} /><span class="gen-toggle-slider"></span><span>Caching for 1hr</span></label></div></div>
         </div>
         <div class="modal-body-col">
           <div class="form-group"><label for="epFmt">API Format</label><select id="epFmt" bind:value={fApiFormat} class="form-select"><option value="openai">OpenAI — /v1/chat/completions (default)</option><option value="anthropic">Anthropic — /v1/messages</option><option value="gemini">Gemini — /v1beta/generateContent</option><option value="openai-responses">OpenAI Responses — /v1/responses</option><option value="openai-codex">OpenAI Codex — /v1/responses</option></select><p class="form-hint">Controls which API path is appended when forwarding requests to this endpoint.</p></div>
@@ -550,6 +555,8 @@
   .gen-toggle-slider::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: white; transition: transform .2s ease; }
   .gen-toggle input:checked + .gen-toggle-slider { background: var(--primary-dark); }
   .gen-toggle input:checked + .gen-toggle-slider::after { transform: translateX(18px); }
+  .gen-toggle.disabled { opacity: .5; cursor: not-allowed; }
+  .cache-ttl-row { margin-top: -4px; }
   .gen-input { width: 120px; flex-shrink: 0; opacity: .5; pointer-events: none; }
   .gen-input.active { opacity: 1; pointer-events: auto; }
   .key-health-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }

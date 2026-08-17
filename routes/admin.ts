@@ -2195,7 +2195,7 @@ function validateGenerationDefaults(input: any) {
 
 /**
  * Validate prompt caching payload.
- * Expected shape: { enabled: boolean, depth: number }
+ * Expected shape: { enabled: boolean, depth: number, ttl?: "1h" }
  * Returns a sanitized object. Non-objects become { enabled: false, depth: 2 }.
  */
 function validatePromptCaching(input: any) {
@@ -2215,7 +2215,7 @@ function validatePromptCaching(input: any) {
     }
   }
 
-  return { enabled, depth };
+  return enabled && input.ttl === "1h" ? { enabled, depth, ttl: "1h" as const } : { enabled, depth };
 }
 
 // Same-key retries are deliberately capped to prevent one endpoint from

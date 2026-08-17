@@ -152,13 +152,15 @@ export function isClaudeModel(modelName: any) {
  *
  * Cache breakpoints are inserted by adding `cache_control: { type: "ephemeral" }`
  * to the last content block of each eligible message, which is the format
- * OpenRouter (and the Anthropic API directly) understand.
+ * OpenRouter (and the Anthropic API directly) understand. When ttl is `"1h"`,
+ * it is included on each injected breakpoint; otherwise the provider default is used.
  *
  * @param {Array} messages - OpenAI-style messages array
  * @param {number} cacheDepth - cache depth value
+ * @param {"1h" | undefined} ttl - optional Anthropic cache lifetime
  * @returns {Array} - new messages array with cache_control injected where appropriate
  */
-export function applyClaudePromptCaching(messages: any, cacheDepth: any) {
+export function applyClaudePromptCaching(messages: any, cacheDepth: any, ttl?: "1h") {
   // -1 means caching is disabled
   if (cacheDepth === -1) {
     return messages;
@@ -193,7 +195,7 @@ export function applyClaudePromptCaching(messages: any, cacheDepth: any) {
       return message;
     }
 
-    return addCacheControlToMessage(message);
+    return addCacheControlToMessage(message, ttl);
   });
 }
 
@@ -201,12 +203,14 @@ export function applyClaudePromptCaching(messages: any, cacheDepth: any) {
  * Adds a cache_control breakpoint to the last content block of a message.
  * Handles both string content and array-of-blocks content.
  */
-function addCacheControlToMessage(message: any) {
+function addCacheControlToMessage(message: any, ttl?: "1h") {
   if (!message || !message.content) {
     return message;
   }
 
-  const cacheControl = { type: "ephemeral" };
+  const cacheControl = ttl === "1h"
+    ? { type: "ephemeral", ttl }
+    : { type: "ephemeral" };
 
   if (typeof message.content === "string") {
     // Convert string content to a content block array so we can attach cache_control

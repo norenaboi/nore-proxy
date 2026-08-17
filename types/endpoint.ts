@@ -22,6 +22,8 @@ export interface GenerationDefaults {
 export interface PromptCachingConfig {
   enabled: boolean;
   depth: number;
+  /** Anthropic cache lifetime. Omitted uses the provider's default lifetime. */
+  ttl?: "1h";
 }
 
 /** Persisted endpoint configuration in endpoints.json. */
