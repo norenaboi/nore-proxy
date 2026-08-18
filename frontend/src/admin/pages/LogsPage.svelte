@@ -34,10 +34,12 @@
 
   let apiKeyFilter = $state("");
   let modelFilter = $state("");
+  let endpointFilter = $state("");
   let statusFilter = $state("");
   let timeFilter = $state("");
   let apiKeyOptions = $state<{ value: string; label: string }[]>([]);
   let modelOptions = $state<string[]>([]);
+  let endpointOptions = $state<string[]>([]);
   let count = $state(0);
 
   let sentinel: HTMLElement;
@@ -49,6 +51,7 @@
     if (cursor) p.set("cursor", cursor);
     if (apiKeyFilter) p.set("apiKey", apiKeyFilter);
     if (modelFilter) p.set("model", modelFilter);
+    if (endpointFilter) p.set("endpoint", endpointFilter);
     if (statusFilter) p.set("status", statusFilter);
     if (timeFilter) {
       const s = ({ "24h": 86400, "7d": 604800, "30d": 2592000 } as Record<string, number>)[timeFilter];
@@ -85,9 +88,10 @@
 
   async function loadFilters() {
     if (filtersLoaded) return;
-    const d = await requestAdminJson<{ apiKeys: { value: string; label: string }[]; models: string[] }>("/api/requests/filters");
+    const d = await requestAdminJson<{ apiKeys: { value: string; label: string }[]; models: string[]; endpoints: string[] }>("/api/requests/filters");
     apiKeyOptions = d.apiKeys;
     modelOptions = d.models;
+    endpointOptions = d.endpoints ?? [];
     filtersLoaded = true;
   }
 
@@ -125,7 +129,7 @@
   function money(v: number) { return `$${Number(v || 0).toFixed(8)}`; }
 
   function resetFilters() {
-    apiKeyFilter = ""; modelFilter = ""; statusFilter = ""; timeFilter = "";
+    apiKeyFilter = ""; modelFilter = ""; endpointFilter = ""; statusFilter = ""; timeFilter = "";
     loadPage({ reset: true });
   }
 
@@ -167,6 +171,13 @@
       <select id="modelFilter" bind:value={modelFilter} onchange={() => loadPage({ reset: true })}>
         <option value="">All models</option>
         {#each modelOptions as m}<option value={m}>{m}</option>{/each}
+      </select>
+    </div>
+    <div class="filter-field">
+      <label for="endpointFilter">Endpoint</label>
+      <select id="endpointFilter" bind:value={endpointFilter} onchange={() => loadPage({ reset: true })}>
+        <option value="">All endpoints</option>
+        {#each endpointOptions as e}<option value={e}>{e}</option>{/each}
       </select>
     </div>
     <div class="filter-field">
@@ -310,7 +321,7 @@
 
 <style>
   .toolbar { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding: 18px; margin-bottom: 24px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); }
-  .filters { display: grid; grid-template-columns: repeat(4, minmax(150px, 220px)); gap: 12px; flex: 1; }
+  .filters { display: grid; grid-template-columns: repeat(5, minmax(140px, 220px)); gap: 12px; flex: 1; }
   .filter-field { display: flex; flex-direction: column; gap: 7px; }
   .filter-field label { color: var(--text-secondary); font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
   .filter-field select { width: 100%; min-height: 42px; padding: 9px 36px 9px 12px; border: 1px solid var(--input-border); border-radius: 8px; outline: none; background: var(--input-bg); color: var(--text-primary); font-family: inherit; }

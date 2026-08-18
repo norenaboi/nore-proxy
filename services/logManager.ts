@@ -1164,13 +1164,15 @@ export class LogManager {
   getRequestHistoryFilters() {
     const models = this.db.prepare(`SELECT DISTINCT request_model AS value FROM request_logs
       WHERE type = 'request_end' AND projection_version >= 2 AND request_model IS NOT NULL AND request_model != '' ORDER BY value`).all().map((row: { value: unknown }) => row.value);
+    const endpoints = this.db.prepare(`SELECT DISTINCT endpoint_name AS value FROM request_logs
+      WHERE type = 'request_end' AND projection_version >= 2 AND endpoint_name IS NOT NULL AND endpoint_name != '' ORDER BY value`).all().map((row: { value: unknown }) => row.value);
     const apiKeys = this.db.prepare(`SELECT api_key_id, api_key_masked, key_name FROM request_logs
       WHERE type = 'request_end' AND projection_version >= 2 AND api_key_id IS NOT NULL
       GROUP BY api_key_id, api_key_masked, key_name ORDER BY key_name, api_key_masked`).all().map((row: any) => ({
         value: row.api_key_id,
         label: row.key_name ? `${row.key_name} · ${row.api_key_masked}` : row.api_key_masked,
       }));
-    return { models, apiKeys, statuses: ["success", "failed"] };
+    return { models, endpoints, apiKeys, statuses: ["success", "failed"] };
   }
 
   getModelUsageNames() {
@@ -1617,7 +1619,7 @@ class PostgresLogManager {
   async getDashboardRequestLogs() { return (await this.requestRows()).map(normalizeRequestRow); }
   async getRequestHistory(filters: any = {}) { const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 50); const rows = await this.requestRows(filters, limit + 1); const visible = rows.slice(0, limit).map(normalizeRequestRow); return { requests: visible, hasMore: rows.length > limit, nextCursor: rows.length > limit && visible.length ? visible.at(-1)?.id : null }; }
   async getRequestHistoryById(id: unknown) { return normalizeRequestDetail(await this.db.get("SELECT * FROM request_logs WHERE id = ? AND type = 'request_end'", [id])); }
-  async getRequestHistoryFilters() { const models = await this.db.all("SELECT DISTINCT request_model AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND request_model IS NOT NULL AND request_model != '' ORDER BY value"); const apiKeys = await this.db.all("SELECT api_key_id, api_key_masked, key_name FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND api_key_id IS NOT NULL GROUP BY api_key_id, api_key_masked, key_name ORDER BY key_name, api_key_masked"); return { models: models.map((r: any) => r.value), apiKeys: apiKeys.map((r: any) => ({ value: r.api_key_id, label: r.key_name ? `${r.key_name} · ${r.api_key_masked}` : r.api_key_masked })), statuses: ["success", "failed"] }; }
+  async getRequestHistoryFilters() { const models = await this.db.all("SELECT DISTINCT request_model AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND request_model IS NOT NULL AND request_model != '' ORDER BY value"); const endpoints = await this.db.all("SELECT DISTINCT endpoint_name AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND endpoint_name IS NOT NULL AND endpoint_name != '' ORDER BY value"); const apiKeys = await this.db.all("SELECT api_key_id, api_key_masked, key_name FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND api_key_id IS NOT NULL GROUP BY api_key_id, api_key_masked, key_name ORDER BY key_name, api_key_masked"); return { models: models.map((r: any) => r.value), endpoints: endpoints.map((r: any) => r.value), apiKeys: apiKeys.map((r: any) => ({ value: r.api_key_id, label: r.key_name ? `${r.key_name} · ${r.api_key_masked}` : r.api_key_masked })), statuses: ["success", "failed"] }; }
 
   async getRequestAggregates(filters: any = {}) { const rows = await this.requestRows(filters); return this.aggregate(rows); }
   async getRequestRangeAggregates(ranges: any[] = []) { return Promise.all(ranges.map(async (range) => ({ ...range, ...await this.getRequestAggregates(range) }))); }

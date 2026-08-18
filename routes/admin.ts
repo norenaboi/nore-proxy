@@ -433,7 +433,7 @@ router.get("/api/requests", verifySession, async (req: any, res: any) => {
     return res.status(400).json({ error: "Invalid pagination values" });
   }
 
-  const stringFilters = ["apiKey", "model", "status"];
+  const stringFilters = ["apiKey", "model", "endpoint", "status"];
   if (
     stringFilters.some(
       (name: any) =>
@@ -470,6 +470,7 @@ router.get("/api/requests", verifySession, async (req: any, res: any) => {
       cursor,
       apiKey: (req.query.apiKey as QueryValue)?.trim() || null,
       model: (req.query.model as QueryValue)?.trim() || null,
+      endpoint: (req.query.endpoint as QueryValue)?.trim() || null,
       status,
       from,
       to,
