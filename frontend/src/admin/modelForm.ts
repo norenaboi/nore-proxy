@@ -19,3 +19,9 @@ export function isDuplicateModelName(
 ): boolean {
   return models.some((model) => model.name === name && model.name !== editingName);
 }
+
+export function filterModelNames(names: string[], query: string): string[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return names;
+  return names.filter((name) => name.toLowerCase().includes(normalizedQuery));
+}

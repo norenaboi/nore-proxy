@@ -4,6 +4,8 @@
   import { requestAdminJson, naturalSort } from "$frontend/lib/api/admin";
   import { motionDuration } from "$frontend/lib/motion";
   import { pageHeaderActions, toast } from "$frontend/lib/stores";
+  import AutoModelTargetPicker from "$frontend/components/admin/AutoModelTargetPicker.svelte";
+  import { getProvider, type CatalogModel } from "$frontend/lib/models/catalog";
   import { effectiveModelName, isDuplicateModelName, numericInputValue, type NumericInputValue } from "$frontend/admin/modelForm";
   import type { ModelTestResult } from "$contracts/models";
 
@@ -263,9 +265,19 @@
 
   const concreteCandidates = $derived(
     models.filter((m) => !isAuto(m) && !m.disabled && m.name !== editingModel)
-      .map((m) => m.name).sort(naturalSort),
+      .map<CatalogModel>((m) => ({
+        id: m.name,
+        provider: getProvider(m.name),
+        pricing: {
+          input: Number(m.pricing?.input) || 0,
+          output: Number(m.pricing?.output) || 0,
+          cache_write: Number(m.pricing?.cache_write) || 0,
+          cache_read: Number(m.pricing?.cache_read) || 0,
+        },
+      }))
+      .sort((a, b) => naturalSort(a.id, b.id)),
   );
-  const availableTargets = $derived(concreteCandidates.filter((n) => !fTargets.includes(n)));
+  const availableTargets = $derived(concreteCandidates.filter((model) => !fTargets.includes(model.id)));
   const versionKeys = $derived(Object.keys(endpoints).sort((a, b) => (parseInt(a.slice(1), 10) || 0) - (parseInt(b.slice(1), 10) || 0)));
 
   function priceChip(v: number | undefined) {
@@ -733,14 +745,11 @@
         <div class="form-group auto-controls">
           <div class="form-section-label">Targets (ordered)</div>
           <div class="backend-select-row target-picker">
-            <select bind:value={fTargetCandidate} class="form-select" style="flex:1;" disabled={availableTargets.length === 0}>
-              {#if availableTargets.length === 0}
-                <option value="">No enabled concrete models available</option>
-              {:else}
-                <option value="">Select a concrete model</option>
-                {#each availableTargets as t}<option value={t}>{t}</option>{/each}
-              {/if}
-            </select>
+            <AutoModelTargetPicker
+              options={availableTargets}
+              selectedId={fTargetCandidate}
+              onSelect={(modelName) => (fTargetCandidate = modelName)}
+            />
             <button class="btn btn-secondary btn-sm" type="button" onclick={addTarget} disabled={!fTargetCandidate}>Add</button>
           </div>
           <p class="form-help">Add any number of concrete model names. Order controls failover priority; unavailable names are skipped at request time.</p>
@@ -912,7 +921,8 @@
   .backend-test-row > input { min-width: 0; flex: 1; }
   .backend-test-actions { display: flex; flex-shrink: 0; gap: 8px; }
   .draft-test-status { display: flex; margin-top: 8px; }
-  .target-picker { margin-bottom: 0; }
+  .target-picker { min-width: 0; margin-bottom: 0; }
+  .target-picker > .btn { flex-shrink: 0; }
   .auto-controls { padding: 18px; border: 1px solid var(--primary-alpha-035); border-radius: 12px; background: var(--primary-alpha-01); }
   .selected-targets { display: flex; min-height: 48px; flex-direction: column; gap: 7px; margin-top: 10px; padding: 8px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); }
   .targets-empty { margin: auto; padding: 6px; color: var(--text-secondary); font-size: 12px; text-align: center; }
@@ -950,8 +960,8 @@
     .model-icon { width: 34px; height: 34px; }
     .model-actions { width: 100%; justify-content: flex-end; }
     .action-popover { right: 0; width: min(210px, calc(100vw - 64px)); }
-    .backend-test-row { flex-wrap: wrap; }
+    .backend-test-row, .target-picker { flex-wrap: wrap; }
     .backend-test-row > input { flex-basis: 100%; }
-    .backend-test-actions { margin-left: auto; }
+    .backend-test-actions, .target-picker > .btn { margin-left: auto; }
   }
 </style>

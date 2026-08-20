@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { numericInputValue, effectiveModelName, isDuplicateModelName } from "../frontend/src/admin/modelForm.js";
+import { effectiveModelName, filterModelNames, isDuplicateModelName, numericInputValue } from "../frontend/src/admin/modelForm.js";
 import { mergeBulkTokens, removeTokenAt } from "../frontend/src/lib/endpoints/editor.js";
 import {
   clearModelCache,
@@ -90,6 +90,18 @@ test("model editor derives names and detects duplicates", () => {
   assert.equal(effectiveModelName("", "concrete", "provider-model"), "provider-model");
   assert.equal(isDuplicateModelName("existing", [{ name: "existing" }]), true);
   assert.equal(isDuplicateModelName("existing", [{ name: "existing" }], "existing"), false);
+});
+
+test("model target search filters names without changing their order", () => {
+  const names = ["Claude/Sonnet-5", "gemini-2.5-pro", "GPT-5 Mini"];
+
+  assert.equal(filterModelNames(names, ""), names);
+  assert.equal(filterModelNames(names, "   "), names);
+  assert.deepEqual(filterModelNames(names, "CLAUDE/"), ["Claude/Sonnet-5"]);
+  assert.deepEqual(filterModelNames(names, "2.5-"), ["gemini-2.5-pro"]);
+  assert.deepEqual(filterModelNames(names, "GPT-5 M"), ["GPT-5 Mini"]);
+  assert.deepEqual(filterModelNames(names, "-"), names);
+  assert.deepEqual(filterModelNames(names, "missing"), []);
 });
 
 test("endpoint token editing skips duplicates and remaps confirmations", () => {
