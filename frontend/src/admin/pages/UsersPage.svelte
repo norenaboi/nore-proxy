@@ -37,7 +37,7 @@
       const d = await requestAdminJson<{ users: User[] }>("/api/users");
       users = d.users;
     } catch (e) {
-      errorMsg = e instanceof Error ? e.message : "Failed to load users";
+      errorMsg = e instanceof Error ? e.message : "Failed to load API keys";
     } finally {
       loading = false;
     }
@@ -47,7 +47,7 @@
     try {
       detail = await requestAdminJson<UserDetail>(`/api/users/${encodeURIComponent(keyId)}`);
     } catch (e) {
-      errorMsg = e instanceof Error ? e.message : "Failed to load user";
+      errorMsg = e instanceof Error ? e.message : "Failed to load API key stats";
     }
   }
 
@@ -62,7 +62,7 @@
       <h1>{detail.name}</h1>
       <div class="user-key detail-key">{detail.api_key}</div>
     </div>
-    <button class="back-btn" type="button" onclick={() => detail = null}><i class="fa-solid fa-arrow-left"></i> Back to Users</button>
+    <button class="back-btn" type="button" onclick={() => detail = null}><i class="fa-solid fa-arrow-left"></i> Back to API Key Stats</button>
   </div>
 
   <div class="summary-cards">
@@ -113,7 +113,7 @@
 {:else}
   <div class="users-toolbar">
     <label class="user-search" for="user-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="user-search" type="search" placeholder="Search by name or API key" autocomplete="off" bind:value={query} /></label>
-    <span class="search-count" aria-live="polite">{query ? `${visible.length} of ${users.length} users` : `${users.length} users`}</span>
+    <span class="search-count" aria-live="polite">{query ? `${visible.length} of ${users.length} API keys` : `${users.length} API keys`}</span>
   </div>
 
   {#if loading}
@@ -130,11 +130,11 @@
         </div>
       {/each}
     </div>
-    <span class="sr-only" role="status">Loading users…</span>
+    <span class="sr-only" role="status">Loading API key stats…</span>
   {:else if errorMsg}
     <div class="page-error" role="alert">{errorMsg}</div>
   {:else if visible.length === 0}
-    <div class="empty-state"><i class="fa-solid {query ? 'fa-magnifying-glass' : 'fa-users'}"></i><p>{query ? "No users match your search" : "No users found"}</p></div>
+    <div class="empty-state"><i class="fa-solid {query ? 'fa-magnifying-glass' : 'fa-key'}"></i><p>{query ? "No API keys match your search" : "No API keys found"}</p></div>
   {:else}
     <div class="users-grid">
       {#each visible as user}
@@ -165,7 +165,7 @@
   .skeleton-key { width: min(220px, 90%); height: 13px; }
   .detail-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 32px; padding-bottom: 18px; border-bottom: 1px solid var(--border-color); }
   .detail-header h1 { margin: 0; color: var(--text-primary); font: 500 clamp(30px, 4vw, 44px)/1.08 Georgia, "Times New Roman", serif; }
-  .detail-header h1::before { content: "Individual usage"; display: block; margin-bottom: 8px; color: var(--primary-dark); font: 800 10px/1.2 Inter, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+  .detail-header h1::before { content: "API key stats"; display: block; margin-bottom: 8px; color: var(--primary-dark); font: 800 10px/1.2 Inter, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
   .detail-key { margin-top: 8px; }
   .back-btn { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); color: var(--primary-dark); cursor: pointer; font: 14px inherit; }
   .summary-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin-bottom: 24px; overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); }

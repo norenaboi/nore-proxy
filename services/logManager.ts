@@ -178,6 +178,73 @@ const RECORDED_COST_BITS = {
   total: 16,
 };
 
+const ADMIN_STATS_CACHE_TTL_MS = 30_000;
+
+type AdminStatsRow = {
+  name: string;
+  requests: number;
+  success_count: number;
+  errors: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_write_tokens: number;
+  cache_read_tokens: number;
+  total_tokens: number;
+  cost: number;
+};
+
+type AdminStatsSnapshot = { models: AdminStatsRow[]; endpoints: Array<AdminStatsRow & { models: AdminStatsRow[] }> };
+
+function emptyAdminStatsRow(name: string): AdminStatsRow {
+  return { name, requests: 0, success_count: 0, errors: 0, input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0, total_tokens: 0, cost: 0 };
+}
+
+function foldAdminStats(groups: any[]): AdminStatsSnapshot {
+  const models = new Map<string, AdminStatsRow>();
+  const endpoints = new Map<string, AdminStatsRow & { models: AdminStatsRow[] }>();
+  const endpointModels = new Map<string, Map<string, AdminStatsRow>>();
+
+  for (const group of groups) {
+    const modelName = typeof group.model === "string" && group.model.trim() ? group.model.trim() : "Unknown";
+    const endpointName = typeof group.endpoint === "string" && group.endpoint.trim() ? group.endpoint.trim() : "Unknown";
+    const requests = Number(group.requests) || 0;
+    const success = Number(group.successful) || 0;
+    const errors = Number(group.failed) || 0;
+    const input = Number(group.inputTokens) || 0;
+    const output = Number(group.outputTokens) || 0;
+    const cacheWrite = Number(group.cacheWriteTokens) || 0;
+    const cacheRead = Number(group.cacheReadTokens) || 0;
+    const mask = Number(group.recordedCostMask) || 0;
+    const calculated = calculateCost(modelName, Number(group.successInputTokens) || 0, Number(group.successOutputTokens) || 0, Number(group.successCacheWriteTokens) || 0, Number(group.successCacheReadTokens) || 0, group.tokenAccountingVersion || null);
+    const cost = {
+      input: (mask & RECORDED_COST_BITS.input) ? Number(group.recordedCostInput) || 0 : calculated.inputCost,
+      output: (mask & RECORDED_COST_BITS.output) ? Number(group.recordedCostOutput) || 0 : calculated.outputCost,
+      cacheWrite: (mask & RECORDED_COST_BITS.cacheWrite) ? Number(group.recordedCostCacheWrite) || 0 : calculated.cacheWriteCost,
+      cacheRead: (mask & RECORDED_COST_BITS.cacheRead) ? Number(group.recordedCostCacheRead) || 0 : calculated.cacheReadCost,
+      total: 0,
+    };
+    cost.total = (mask & RECORDED_COST_BITS.total)
+      ? Number(group.recordedCostTotal) || 0
+      : cost.input + cost.output + cost.cacheWrite + cost.cacheRead;
+    const values = { requests, success_count: success, errors, input_tokens: input, output_tokens: output, cache_write_tokens: cacheWrite, cache_read_tokens: cacheRead, total_tokens: input + output + cacheWrite + cacheRead, cost: cost.total };
+    const add = (row: AdminStatsRow) => {
+      row.requests += values.requests; row.success_count += values.success_count; row.errors += values.errors;
+      row.input_tokens += values.input_tokens; row.output_tokens += values.output_tokens;
+      row.cache_write_tokens += values.cache_write_tokens; row.cache_read_tokens += values.cache_read_tokens;
+      row.total_tokens += values.total_tokens; row.cost += values.cost;
+    };
+    const model = models.get(modelName) ?? emptyAdminStatsRow(modelName); add(model); models.set(modelName, model);
+    const endpoint = endpoints.get(endpointName) ?? { ...emptyAdminStatsRow(endpointName), models: [] }; add(endpoint); endpoints.set(endpointName, endpoint);
+    const byModel = endpointModels.get(endpointName) ?? new Map<string, AdminStatsRow>();
+    const endpointModel = byModel.get(modelName) ?? emptyAdminStatsRow(modelName); add(endpointModel); byModel.set(modelName, endpointModel); endpointModels.set(endpointName, byModel);
+  }
+
+  const sortRows = <T extends AdminStatsRow>(rows: T[]) => rows.sort((a, b) => b.total_tokens - a.total_tokens || a.name.localeCompare(b.name));
+  const endpointRows = sortRows([...endpoints.values()]).map((endpoint) => ({ ...endpoint, models: sortRows([...(endpointModels.get(endpoint.name)?.values() ?? [])]) }));
+  return { models: sortRows([...models.values()]), endpoints: endpointRows };
+}
+
+
 function recordedCostMask(costs: any): number {
   if (!costs || typeof costs !== "object") return 0;
   return (Number.isFinite(costs.input) ? RECORDED_COST_BITS.input : 0)
@@ -332,6 +399,7 @@ export class LogManager {
   [key: string]: any;
   private readonly dbPath: string;
   private db: any;
+  private adminStatsCache: { expiresAt: number; value?: AdminStatsSnapshot; pending?: Promise<AdminStatsSnapshot> } | null = null;
 
   constructor(
     dbPath =
@@ -431,6 +499,7 @@ export class LogManager {
         CREATE INDEX IF NOT EXISTS idx_request_end_model_time ON request_logs(type, request_model, occurred_at DESC);
         CREATE INDEX IF NOT EXISTS idx_request_end_key_time ON request_logs(type, api_key_id, api_key_masked, occurred_at DESC);
         CREATE INDEX IF NOT EXISTS idx_request_end_status_time ON request_logs(type, status, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_request_end_endpoint_model ON request_logs(type, endpoint_name, request_model);
         CREATE INDEX IF NOT EXISTS idx_request_daily_rollups_day ON request_daily_rollups(day);
         CREATE INDEX IF NOT EXISTS idx_request_daily_rollups_key ON request_daily_rollups(api_key_id, api_key_masked, day);
         CREATE INDEX IF NOT EXISTS idx_request_daily_rollups_model ON request_daily_rollups(request_model, token_accounting_version, day);
@@ -979,7 +1048,50 @@ export class LogManager {
       if (projection) this.updateDailyRollup(projection);
       return Number(result.lastInsertRowid);
     });
-    return write();
+    const result = write();
+    if (logEntry.type === "request_end") this.invalidateAdminStatsCache();
+    return result;
+  }
+
+  private invalidateAdminStatsCache() {
+    this.adminStatsCache = null;
+  }
+
+  getAdminStats(): Promise<AdminStatsSnapshot> {
+    const now = Date.now();
+    if (this.adminStatsCache?.value && this.adminStatsCache.expiresAt > now) {
+      return Promise.resolve(this.adminStatsCache.value);
+    }
+    if (this.adminStatsCache?.pending) return this.adminStatsCache.pending;
+
+    const pending = Promise.resolve().then(() => {
+      const groups = this.db.prepare(`SELECT endpoint_name AS endpoint, request_model AS model,
+        token_accounting_version AS tokenAccountingVersion, recorded_cost_mask AS recordedCostMask,
+        COUNT(*) AS requests, SUM(status = 'success') AS successful, SUM(status = 'failed') AS failed,
+        SUM(CASE WHEN status = 'success' THEN input_tokens ELSE 0 END) AS inputTokens,
+        SUM(CASE WHEN status = 'success' THEN output_tokens ELSE 0 END) AS outputTokens,
+        SUM(CASE WHEN status = 'success' THEN cache_write_tokens ELSE 0 END) AS cacheWriteTokens,
+        SUM(CASE WHEN status = 'success' THEN cache_read_tokens ELSE 0 END) AS cacheReadTokens,
+        SUM(CASE WHEN status = 'success' THEN input_tokens ELSE 0 END) AS successInputTokens,
+        SUM(CASE WHEN status = 'success' THEN output_tokens ELSE 0 END) AS successOutputTokens,
+        SUM(CASE WHEN status = 'success' THEN cache_write_tokens ELSE 0 END) AS successCacheWriteTokens,
+        SUM(CASE WHEN status = 'success' THEN cache_read_tokens ELSE 0 END) AS successCacheReadTokens,
+        SUM(CASE WHEN status = 'success' THEN recorded_cost_input ELSE 0 END) AS recordedCostInput,
+        SUM(CASE WHEN status = 'success' THEN recorded_cost_output ELSE 0 END) AS recordedCostOutput,
+        SUM(CASE WHEN status = 'success' THEN recorded_cost_cache_write ELSE 0 END) AS recordedCostCacheWrite,
+        SUM(CASE WHEN status = 'success' THEN recorded_cost_cache_read ELSE 0 END) AS recordedCostCacheRead,
+        SUM(CASE WHEN status = 'success' THEN recorded_cost_total ELSE 0 END) AS recordedCostTotal
+        FROM request_logs WHERE type = 'request_end' AND projection_version >= 2
+        GROUP BY endpoint_name, request_model, token_accounting_version, recorded_cost_mask`).all();
+      const value = foldAdminStats(groups);
+      this.adminStatsCache = { value, expiresAt: Date.now() + ADMIN_STATS_CACHE_TTL_MS };
+      return value;
+    }).catch((error) => {
+      this.adminStatsCache = null;
+      throw error;
+    });
+    this.adminStatsCache = { expiresAt: 0, pending };
+    return pending;
   }
 
   writeErrorLog(logEntry: any) {
@@ -1053,12 +1165,6 @@ export class LogManager {
 
     const rows = this.db.prepare(query).all(...params);
     return rows.map((row: { data: string }) => JSON.parse(row.data));
-  }
-
-  async getModelUsageRows(): Promise<Array<{ data: string }>> {
-    return this.db.prepare(
-      "SELECT data FROM request_logs WHERE type = 'request_end'",
-    ).all();
   }
 
   getRequestTotals() {
@@ -1225,7 +1331,9 @@ export class LogManager {
       this.rebuildRequestRollups();
       return { requestLogs, errorLogs };
     });
-    return manage();
+    const result = manage();
+    this.invalidateAdminStatsCache();
+    return result;
   }
 
   renameModel(oldName: string, newName: string) {
@@ -1277,7 +1385,9 @@ export class LogManager {
       };
     });
 
-    return rename();
+    const result = rename();
+    this.invalidateAdminStatsCache();
+    return result;
   }
 
   buildErrorWhere(filters: any = {}) {
@@ -1390,6 +1500,7 @@ export class LogManager {
 
 class PostgresLogManager {
   private database: DatabaseFacade | null = null;
+  private adminStatsCache: { expiresAt: number; value?: AdminStatsSnapshot; pending?: Promise<AdminStatsSnapshot> } | null = null;
 
   private get db(): DatabaseFacade {
     if (!this.database) throw new Error("Log manager is not initialized");
@@ -1458,6 +1569,7 @@ class PostgresLogManager {
       CREATE INDEX IF NOT EXISTS idx_request_end_model_time ON request_logs(type, request_model, occurred_at DESC);
       CREATE INDEX IF NOT EXISTS idx_request_end_key_time ON request_logs(type, api_key_id, api_key_masked, occurred_at DESC);
       CREATE INDEX IF NOT EXISTS idx_request_end_status_time ON request_logs(type, status, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_request_end_endpoint_model ON request_logs(type, endpoint_name, request_model);
       CREATE INDEX IF NOT EXISTS idx_error_logs_timestamp ON error_logs(timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_error_logs_model ON error_logs(model);
       CREATE INDEX IF NOT EXISTS idx_error_logs_endpoint_name ON error_logs(endpoint_name);
@@ -1494,7 +1606,7 @@ class PostgresLogManager {
       output_tokens: null, cache_write_tokens: null, cache_read_tokens: null, token_accounting_version: null,
       duration: null, endpoint_key: null, endpoint_name: null, recorded_cost_input: null, recorded_cost_output: null,
       recorded_cost_cache_write: null, recorded_cost_cache_read: null, recorded_cost_total: null, recorded_cost_mask: 0 };
-    return this.db.transaction(async (tx) => {
+    const id = await this.db.transaction(async (tx) => {
       const row = await tx.get<{ id: number }>(`INSERT INTO request_logs (
         timestamp,type,model,data,projection_version,occurred_at,request_id,request_model,status,api_key_id,key_name,
         api_key_masked,legacy_key,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,token_accounting_version,
@@ -1509,6 +1621,45 @@ class PostgresLogManager {
       ]);
       return Number(row?.id);
     });
+    if (logEntry.type === "request_end") this.invalidateAdminStatsCache();
+    return id;
+  }
+
+  private invalidateAdminStatsCache() {
+    this.adminStatsCache = null;
+  }
+
+  getAdminStats(): Promise<AdminStatsSnapshot> {
+    const now = Date.now();
+    if (this.adminStatsCache?.value && this.adminStatsCache.expiresAt > now) return Promise.resolve(this.adminStatsCache.value);
+    if (this.adminStatsCache?.pending) return this.adminStatsCache.pending;
+    const pending = this.db.all(`SELECT endpoint_name AS endpoint, request_model AS model,
+      token_accounting_version AS "tokenAccountingVersion", recorded_cost_mask AS "recordedCostMask",
+      COUNT(*)::int AS requests,
+      SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END)::int AS successful,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)::int AS failed,
+      SUM(CASE WHEN status = 'success' THEN input_tokens ELSE 0 END) AS "inputTokens",
+      SUM(CASE WHEN status = 'success' THEN output_tokens ELSE 0 END) AS "outputTokens",
+      SUM(CASE WHEN status = 'success' THEN cache_write_tokens ELSE 0 END) AS "cacheWriteTokens",
+      SUM(CASE WHEN status = 'success' THEN cache_read_tokens ELSE 0 END) AS "cacheReadTokens",
+      SUM(CASE WHEN status = 'success' THEN input_tokens ELSE 0 END) AS "successInputTokens",
+      SUM(CASE WHEN status = 'success' THEN output_tokens ELSE 0 END) AS "successOutputTokens",
+      SUM(CASE WHEN status = 'success' THEN cache_write_tokens ELSE 0 END) AS "successCacheWriteTokens",
+      SUM(CASE WHEN status = 'success' THEN cache_read_tokens ELSE 0 END) AS "successCacheReadTokens",
+      SUM(CASE WHEN status = 'success' THEN recorded_cost_input ELSE 0 END) AS "recordedCostInput",
+      SUM(CASE WHEN status = 'success' THEN recorded_cost_output ELSE 0 END) AS "recordedCostOutput",
+      SUM(CASE WHEN status = 'success' THEN recorded_cost_cache_write ELSE 0 END) AS "recordedCostCacheWrite",
+      SUM(CASE WHEN status = 'success' THEN recorded_cost_cache_read ELSE 0 END) AS "recordedCostCacheRead",
+      SUM(CASE WHEN status = 'success' THEN recorded_cost_total ELSE 0 END) AS "recordedCostTotal"
+      FROM request_logs WHERE type = 'request_end' AND projection_version >= 2
+      GROUP BY endpoint_name, request_model, token_accounting_version, recorded_cost_mask`)
+      .then((groups) => {
+        const value = foldAdminStats(groups);
+        this.adminStatsCache = { value, expiresAt: Date.now() + ADMIN_STATS_CACHE_TTL_MS };
+        return value;
+      }).catch((error) => { this.adminStatsCache = null; throw error; });
+    this.adminStatsCache = { expiresAt: 0, pending };
+    return pending;
   }
 
   async writeErrorLog(logEntry: any) {
@@ -1551,13 +1702,12 @@ class PostgresLogManager {
     const rows = await this.db.all(`SELECT data FROM request_logs WHERE type = ?${model ? " AND model = ?" : ""} ORDER BY id DESC LIMIT ? OFFSET ?`, model ? ["request_end", model, limit, offset] : ["request_end", limit, offset]);
     return rows.map((r: any) => parseJson(r.data));
   }
-  async getModelUsageRows(): Promise<Array<{ data: string }>> { return this.db.all("SELECT data FROM request_logs WHERE type = 'request_end'") as any; }
   async getModelUsageNames() {
     const rows = await this.db.all<{ model: string }>("SELECT DISTINCT data->>'model' AS model FROM request_logs WHERE type = 'request_end' AND data->>'model' IS NOT NULL AND data->>'model' != '' ORDER BY model");
     return rows.map((row) => row.model);
   }
   async manageModelUsage(action: "rename" | "conjoin" | "delete", source: string, target?: string) {
-    return this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
       const selected = await tx.all<{ id: number; request_id: string | null }>("SELECT id, request_id FROM request_logs WHERE type = 'request_end' AND data->>'model' = ?", [source]);
       const requestIds = [...new Set(selected.map((row) => row.request_id).filter((id): id is string => typeof id === "string" && id.length > 0))];
       if (action === "delete") {
@@ -1615,6 +1765,8 @@ class PostgresLogManager {
         : 0;
       return { requestLogs, errorLogs };
     });
+    this.invalidateAdminStatsCache();
+    return result;
   }
   async getDashboardRequestLogs() { return (await this.requestRows()).map(normalizeRequestRow); }
   async getRequestHistory(filters: any = {}) { const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 50); const rows = await this.requestRows(filters, limit + 1); const visible = rows.slice(0, limit).map(normalizeRequestRow); return { requests: visible, hasMore: rows.length > limit, nextCursor: rows.length > limit && visible.length ? visible.at(-1)?.id : null }; }
@@ -1691,7 +1843,7 @@ class PostgresLogManager {
   async getLatestErrorForRequestId(requestId: string | null | undefined) { if (!requestId) return null; const row: any = await this.db.get("SELECT id,timestamp,status_code,error_type,error_code,error_message FROM error_logs WHERE request_id = ? ORDER BY id DESC LIMIT 1", [requestId]); return row ? { id: row.id, timestamp: row.timestamp, statusCode: row.status_code, errorType: row.error_type, errorCode: row.error_code, errorMessage: row.error_message } : null; }
   async clearErrorLogs() { return (await this.db.run("DELETE FROM error_logs")).changes; }
   async readErrorLogs(limit = 50) { return this.getErrorLogs({ limit }); }
-  async renameModel(oldName: string, newName: string) { return this.db.transaction(async tx => { const requestLogs = await tx.run("UPDATE request_logs SET model = ?, request_model = CASE WHEN request_model = ? THEN ? ELSE request_model END, data = jsonb_set(jsonb_set(jsonb_set(jsonb_set(data, '{model}', CASE WHEN data->>'model' = ? THEN to_jsonb(?::text) ELSE data->'model' END), '{requested_model}', CASE WHEN data->>'requested_model' = ? THEN to_jsonb(?::text) ELSE data->'requested_model' END), '{auto_model}', CASE WHEN data->>'auto_model' = ? THEN to_jsonb(?::text) ELSE data->'auto_model' END), '{target_model}', CASE WHEN data->>'target_model' = ? THEN to_jsonb(?::text) ELSE data->'target_model' END) WHERE model = ? OR request_model = ? OR data->>'model' = ? OR data->>'requested_model' = ? OR data->>'auto_model' = ? OR data->>'target_model' = ?", [newName, oldName, newName, oldName, newName, oldName, newName, oldName, newName, oldName, newName, oldName, oldName, oldName, oldName, oldName, oldName]); const errorLogs = await tx.run("UPDATE error_logs SET model = CASE WHEN model = ? THEN ? ELSE model END, auto_model = CASE WHEN auto_model = ? THEN ? ELSE auto_model END, target_model = CASE WHEN target_model = ? THEN ? ELSE target_model END WHERE model = ? OR auto_model = ? OR target_model = ?", [oldName, newName, oldName, newName, oldName, newName, oldName, oldName, oldName]); return { requestLogs: requestLogs.changes, requestData: requestLogs.changes, rollups: 0, errorLogs: errorLogs.changes }; }); }
+  async renameModel(oldName: string, newName: string) { const result = await this.db.transaction(async tx => { const requestLogs = await tx.run("UPDATE request_logs SET model = ?, request_model = CASE WHEN request_model = ? THEN ? ELSE request_model END, data = jsonb_set(jsonb_set(jsonb_set(jsonb_set(data, '{model}', CASE WHEN data->>'model' = ? THEN to_jsonb(?::text) ELSE data->'model' END), '{requested_model}', CASE WHEN data->>'requested_model' = ? THEN to_jsonb(?::text) ELSE data->'requested_model' END), '{auto_model}', CASE WHEN data->>'auto_model' = ? THEN to_jsonb(?::text) ELSE data->'auto_model' END), '{target_model}', CASE WHEN data->>'target_model' = ? THEN to_jsonb(?::text) ELSE data->'target_model' END) WHERE model = ? OR request_model = ? OR data->>'model' = ? OR data->>'requested_model' = ? OR data->>'auto_model' = ? OR data->>'target_model' = ?", [newName, oldName, newName, oldName, newName, oldName, newName, oldName, newName, oldName, newName, oldName, oldName, oldName, oldName, oldName, oldName]); const errorLogs = await tx.run("UPDATE error_logs SET model = CASE WHEN model = ? THEN ? ELSE model END, auto_model = CASE WHEN auto_model = ? THEN ? ELSE auto_model END, target_model = CASE WHEN target_model = ? THEN ? ELSE target_model END WHERE model = ? OR auto_model = ? OR target_model = ?", [oldName, newName, oldName, newName, oldName, newName, oldName, oldName, oldName]); return { requestLogs: requestLogs.changes, requestData: requestLogs.changes, rollups: 0, errorLogs: errorLogs.changes }; }); this.invalidateAdminStatsCache(); return result; }
   async close() {
     const database = this.database;
     this.database = null;

@@ -16,14 +16,15 @@
 
   const navItems = [
     { href: "/admin/dashboard", icon: "fa-brands fa-quinscape", label: "Dashboard" },
-    { href: "/admin/model-usage", icon: "fa-solid fa-chart-line", label: "Model Usage" },
-    { href: "/admin/users", icon: "fa-solid fa-users", label: "Users" },
     { href: "/admin/keys", icon: "fa-solid fa-key", label: "API Keys" },
     { href: "/admin/endpoints", icon: "fa-solid fa-hexagon-nodes", label: "Endpoints" },
     { href: "/admin/models", icon: "fa-solid fa-comment-nodes", label: "Models" },
-    { href: "/admin/console", icon: "fa-solid fa-terminal", label: "Console" },
+    { href: "/admin/users", icon: "fa-solid fa-chart-column", label: "API Key Stats" },
+    { href: "/admin/endpoint-stats", icon: "fa-solid fa-diagram-project", label: "Endpoint Stats" },
+    { href: "/admin/model-stats", icon: "fa-solid fa-chart-line", label: "Model Stats" },
     { href: "/admin/logs", icon: "fa-solid fa-clock-rotate-left", label: "Logs" },
     { href: "/admin/errors", icon: "fa-solid fa-triangle-exclamation", label: "Errors" },
+    { href: "/admin/console", icon: "fa-solid fa-terminal", label: "Console" },
     { href: "/admin/settings", icon: "fa-solid fa-sliders", label: "Settings" },
   ];
 </script>
@@ -57,7 +58,7 @@
   </button>
 </aside>
 
-<main class="main-content" class:wide-content={activePath === "/admin/logs"} id="main">
+<main class="main-content" class:wide-content={activePath === "/admin/logs" || activePath === "/admin/endpoint-stats"} id="main">
   <header class="header">
     <div>
       <p class="header-eyebrow">{eyebrow}</p>

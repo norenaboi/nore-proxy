@@ -2017,21 +2017,18 @@ router.get("/api/users/:keyId", verifySession, async (req: any, res: any) => {
   }
 });
 
-/*
-    GET for model usage statistics from database
-*/
-
-function modelUsageSourceName(value: unknown) {
+/* Historical model and endpoint stats share one cached database snapshot. */
+function modelStatsSourceName(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
-function modelUsageTargetName(value: unknown) {
+function modelStatsTargetName(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-async function manageModelUsage(req: any, res: any, action: "rename" | "conjoin" | "delete") {
-  const source = modelUsageSourceName(req.body?.source);
-  const target = action === "delete" ? undefined : modelUsageTargetName(req.body?.target);
+async function manageModelStats(req: any, res: any, action: "rename" | "conjoin" | "delete") {
+  const source = modelStatsSourceName(req.body?.source);
+  const target = action === "delete" ? undefined : modelStatsTargetName(req.body?.target);
   if (!source.trim() || (action !== "delete" && !target)) {
     return res.status(400).json({ error: action === "delete" ? "Source model name required" : "Source and target model names required" });
   }
@@ -2039,127 +2036,64 @@ async function manageModelUsage(req: any, res: any, action: "rename" | "conjoin"
 
   try {
     const names = await logManager.getModelUsageNames();
-    if (!names.includes(source)) return res.status(404).json({ error: "Source model usage not found" });
-    if (action === "rename" && names.includes(target)) {
-      return res.status(409).json({ error: "Target model usage already exists" });
-    }
-    if (action === "conjoin" && !names.includes(target)) {
-      return res.status(404).json({ error: "Target model usage not found" });
-    }
+    if (!names.includes(source)) return res.status(404).json({ error: "Source model stats not found" });
+    if (action === "rename" && names.includes(target)) return res.status(409).json({ error: "Target model stats already exists" });
+    if (action === "conjoin" && !names.includes(target)) return res.status(404).json({ error: "Target model stats not found" });
     const counts = await logManager.manageModelUsage(action, source, target);
     return res.json({ success: true, source, ...(target ? { target } : {}), ...counts });
   } catch (error: any) {
-    console.error(`Error ${action}ing model usage:`, error);
+    console.error(`Error ${action}ing model stats:`, error);
     return res.status(500).json({ error: "Internal server error" });
   }
 }
 
-router.post("/api/model-usage/rename", verifySession, (req: any, res: any) => manageModelUsage(req, res, "rename"));
-router.post("/api/model-usage/conjoin", verifySession, (req: any, res: any) => manageModelUsage(req, res, "conjoin"));
-router.delete("/api/model-usage", verifySession, (req: any, res: any) => manageModelUsage(req, res, "delete"));
+const modelStatsMutationPaths = ["/api/model-stats", "/api/model-usage"];
+for (const basePath of modelStatsMutationPaths) {
+  router.post(`${basePath}/rename`, verifySession, (req: any, res: any) => manageModelStats(req, res, "rename"));
+  router.post(`${basePath}/conjoin`, verifySession, (req: any, res: any) => manageModelStats(req, res, "conjoin"));
+  router.delete(basePath, verifySession, (req: any, res: any) => manageModelStats(req, res, "delete"));
+}
 
-// Get model usage statistics from database
-router.get("/api/model-usage", verifySession, async (req: any, res: any) => {
+function statsTotals(rows: any[], totalModels: number) {
+  return rows.reduce((acc, row) => ({
+    total_models: totalModels,
+    total_requests: acc.total_requests + row.requests,
+    total_success: acc.total_success + row.success_count,
+    total_errors: acc.total_errors + row.errors,
+    total_input_tokens: acc.total_input_tokens + row.input_tokens,
+    total_output_tokens: acc.total_output_tokens + row.output_tokens,
+    total_cache_write_tokens: acc.total_cache_write_tokens + row.cache_write_tokens,
+    total_cache_read_tokens: acc.total_cache_read_tokens + row.cache_read_tokens,
+    total_tokens: acc.total_tokens + row.total_tokens,
+    total_cost: acc.total_cost + row.cost,
+  }), { total_models: totalModels, total_requests: 0, total_success: 0, total_errors: 0, total_input_tokens: 0, total_output_tokens: 0, total_cache_write_tokens: 0, total_cache_read_tokens: 0, total_tokens: 0, total_cost: 0 });
+}
+
+async function getAdminStats(_req: any, res: any) {
   try {
-    const rows = await logManager.getModelUsageRows();
-    const modelsByName = new Map();
-
-    for (const row of rows) {
-      let log: any;
-      try {
-        log = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
-      } catch {
-        continue;
-      }
-      if (!log || typeof log !== "object" || Array.isArray(log) || typeof log.model !== "string" || !log.model) continue;
-
-      const model = modelsByName.get(log.model) || {
-        model: log.model,
-        requests: 0,
-        success_count: 0,
-        errors: 0,
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_write_tokens: 0,
-        cache_read_tokens: 0,
-        cost: 0,
-      };
-
-      model.requests += 1;
-      if (log.status === "success") {
-        const inputTokens = log.input_tokens || 0;
-        const outputTokens = log.output_tokens || 0;
-        const cacheWriteTokens = log.cache_write_tokens || 0;
-        const cacheReadTokens = log.cache_read_tokens || 0;
-
-        model.success_count += 1;
-        model.input_tokens += inputTokens;
-        model.output_tokens += outputTokens;
-        model.cache_write_tokens += cacheWriteTokens;
-        model.cache_read_tokens += cacheReadTokens;
-        model.cost += calculateCost(
-          log.model,
-          inputTokens,
-          outputTokens,
-          cacheWriteTokens,
-          cacheReadTokens,
-          log.token_accounting_version ?? null,
-        ).totalCost;
-      } else if (log.status === "failed") {
-        model.errors += 1;
-      }
-
-      modelsByName.set(log.model, model);
-    }
-
-    const models = Array.from(modelsByName.values())
-      .map((model: any) => ({
-        ...model,
-        total_tokens:
-          model.input_tokens +
-          model.output_tokens +
-          model.cache_write_tokens +
-          model.cache_read_tokens,
-      }))
-      .sort((a: any, b: any) => b.total_tokens - a.total_tokens);
-
-    // Calculate totals
-    const totals = models.reduce(
-      (acc: any, model: any) => ({
-        total_models: acc.total_models + 1,
-        total_requests: acc.total_requests + model.requests,
-        total_success: acc.total_success + model.success_count,
-        total_errors: acc.total_errors + model.errors,
-        total_input_tokens: acc.total_input_tokens + model.input_tokens,
-        total_output_tokens: acc.total_output_tokens + model.output_tokens,
-        total_cache_write_tokens:
-          acc.total_cache_write_tokens + model.cache_write_tokens,
-        total_cache_read_tokens:
-          acc.total_cache_read_tokens + model.cache_read_tokens,
-        total_tokens: acc.total_tokens + model.total_tokens,
-      }),
-      {
-        total_models: 0,
-        total_requests: 0,
-        total_success: 0,
-        total_errors: 0,
-        total_input_tokens: 0,
-        total_output_tokens: 0,
-        total_cache_write_tokens: 0,
-        total_cache_read_tokens: 0,
-        total_tokens: 0,
-      },
-    );
-
-    res.json({
-      ...totals,
-      models,
-    });
+    const snapshot = await logManager.getAdminStats();
+    const models = snapshot.models.map(({ name, ...model }: any) => ({ model: name, ...model }));
+    return res.json({ ...statsTotals(snapshot.models, snapshot.models.length), models });
   } catch (error: any) {
-    console.error("Error loading model usage:", error);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("Error loading model stats:", error);
+    return res.status(500).json({ error: "Internal server error" });
   }
-});
+}
+
+async function getEndpointStats(_req: any, res: any) {
+  try {
+    const snapshot = await logManager.getAdminStats();
+    const modelNames = new Set(snapshot.endpoints.flatMap((endpoint: any) => endpoint.models.map((model: any) => model.name)));
+    return res.json({ ...statsTotals(snapshot.endpoints, snapshot.endpoints.length), total_models: modelNames.size, endpoints: snapshot.endpoints });
+  } catch (error: any) {
+    console.error("Error loading endpoint stats:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+router.get("/api/model-stats", verifySession, getAdminStats);
+router.get("/api/model-usage", verifySession, getAdminStats);
+router.get("/api/endpoint-stats", verifySession, getEndpointStats);
 
 /**
  * Validate generation defaults payload.

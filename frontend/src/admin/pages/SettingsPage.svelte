@@ -178,6 +178,7 @@
 
 <style>
   .settings-stack, .settings-skeleton { display: flex; flex-direction: column; gap: 18px; }
+  .settings-stack { padding-bottom: 104px; }
   .settings-card { overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); box-shadow: none; }
   .card-header { display: flex; align-items: center; gap: 12px; padding: 20px 24px; border-bottom: 1px solid var(--border-color); }
   .card-header i { color: var(--primary-dark); font-size: 18px; }
@@ -195,7 +196,7 @@
   .number-input { width: 100px; padding: 9px 12px; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); text-align: center; transition: opacity .2s ease; }
   .number-input:disabled { opacity: .4; cursor: not-allowed; }
   .toggle-control { gap: 12px; }
-  .save-row { display: flex; justify-content: flex-end; padding: 6px 0; }
+  .save-row { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); z-index: 120; display: flex; justify-content: flex-end; padding: 10px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--card-bg); box-shadow: 0 10px 28px rgba(0,0,0,.16); }
   .skeleton-card { pointer-events: none; }
   .skeleton-icon { width: 18px; height: 18px; }
   .skeleton-title { width: 96px; height: 20px; }
@@ -205,5 +206,5 @@
   .skeleton-label { width: min(210px, 60%); height: 16px; }
   .skeleton-description { width: min(480px, 90%); height: 12px; }
   .skeleton-control { width: 100px; height: 42px; flex-shrink: 0; }
-  @media (max-width: 768px) { .setting-row { flex-direction: column; gap: 12px; } .setting-control, .select-control { width: 100%; } .toggle-control { justify-content: flex-end; } .card-header, .card-body { padding-left: 18px; padding-right: 18px; } .card-subtitle { font-size: 11px; } }
+  @media (max-width: 768px) { .settings-stack { padding-bottom: 116px; } .setting-row { flex-direction: column; gap: 12px; } .setting-control, .select-control { width: 100%; } .toggle-control { justify-content: flex-end; } .card-header, .card-body { padding-left: 18px; padding-right: 18px; } .card-subtitle { font-size: 11px; } .save-row { right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); } }
 </style>

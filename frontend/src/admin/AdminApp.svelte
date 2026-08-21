@@ -9,7 +9,8 @@
 
   const pages: Record<string, () => Promise<{ default: unknown }>> = {
     "/admin/dashboard": () => import("./pages/DashboardPage.svelte"),
-    "/admin/model-usage": () => import("./pages/ModelUsagePage.svelte"),
+    "/admin/model-stats": () => import("./pages/ModelStatsPage.svelte"),
+    "/admin/endpoint-stats": () => import("./pages/EndpointStatsPage.svelte"),
     "/admin/users": () => import("./pages/UsersPage.svelte"),
     "/admin/keys": () => import("./pages/KeysPage.svelte"),
     "/admin/endpoints": () => import("./pages/EndpointsPage.svelte"),
@@ -22,8 +23,9 @@
 
   const titles: Record<string, string> = {
     "/admin/dashboard": "API Usage Dashboard",
-    "/admin/model-usage": "Model Usage",
-    "/admin/users": "Users",
+    "/admin/model-stats": "Model Stats",
+    "/admin/endpoint-stats": "Endpoint Stats",
+    "/admin/users": "API Key Stats",
     "/admin/keys": "API Keys",
     "/admin/endpoints": "Endpoints",
     "/admin/models": "Models",

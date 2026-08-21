@@ -27,6 +27,10 @@ router.get("/admin/login", async (req: Request, res: Response) => {
   return renderFrontend(req, res, "login.html");
 });
 
+router.get("/admin/model-usage", verifySessionOrRedirect, (_req, res) => {
+  res.redirect("/admin/model-stats");
+});
+
 const adminPaths = [
   "/admin/dashboard",
   "/admin/keys",
@@ -34,7 +38,8 @@ const adminPaths = [
   "/admin/endpoints",
   "/admin/settings",
   "/admin/users",
-  "/admin/model-usage",
+  "/admin/model-stats",
+  "/admin/endpoint-stats",
   "/admin/console",
   "/admin/logs",
   "/admin/errors",
