@@ -57,7 +57,7 @@
   </button>
 </aside>
 
-<main class="main-content" id="main">
+<main class="main-content" class:wide-content={activePath === "/admin/logs"} id="main">
   <header class="header">
     <div>
       <p class="header-eyebrow">{eyebrow}</p>
@@ -77,3 +77,9 @@
     </div>
   {/each}
 </div>
+
+<style>
+  .wide-content { width: min(1360px, calc(100% - 64px)); }
+  @media (max-width: 1024px) { .wide-content { width: 100%; } }
+  @media (max-width: 640px) { .wide-content { padding-inline: 16px; } }
+</style>
