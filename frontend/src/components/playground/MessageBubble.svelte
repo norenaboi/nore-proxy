@@ -28,9 +28,19 @@
 
   const isUser = $derived(message.role === "user");
   const renderedContent = $derived(isUser ? "" : renderMarkdown(message.content));
+  const attachments = $derived(message.attachments ?? []);
+  const images = $derived(message.images ?? []);
+  // A turn carrying files or generated images is not editable: its text is only
+  // half the payload, so editing it would silently change what was sent.
+  const canEdit = $derived(attachments.length === 0 && images.length === 0);
   const timestamp = $derived(
     new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
   );
+
+  function extensionFor(mimeType: string): string {
+    const subtype = mimeType.split("/")[1] ?? "png";
+    return subtype === "jpeg" ? "jpg" : subtype.replace(/[^a-z0-9]/gi, "") || "png";
+  }
 
   function startEditing(): void {
     draft = message.content;
@@ -73,6 +83,24 @@
     </details>
   {/if}
 
+  {#each attachments as attachment (attachment.id)}
+    {#if attachment.type === "image"}
+      <figure class="bubble attachment-image">
+        {#if attachment.value}
+          <img src={attachment.value} alt={attachment.name} />
+        {:else}
+          <p class="missing">This image is no longer stored in this browser. Reattach it to send it again.</p>
+        {/if}
+        <figcaption>{attachment.name}</figcaption>
+      </figure>
+    {:else}
+      <div class="bubble attachment-file">
+        <span class="kind" aria-hidden="true">TXT</span>
+        <span class="file-name">{attachment.name}</span>
+      </div>
+    {/if}
+  {/each}
+
   {#if editing}
     <div class="bubble edit">
       <label class="visually-hidden" for={`edit-${message.id}`}>Edit message</label>
@@ -92,9 +120,22 @@
     {/if}
   {:else if busy}
     <p class="bubble pending">Waiting for the response…</p>
-  {:else}
+  {:else if attachments.length === 0 && images.length === 0}
     <p class="bubble pending">No content.</p>
   {/if}
+
+  {#each images as image (image.id)}
+    <figure class="bubble generated-image">
+      {#if image.dataUrl}
+        <img src={image.dataUrl} alt="Generated image" />
+        <figcaption>
+          <a href={image.dataUrl} download={`generated-image.${extensionFor(image.mimeType)}`}>Download</a>
+        </figcaption>
+      {:else}
+        <p class="missing">This generated image is no longer stored in this browser.</p>
+      {/if}
+    </figure>
+  {/each}
 
   {#if message.error}
     <p class="turn-error" role="alert">{message.error}</p>
@@ -102,15 +143,17 @@
 
   {#if !editing}
     <div class="actions">
-      <button
-        bind:this={editButton}
-        type="button"
-        disabled={streaming}
-        aria-label={`Edit ${message.role} message`}
-        onclick={startEditing}
-      >
-        Edit
-      </button>
+      {#if canEdit}
+        <button
+          bind:this={editButton}
+          type="button"
+          disabled={streaming}
+          aria-label={`Edit ${message.role} message`}
+          onclick={startEditing}
+        >
+          Edit
+        </button>
+      {/if}
       <button
         type="button"
         disabled={streaming}
@@ -217,6 +260,58 @@
   }
 
   .pending { color: var(--muted); font-style: italic; }
+
+  /* Attachment and generated-image bubbles are their own turn-level bubbles, so
+     they stay visually distinct from the text they were sent alongside. */
+  .attachment-image, .generated-image {
+    display: grid;
+    gap: 7px;
+    padding: 8px;
+    justify-items: start;
+  }
+
+  .attachment-image img, .generated-image img {
+    display: block;
+    max-width: 100%;
+    max-height: 320px;
+    border-radius: 9px;
+    object-fit: contain;
+  }
+
+  .attachment-image figcaption, .generated-image figcaption {
+    max-width: 100%;
+    overflow: hidden;
+    padding: 0 2px;
+    color: var(--muted);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .generated-image figcaption a { color: var(--accent-ink); font-weight: 600; }
+
+  .attachment-file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    font-size: 12.5px;
+  }
+
+  .kind {
+    flex: none;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+  }
+
+  .file-name { min-width: 0; overflow-wrap: anywhere; }
+
+  .missing { margin: 0; color: var(--muted); font-size: 12px; font-style: italic; }
 
   .markdown {
     overflow-wrap: anywhere;

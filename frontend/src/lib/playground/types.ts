@@ -1,9 +1,26 @@
 export type ChatRole = "system" | "user" | "assistant";
 
+export interface PlaygroundAttachment {
+  id: string;
+  type: "text" | "image";
+  name: string;
+  mimeType: string;
+  /** Text content for text files, or a data URL for images. */
+  value: string;
+}
+
+export interface PlaygroundImage {
+  id: string;
+  mimeType: string;
+  dataUrl: string;
+}
+
 export interface PlaygroundMessage {
   id: string;
   role: Exclude<ChatRole, "system">;
   content: string;
+  attachments?: PlaygroundAttachment[];
+  images?: PlaygroundImage[];
   /** Empty string when the turn produced no reasoning, so call sites never guard. */
   reasoning: string;
   createdAt: number;
@@ -39,7 +56,10 @@ export interface PlaygroundWorkspace {
 
 export interface ChatRequestMessage {
   role: ChatRole;
-  content: string;
+  content: string | Array<
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string } }
+  >;
 }
 
 export interface ChatRequestBody {

@@ -86,8 +86,79 @@ test("response adapters preserve text, reasoning, tools, and usage", () => {
   assert.equal(geminiChunk.finishReason, "stop");
 });
 
-test("stream adapters treat valid-JSON non-objects as empty events", () => {
-  // An upstream can emit `data: null` (or a bare scalar) as keepalive or
+test("image input and generated image output are normalized both ways", () => {
+  const dataUrl = "data:image/png;base64,AAAA";
+  const visionRequest = {
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what is this" },
+          { type: "image_url", image_url: { url: dataUrl } },
+        ],
+      },
+    ],
+  };
+
+  // Inbound: each provider gets the image in its own wire shape.
+  assert.deepEqual(gemini.transformRequest(visionRequest, "gemini-upstream").contents, [
+    {
+      role: "user",
+      parts: [{ text: "what is this" }, { inline_data: { mime_type: "image/png", data: "AAAA" } }],
+    },
+  ]);
+  assert.deepEqual(anthropic.transformRequest(visionRequest, "claude-upstream").messages[0].content[1], {
+    type: "image",
+    source: { type: "base64", media_type: "image/png", data: "AAAA" },
+  });
+  assert.deepEqual(responses.transformRequest(visionRequest, "responses-upstream").input[0].content[1], {
+    type: "input_image",
+    image_url: dataUrl,
+  });
+
+  // Outbound: a Gemini inline_data part becomes an OpenAI images entry.
+  const generated = gemini.parseResponseData({
+    candidates: [{
+      content: { parts: [{ text: "here" }, { inlineData: { mimeType: "image/png", data: "AAAA" } }] },
+      finishReason: "STOP",
+    }],
+  });
+  assert.equal(generated.content, "here");
+  assert.deepEqual(generated.response.choices[0].message.images, [
+    { type: "image_url", image_url: { url: dataUrl } },
+  ]);
+
+  const ctx = { requestId: "r", modelName: "model", streamId: "chatcmpl-r", streamCreated: 1 };
+  const chunk = gemini.buildStreamChunk(
+    { candidates: [{ content: { parts: [{ inline_data: { mime_type: "image/webp", data: "BBBB" } }] } }] },
+    ctx,
+  );
+  assert.deepEqual(chunk.choices[0].delta.images, [
+    { type: "image_url", image_url: { url: "data:image/webp;base64,BBBB" } },
+  ]);
+
+  // A non-image inline part must not be forwarded as an image.
+  assert.equal(
+    gemini.parseStreamChunk(
+      { candidates: [{ content: { parts: [{ inline_data: { mime_type: "audio/mp3", data: "CCCC" } }] } }] },
+      ctx,
+    ).images,
+    null,
+  );
+
+  // The OpenAI passthrough carries images and tolerates array content.
+  assert.deepEqual(
+    openai.parseStreamChunk({ choices: [{ delta: { images: [{ type: "image_url", image_url: { url: dataUrl } }] } }] }, ctx)
+      .images,
+    [{ type: "image_url", image_url: { url: dataUrl } }],
+  );
+  assert.equal(
+    openai.parseResponseData({ choices: [{ message: { content: [{ type: "text", text: "part" }] } }] }).content,
+    "part",
+  );
+});
+
+test("stream adapters treat valid-JSON non-objects as empty events", () => {  // An upstream can emit `data: null` (or a bare scalar) as keepalive or
   // framing noise. It parses successfully, so it reaches the adapters and must
   // yield no chunk rather than dereferencing a null.
   const ctx = { requestId: "r", modelName: "model", streamId: "chatcmpl-r", streamCreated: 1 };

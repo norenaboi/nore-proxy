@@ -77,6 +77,7 @@ export function parseStreamChunk(rawChunk: any, ctx: any) {
   return {
     deltaContent: delta.content || null,
     deltaReasoning,
+    images: Array.isArray(delta.images) ? delta.images : null,
     toolCalls: delta.tool_calls || null,
     finishReason: choice.finish_reason || null,
     usage: rawChunk.usage || null,
@@ -121,7 +122,12 @@ export function buildStreamChunk(rawChunk: any, ctx: any) {
  * and optional cache token fields.
  */
 export function parseResponseData(rawData: any) {
-  const content = rawData.choices?.[0]?.message?.content || "";
+  const rawContent = rawData.choices?.[0]?.message?.content;
+  // A multimodal upstream may answer with content parts rather than a string;
+  // the normalized `content` is the text, and the response passes through whole.
+  const content = Array.isArray(rawContent)
+    ? rawContent.map((part: any) => (typeof part === "string" ? part : part?.text || "")).join("")
+    : rawContent || "";
   const usage = rawData.usage || {};
 
   return {

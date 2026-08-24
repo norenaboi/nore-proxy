@@ -9,6 +9,8 @@
   import Transcript from "$frontend/components/playground/Transcript.svelte";
   import { requestPublicJson } from "$frontend/lib/api/public";
   import { normalizeModels, readModelCache, writeModelCache, type CatalogModel } from "$frontend/lib/models/catalog";
+  import { collectGarbage, readPayloads, writePayload } from "$frontend/lib/playground/attachmentStore";
+  import { AttachmentError, readAttachment } from "$frontend/lib/playground/attachments";
   import { createMessageId } from "$frontend/lib/playground/ids";
   import { buildChatRequest } from "$frontend/lib/playground/request";
   import {
@@ -18,15 +20,21 @@
     createWorkspace,
     readApiKey,
     readWorkspace,
+    referencedPayloadIds,
     writeApiKey,
     writeWorkspace,
   } from "$frontend/lib/playground/storage";
   import { ChatStreamError, streamChatCompletion } from "$frontend/lib/playground/stream";
-  import type { PlaygroundMessage, PlaygroundWorkspace } from "$frontend/lib/playground/types";
+  import type {
+    PlaygroundAttachment,
+    PlaygroundMessage,
+    PlaygroundWorkspace,
+  } from "$frontend/lib/playground/types";
 
   let apiKey = $state("");
   let workspace = $state<PlaygroundWorkspace>(createWorkspace());
   let draft = $state("");
+  let pendingAttachments = $state<PlaygroundAttachment[]>([]);
   let models = $state<CatalogModel[]>([]);
   let chatModelIds = $state<Set<string> | null>(null);
   let modelsLoading = $state(true);
@@ -44,6 +52,54 @@
   let persistTimer: ReturnType<typeof setTimeout> | undefined;
   let composer: { focusComposer: () => void } | undefined = $state();
   let settingsModal: { focusKeyInput: () => void } | undefined = $state();
+
+  // Image bytes are kept out of localStorage (quota), so the workspace persists
+  // only metadata and IndexedDB holds the data URLs keyed by attachment id. A
+  // remote image reference is persisted inline, so it needs no payload row.
+  function persistPayloads(message: PlaygroundMessage): void {
+    for (const attachment of message.attachments ?? []) {
+      if (attachment.type === "image" && attachment.value) void writePayload(attachment.id, attachment.value);
+    }
+    for (const image of message.images ?? []) {
+      if (image.dataUrl.startsWith("data:")) void writePayload(image.id, image.dataUrl);
+    }
+  }
+
+  /** Fills empty image/attachment values back in from IndexedDB after a reload. */
+  async function hydratePayloads(target: PlaygroundWorkspace): Promise<void> {
+    const wanted: string[] = [];
+    for (const conversation of target.conversations) {
+      for (const message of conversation.messages) {
+        for (const attachment of message.attachments ?? []) {
+          if (attachment.type === "image" && !attachment.value) wanted.push(attachment.id);
+        }
+        for (const image of message.images ?? []) {
+          if (!image.dataUrl) wanted.push(image.id);
+        }
+      }
+    }
+    if (wanted.length === 0) return;
+
+    const payloads = await readPayloads(wanted);
+    if (payloads.size === 0) return;
+    for (const conversation of target.conversations) {
+      for (const message of conversation.messages) {
+        for (const attachment of message.attachments ?? []) {
+          const found = payloads.get(attachment.id);
+          if (attachment.type === "image" && !attachment.value && found) attachment.value = found;
+        }
+        for (const image of message.images ?? []) {
+          const found = payloads.get(image.id);
+          if (!image.dataUrl && found) image.dataUrl = found;
+        }
+      }
+    }
+  }
+
+  /** Removes stored payloads no message references any more. */
+  function reconcilePayloads(): void {
+    void collectGarbage(referencedPayloadIds(workspace));
+  }
 
   // Image models cannot answer a chat request, but the cached catalog has no
   // type, so the filter only applies once the live response arrives.
@@ -108,6 +164,7 @@
     workspace.activeId = id;
     errorMessage = "";
     draft = "";
+    pendingAttachments = [];
     sidebarOpen = false;
     persist();
   }
@@ -119,6 +176,7 @@
     workspace.activeId = conversation.id;
     errorMessage = "";
     draft = "";
+    pendingAttachments = [];
     sidebarOpen = false;
     statusMessage = "Started a new chat.";
     persist();
@@ -150,6 +208,7 @@
     }
     statusMessage = "Chat deleted.";
     persist();
+    reconcilePayloads();
   }
 
   async function runTurn(): Promise<void> {
@@ -187,11 +246,21 @@
         onReasoning: (reasoning) => {
           conversation.messages[index].reasoning = reasoning;
         },
+        onImages: (images) => {
+          // Ids are assigned once per position so re-renders keep their keys and
+          // the payload written to IndexedDB stays addressable.
+          const existing = conversation.messages[index].images ?? [];
+          conversation.messages[index].images = images.map((image, position) => ({
+            id: existing[position]?.id ?? createMessageId(),
+            mimeType: image.mimeType,
+            dataUrl: image.dataUrl,
+          }));
+        },
       });
       statusMessage = "Response complete.";
     } catch (error) {
       const partial = conversation.messages[index];
-      const hasOutput = Boolean(partial?.content || partial?.reasoning);
+      const hasOutput = Boolean(partial?.content || partial?.reasoning || partial?.images?.length);
 
       if (error instanceof DOMException && error.name === "AbortError") {
         statusMessage = hasOutput ? "Stopped." : "Stopped before any output.";
@@ -223,6 +292,7 @@
     } finally {
       streaming = false;
       controller = null;
+      persistPayloads(conversation.messages[index]);
       touchActive();
       persist();
     }
@@ -247,20 +317,41 @@
 
   function send(): void {
     const content = draft.trim();
-    if (!content || streaming || !active) return;
+    const attachments = pendingAttachments;
+    if ((!content && attachments.length === 0) || streaming || !active) return;
     if (!readyToSend()) return;
 
     if (!active.modelId) active.modelId = activeModelId;
-    active.messages.push({
+    const message: PlaygroundMessage = {
       id: createMessageId(),
       role: "user",
       content,
       reasoning: "",
       createdAt: Date.now(),
-    });
+    };
+    if (attachments.length > 0) message.attachments = attachments;
+    active.messages.push(message);
+    persistPayloads(message);
     touchActive();
     draft = "";
+    pendingAttachments = [];
     void runTurn();
+  }
+
+  async function addAttachments(files: File[]): Promise<void> {
+    const added: PlaygroundAttachment[] = [];
+    for (const file of files) {
+      try {
+        added.push(await readAttachment(file));
+      } catch (error) {
+        errorMessage = error instanceof AttachmentError ? error.message : `Could not read ${file.name}.`;
+      }
+    }
+    if (added.length > 0) pendingAttachments = [...pendingAttachments, ...added];
+  }
+
+  function removeAttachment(id: string): void {
+    pendingAttachments = pendingAttachments.filter((attachment) => attachment.id !== id);
   }
 
   function stop(): void {
@@ -275,13 +366,34 @@
     statusMessage = "Message deleted.";
     touchActive();
     persist();
+    reconcilePayloads();
+  }
+
+  /**
+   * A resend replays stored history, so any image whose bytes the browser
+   * evicted would be sent as an empty part. Refuse instead and name the file.
+   */
+  function firstUnavailableImage(upTo: number): PlaygroundAttachment | null {
+    if (!active) return null;
+    for (let cursor = 0; cursor <= upTo; cursor += 1) {
+      for (const attachment of active.messages[cursor].attachments ?? []) {
+        if (attachment.type === "image" && !attachment.value) return attachment;
+      }
+    }
+    return null;
   }
 
   /** Everything after the given index is discarded before the resend. */
   function truncateAndRun(index: number): void {
     if (!active || !readyToSend()) return;
+    const missing = firstUnavailableImage(index);
+    if (missing) {
+      errorMessage = `Reattach ${missing.name || "the image"} before resending this message.`;
+      return;
+    }
     active.messages.splice(index + 1);
     persist();
+    reconcilePayloads();
     void runTurn();
   }
 
@@ -326,6 +438,11 @@
     hydrated = true;
 
     const controller = new AbortController();
+    // Image bytes live in IndexedDB, so a restored transcript renders its
+    // placeholders first and fills them in once the payloads are read back.
+    void hydratePayloads(workspace).then(() => {
+      if (!controller.signal.aborted) reconcilePayloads();
+    });
     const cached = readModelCache(localStorage);
     if (cached) {
       models = cached;
@@ -435,7 +552,16 @@
       onResend={resend}
     />
 
-    <Composer bind:this={composer} bind:value={draft} {streaming} onSend={send} onStop={stop} />
+    <Composer
+      bind:this={composer}
+      bind:value={draft}
+      attachments={pendingAttachments}
+      {streaming}
+      onSend={send}
+      onStop={stop}
+      onAttach={addAttachments}
+      onRemoveAttachment={removeAttachment}
+    />
   </section>
 </div>
 

@@ -12,6 +12,7 @@ import {
   defaultSettings,
   readApiKey,
   readWorkspace,
+  referencedPayloadIds,
   writeApiKey,
   writeWorkspace,
 } from "../frontend/src/lib/playground/storage.js";
@@ -56,13 +57,14 @@ function streamingBody(overrides = {}) {
 }
 
 function collectHandlers() {
-  const state = { content: "", reasoning: "" };
+  const state = { content: "", reasoning: "", images: [] };
   return {
     state,
     handlers: {
       onContentDelta: (delta) => { state.content += delta; },
       onContentReplace: (content) => { state.content = content; },
       onReasoning: (reasoning) => { state.reasoning = reasoning; },
+      onImages: (images) => { state.images = images; },
     },
   };
 }
@@ -139,6 +141,178 @@ test("api error extraction accepts every shape the proxy returns", () => {
   assert.equal(extractApiErrorMessage({ message: "nope" }, 500), "nope");
   assert.equal(extractApiErrorMessage(null, 502), "Request failed (502)");
   assert.equal(extractApiErrorMessage({ error: {} }, 503), "Request failed (503)");
+});
+
+test("attachments become OpenAI content parts and text files are inlined", () => {
+  const dataUrl = "data:image/png;base64,AAAA";
+  const messages = [
+    {
+      ...userMessage("look at this"),
+      attachments: [
+        { id: "f1", type: "text", name: "notes.md", mimeType: "text/markdown", value: "# Title" },
+        { id: "i1", type: "image", name: "shot.png", mimeType: "image/png", value: dataUrl },
+      ],
+    },
+  ];
+
+  const request = buildChatRequest(messages, { ...defaultSettings(), modelId: "gpt-5" });
+  assert.deepEqual(request.messages, [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "look at this" },
+        { type: "text", text: "\n\n[File: notes.md]\n```\n# Title\n```" },
+        { type: "image_url", image_url: { url: dataUrl } },
+      ],
+    },
+  ]);
+
+  // A lone text file needs no content parts, so it collapses back to a string.
+  const textOnly = buildChatRequest(
+    [
+      {
+        ...userMessage(""),
+        attachments: [{ id: "f1", type: "text", name: "a.txt", mimeType: "text/plain", value: "body" }],
+      },
+    ],
+    { ...defaultSettings(), modelId: "gpt-5" },
+  );
+  assert.equal(textOnly.messages[0].content, "\n\n[File: a.txt]\n```\nbody\n```");
+
+  // An image whose bytes were evicted must not become an empty image part.
+  const evicted = buildChatRequest(
+    [
+      {
+        ...userMessage("still here"),
+        attachments: [{ id: "i1", type: "image", name: "gone.png", mimeType: "image/png", value: "" }],
+      },
+    ],
+    { ...defaultSettings(), modelId: "gpt-5" },
+  );
+  assert.equal(evicted.messages[0].content, "still here");
+
+  // A turn whose only payload was an evicted image is dropped, not sent blank.
+  const evictedOnly = buildChatRequest(
+    [
+      {
+        ...userMessage(""),
+        attachments: [{ id: "i1", type: "image", name: "gone.png", mimeType: "image/png", value: "" }],
+      },
+      userMessage("and now this"),
+    ],
+    { ...defaultSettings(), modelId: "gpt-5" },
+  );
+  assert.deepEqual(evictedOnly.messages, [{ role: "user", content: "and now this" }]);
+
+  // Generated images are display-only and are never replayed upstream.
+  const withImages = buildChatRequest(
+    [{
+      id: "a",
+      role: "assistant",
+      content: "here",
+      reasoning: "",
+      createdAt: 1,
+      images: [{ id: "g1", mimeType: "image/png", dataUrl }],
+    }],
+    { ...defaultSettings(), modelId: "gpt-5" },
+  );
+  assert.deepEqual(withImages.messages, [{ role: "assistant", content: "here" }]);
+});
+
+test("an attachment-only turn is still sent and names the chat", () => {
+  const conversation = createConversation("gpt-5");
+  conversation.messages.push({
+    ...userMessage(""),
+    attachments: [
+      { id: "i1", type: "image", name: "diagram.png", mimeType: "image/png", value: "data:image/png;base64,AA" },
+    ],
+  });
+
+  assert.equal(conversationTitle(conversation), "diagram.png");
+  const request = buildChatRequest(conversation.messages, { ...defaultSettings(), modelId: "gpt-5" });
+  assert.equal(request.messages.length, 1);
+});
+
+test("persisted attachments keep metadata but drop binary payloads", () => {
+  const storage = new MemoryStorage();
+  const workspace = createWorkspace();
+  const dataUrl = "data:image/png;base64,AAAA";
+  workspace.conversations[0].messages.push(
+    {
+      ...userMessage("with files"),
+      attachments: [
+        { id: "i1", type: "image", name: "shot.png", mimeType: "image/png", value: dataUrl },
+        { id: "f1", type: "text", name: "a.txt", mimeType: "text/plain", value: "x".repeat(30_000) },
+      ],
+    },
+    {
+      id: "b",
+      role: "assistant",
+      content: "made one",
+      reasoning: "",
+      createdAt: 2,
+      images: [{ id: "g1", mimeType: "image/png", dataUrl }],
+    },
+  );
+
+  assert.equal(writeWorkspace(storage, workspace), "ok");
+  const restored = readWorkspace(storage);
+  const [user, assistant] = restored.conversations[0].messages;
+
+  // Image bytes live in IndexedDB; only the addressable metadata is persisted.
+  assert.deepEqual(user.attachments[0], {
+    id: "i1",
+    type: "image",
+    name: "shot.png",
+    mimeType: "image/png",
+    value: "",
+  });
+  assert.equal(assistant.images[0].dataUrl, "");
+  assert.equal(assistant.images[0].id, "g1");
+  // Text attachments survive, capped so one pasted file cannot fill the quota.
+  assert.equal(user.attachments[1].value.length, 20_000);
+
+  // The in-memory workspace is untouched by persistence.
+  assert.equal(workspace.conversations[0].messages[0].attachments[0].value, dataUrl);
+  assert.deepEqual(referencedPayloadIds(restored), ["i1", "g1"]);
+});
+
+test("unusable persisted attachments are dropped rather than trusted", () => {
+  const storage = new MemoryStorage();
+  storage.setItem(
+    "nore-proxy:playground:workspace:v1",
+    JSON.stringify({
+      version: 1,
+      workspace: {
+        activeId: "keep",
+        settings: { modelId: "gpt-5" },
+        conversations: [
+          {
+            id: "keep",
+            messages: [
+              {
+                id: "a",
+                role: "user",
+                content: "ok",
+                attachments: [
+                  { id: "good", type: "image", name: "a.png", mimeType: "image/png", value: "" },
+                  { id: "bad-type", type: "video", name: "v.mp4" },
+                  { type: "image", name: "no id" },
+                  "not an object",
+                ],
+                images: [{ id: "g", mimeType: "image/png", dataUrl: "" }, { mimeType: "image/png" }],
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+
+  const restored = readWorkspace(storage);
+  const message = restored.conversations[0].messages[0];
+  assert.deepEqual(message.attachments.map((attachment) => attachment.id), ["good"]);
+  assert.deepEqual(message.images.map((image) => image.id), ["g"]);
 });
 
 test("playground storage keeps the key and the workspace independent", () => {
@@ -386,6 +560,86 @@ test("a non-streaming request reads the whole completion at once", async () => {
     // Both transports contribute, so the two reasoning sources are joined.
     assert.equal(result.reasoning, "given\nquietly");
     assert.equal(result.finishReason, "stop");
+  } finally {
+    restore();
+  }
+});
+
+test("generated images are read from both transports", async () => {
+  const png = "data:image/png;base64,AAAA";
+
+  const streamed = stubFetch([
+    'data: {"choices":[{"delta":{"content":"here it is"}}]}\n\n',
+    `data: {"choices":[{"delta":{"images":[{"type":"image_url","image_url":{"url":"${png}"}}]}}]}\n\n`,
+    "data: [DONE]\n\n",
+  ]);
+  try {
+    const { state, handlers } = collectHandlers();
+    const result = await streamChatCompletion("sk-test", streamingBody(), new AbortController().signal, handlers);
+    assert.equal(result.content, "here it is");
+    assert.deepEqual(result.images, [{ mimeType: "image/png", dataUrl: png }]);
+    assert.deepEqual(state.images, [{ mimeType: "image/png", dataUrl: png }]);
+  } finally {
+    streamed();
+  }
+
+  // Raw base64 with a separate media type is the other documented shape.
+  const whole = stubFetch(
+    [
+      JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: "done", images: [{ b64_json: "BBBB", mime_type: "image/webp" }] } }],
+      }),
+    ],
+    { contentType: "application/json" },
+  );
+  try {
+    const { state, handlers } = collectHandlers();
+    const result = await streamChatCompletion(
+      "sk-test",
+      streamingBody({ stream: false }),
+      new AbortController().signal,
+      handlers,
+    );
+    assert.deepEqual(result.images, [{ mimeType: "image/webp", dataUrl: "data:image/webp;base64,BBBB" }]);
+    assert.deepEqual(state.images, result.images);
+  } finally {
+    whole();
+  }
+});
+
+test("image entries that are not usable references are ignored", async () => {
+  const restore = stubFetch(
+    [
+      JSON.stringify({
+        choices: [{
+          message: {
+            content: "text only",
+            images: [
+              { image_url: { url: "https://example.com/remote.png" } },
+              { image_url: { url: "blob:whatever" } },
+              { image_url: {} },
+              null,
+              "not-a-data-url",
+              {},
+            ],
+          },
+        }],
+      }),
+    ],
+    { contentType: "application/json" },
+  );
+  try {
+    const { state, handlers } = collectHandlers();
+    const result = await streamChatCompletion(
+      "sk-test",
+      streamingBody({ stream: false }),
+      new AbortController().signal,
+      handlers,
+    );
+    // An https reference renders; blob:/opaque/garbage entries are dropped.
+    assert.deepEqual(result.images, [{ mimeType: "", dataUrl: "https://example.com/remote.png" }]);
+    assert.deepEqual(state.images, result.images);
+    assert.equal(result.content, "text only");
   } finally {
     restore();
   }

@@ -8,14 +8,38 @@ export function parseNumericSetting(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function messageContent(message: PlaygroundMessage): ChatRequestMessage["content"] {
+  const blocks: NonNullable<ChatRequestMessage["content"]> = [];
+  if (message.content.length > 0) blocks.push({ type: "text", text: message.content });
+  for (const attachment of message.attachments ?? []) {
+    if (attachment.type === "text") {
+      blocks.push({
+        type: "text",
+        text: `\n\n[File: ${attachment.name}]\n\`\`\`\n${attachment.value}\n\`\`\``,
+      });
+    } else if (attachment.value.startsWith("data:")) {
+      blocks.push({ type: "image_url", image_url: { url: attachment.value } });
+    }
+  }
+  if (blocks.length === 0) return "";
+  return blocks.length === 1 && blocks[0].type === "text" ? blocks[0].text : blocks;
+}
+
+/** True when a turn carries nothing an upstream would accept as content. */
+function isEmpty(content: ChatRequestMessage["content"]): boolean {
+  return typeof content === "string" ? content.trim().length === 0 : content.length === 0;
+}
+
 export function buildChatRequest(
   messages: PlaygroundMessage[],
   settings: PlaygroundSettings,
 ): ChatRequestBody {
-  // Reasoning is display-only and is never sent back upstream.
+  // Reasoning and response images are display-only and are never sent upstream.
+  // Filtering after the content is built also drops a turn whose only payload
+  // was an image the browser has since evicted, rather than sending it blank.
   const history: ChatRequestMessage[] = messages
-    .filter((message) => message.content.trim().length > 0)
-    .map(({ role, content }) => ({ role, content }));
+    .map((message) => ({ role: message.role, content: messageContent(message) }))
+    .filter((message) => !isEmpty(message.content));
 
   const systemPrompt = settings.systemPrompt.trim();
   if (systemPrompt.length > 0) history.unshift({ role: "system", content: systemPrompt });

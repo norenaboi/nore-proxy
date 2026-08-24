@@ -1,6 +1,8 @@
 import { createMessageId } from "./ids.js";
 import type {
+  PlaygroundAttachment,
   PlaygroundConversation,
+  PlaygroundImage,
   PlaygroundMessage,
   PlaygroundSettings,
   PlaygroundWorkspace,
@@ -15,6 +17,7 @@ const WORKSPACE_VERSION = 1;
 const MAX_CONVERSATIONS = 60;
 const MAX_PERSISTED_MESSAGES = 240;
 const MAX_PERSISTED_CHARS = 40_000;
+const MAX_PERSISTED_ATTACHMENT_CHARS = 20_000;
 const TITLE_LENGTH = 48;
 
 export type WriteResult = "ok" | "trimmed" | "failed";
@@ -42,7 +45,10 @@ export function createWorkspace(): PlaygroundWorkspace {
 export function conversationTitle(conversation: PlaygroundConversation): string {
   if (conversation.title.trim().length > 0) return conversation.title.trim();
   const firstUser = conversation.messages.find((message) => message.role === "user");
-  const source = firstUser?.content.trim() ?? "";
+  // An attachment-only turn has no text, so the file names name the chat.
+  const source =
+    firstUser?.content.trim() ||
+    (firstUser?.attachments ?? []).map((attachment) => attachment.name).join(", ");
   if (source.length === 0) return "New chat";
   const firstLine = source.split("\n", 1)[0] ?? source;
   return firstLine.length > TITLE_LENGTH ? `${firstLine.slice(0, TITLE_LENGTH).trimEnd()}…` : firstLine;
@@ -88,6 +94,38 @@ function normalizeSettings(value: unknown): PlaygroundSettings {
   };
 }
 
+/**
+ * Image bytes live in IndexedDB, so a persisted image attachment keeps only its
+ * metadata and an empty value. Reading one back leaves `value` empty until the
+ * page rehydrates it; a text attachment carries its content directly.
+ */
+function normalizeAttachment(value: unknown): PlaygroundAttachment | null {
+  const input = value as Partial<Record<keyof PlaygroundAttachment, unknown>> | null;
+  if (input === null || typeof input !== "object") return null;
+  if (typeof input.id !== "string" || input.id.length === 0) return null;
+  if (input.type !== "text" && input.type !== "image") return null;
+
+  return {
+    id: input.id,
+    type: input.type,
+    name: text(input.name),
+    mimeType: text(input.mimeType),
+    value: text(input.value),
+  };
+}
+
+function normalizeImage(value: unknown): PlaygroundImage | null {
+  const input = value as Partial<Record<keyof PlaygroundImage, unknown>> | null;
+  if (input === null || typeof input !== "object") return null;
+  if (typeof input.id !== "string" || input.id.length === 0) return null;
+  return { id: input.id, mimeType: text(input.mimeType), dataUrl: text(input.dataUrl) };
+}
+
+function normalizeList<T>(value: unknown, normalize: (entry: unknown) => T | null): T[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(normalize).filter((entry): entry is T => entry !== null);
+}
+
 function normalizeMessage(value: unknown): PlaygroundMessage | null {
   const input = value as Partial<Record<keyof PlaygroundMessage, unknown>> | null;
   if (input === null || typeof input !== "object") return null;
@@ -102,8 +140,29 @@ function normalizeMessage(value: unknown): PlaygroundMessage | null {
     reasoning: text(input.reasoning),
     createdAt: typeof input.createdAt === "number" ? input.createdAt : Date.now(),
   };
+  const attachments = normalizeList(input.attachments, normalizeAttachment);
+  if (attachments.length > 0) message.attachments = attachments;
+  const images = normalizeList(input.images, normalizeImage);
+  if (images.length > 0) message.images = images;
   if (typeof input.error === "string" && input.error.length > 0) message.error = input.error;
   return message;
+}
+
+/** Every payload id the workspace still points at, for garbage collection. */
+export function referencedPayloadIds(workspace: PlaygroundWorkspace): string[] {
+  const ids: string[] = [];
+  for (const conversation of workspace.conversations) {
+    for (const message of conversation.messages) {
+      for (const attachment of message.attachments ?? []) {
+        if (attachment.type === "image") ids.push(attachment.id);
+      }
+      for (const image of message.images ?? []) {
+        // Remote references are stored inline, so they own no payload row.
+        if (!image.dataUrl || image.dataUrl.startsWith("data:")) ids.push(image.id);
+      }
+    }
+  }
+  return ids;
 }
 
 function normalizeConversation(value: unknown): PlaygroundConversation | null {
@@ -194,6 +253,46 @@ function truncate(value: string): string {
   return value.length > MAX_PERSISTED_CHARS ? value.slice(0, MAX_PERSISTED_CHARS) : value;
 }
 
+/**
+ * Strips the binary payloads before the workspace reaches localStorage: image
+ * bytes are stored in IndexedDB under the same id and rehydrated on load, and a
+ * long text attachment is capped so one pasted file cannot fill the quota.
+ */
+function messageForStorage(message: PlaygroundMessage): PlaygroundMessage {
+  const stored: PlaygroundMessage = {
+    ...message,
+    content: truncate(message.content),
+    reasoning: truncate(message.reasoning),
+  };
+  if (message.attachments) {
+    stored.attachments = message.attachments.map((attachment) => ({
+      ...attachment,
+      value:
+        attachment.type === "image"
+          ? ""
+          : attachment.value.slice(0, MAX_PERSISTED_ATTACHMENT_CHARS),
+    }));
+  }
+  if (message.images) {
+    // A remote image reference is short enough to keep; inline bytes are not.
+    stored.images = message.images.map((image) => ({
+      ...image,
+      dataUrl: image.dataUrl.startsWith("data:") ? "" : image.dataUrl,
+    }));
+  }
+  return stored;
+}
+
+function workspaceForStorage(workspace: PlaygroundWorkspace): PlaygroundWorkspace {
+  return {
+    ...workspace,
+    conversations: workspace.conversations.map((conversation) => ({
+      ...conversation,
+      messages: conversation.messages.map(messageForStorage),
+    })),
+  };
+}
+
 export function trimForStorage(workspace: PlaygroundWorkspace): PlaygroundWorkspace {
   const byRecency = [...workspace.conversations].sort((left, right) => right.updatedAt - left.updatedAt);
   const kept = byRecency.slice(0, Math.max(1, Math.floor(MAX_CONVERSATIONS / 4)));
@@ -222,7 +321,7 @@ export function trimForStorage(workspace: PlaygroundWorkspace): PlaygroundWorksp
  */
 export function writeWorkspace(storage: Storage, workspace: PlaygroundWorkspace): WriteResult {
   const write = (value: PlaygroundWorkspace): void => {
-    const envelope: WorkspaceEnvelope = { version: WORKSPACE_VERSION, workspace: value };
+    const envelope: WorkspaceEnvelope = { version: WORKSPACE_VERSION, workspace: workspaceForStorage(value) };
     storage.setItem(PLAYGROUND_WORKSPACE_KEY, JSON.stringify(envelope));
   };
 

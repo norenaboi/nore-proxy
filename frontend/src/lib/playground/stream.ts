@@ -20,12 +20,29 @@ export interface ChatStreamHandlers {
   /** Used only once inline `<think>` tags force the content to be re-derived. */
   onContentReplace(content: string): void;
   onReasoning(reasoning: string): void;
+  /** Generated images, delivered as they arrive. */
+  onImages(images: StreamImage[]): void;
+}
+
+export interface StreamImage {
+  mimeType: string;
+  dataUrl: string;
 }
 
 export interface ChatStreamResult {
   content: string;
   reasoning: string;
+  images: StreamImage[];
   finishReason: string | null;
+}
+
+interface RawImage {
+  type?: unknown;
+  image_url?: { url?: unknown } | null;
+  url?: unknown;
+  b64_json?: unknown;
+  mime_type?: unknown;
+  mimeType?: unknown;
 }
 
 interface StreamChunk {
@@ -37,6 +54,7 @@ interface StreamChunk {
       reasoning_content?: unknown;
       reasoning?: unknown;
       thinking?: unknown;
+      images?: unknown;
     };
   }>;
 }
@@ -50,8 +68,63 @@ interface CompletionBody {
       reasoning_content?: unknown;
       reasoning?: unknown;
       thinking?: unknown;
+      images?: unknown;
     };
   }>;
+}
+
+/** Reads the media type out of a data URL so downloads get a real extension. */
+function mimeFromDataUrl(url: string): string {
+  const match = /^data:([^;,]+)[;,]/.exec(url);
+  return match ? match[1] : "image/png";
+}
+
+/**
+ * Only inline data and https references are rendered. Anything else — a
+ * provider file id, a blob: handle, a javascript: URL — is not an image this
+ * page can display, and must never reach an img src.
+ */
+function readImageUrl(url: string): StreamImage | null {
+  if (url.startsWith("data:image/")) return { mimeType: mimeFromDataUrl(url), dataUrl: url };
+  if (url.startsWith("https://")) return { mimeType: "", dataUrl: url };
+  return null;
+}
+
+/**
+ * Providers disagree on how a generated image is returned even after the proxy
+ * normalizes them, so every documented shape is accepted: an OpenAI image part,
+ * a bare URL, or raw base64 with a separate media type. Anything that is not a
+ * usable image reference is dropped rather than rendered as a broken image.
+ */
+function readImages(value: unknown): StreamImage[] {
+  if (!Array.isArray(value)) return [];
+  const images: StreamImage[] = [];
+
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      const image = readImageUrl(entry);
+      if (image) images.push(image);
+      continue;
+    }
+    if (entry === null || typeof entry !== "object") continue;
+
+    const raw = entry as RawImage;
+    const url = typeof raw.image_url?.url === "string" ? raw.image_url.url : typeof raw.url === "string" ? raw.url : "";
+    const image = readImageUrl(url);
+    if (image) {
+      images.push(image);
+      continue;
+    }
+    if (typeof raw.b64_json === "string" && raw.b64_json.length > 0) {
+      const mimeType = typeof raw.mime_type === "string"
+        ? raw.mime_type
+        : typeof raw.mimeType === "string"
+          ? raw.mimeType
+          : "image/png";
+      images.push({ mimeType, dataUrl: `data:${mimeType};base64,${raw.b64_json}` });
+    }
+  }
+  return images;
 }
 
 function readReasoningDelta(delta: {
@@ -124,15 +197,18 @@ async function readCompletion(response: Response, handlers: ChatStreamHandlers):
   const choice = body?.choices?.[0];
   const raw = typeof choice?.message?.content === "string" ? choice.message.content : "";
   let reasoning = choice?.message ? readReasoningDelta(choice.message) : "";
+  const images = readImages(choice?.message?.images);
 
   const split = extractThinkTags(raw);
   if (split.reasoning) reasoning = reasoning ? `${reasoning}\n${split.reasoning}`.trim() : split.reasoning;
   if (reasoning) handlers.onReasoning(reasoning);
+  if (images.length > 0) handlers.onImages(images);
   handlers.onContentReplace(split.content);
 
   return {
     content: split.content,
     reasoning,
+    images,
     finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : null,
   };
 }
@@ -173,6 +249,7 @@ export async function streamChatCompletion(
   let buffer = "";
   let raw = "";
   let reasoning = "";
+  const images: StreamImage[] = [];
   let finishReason: string | null = null;
   let sawThink = false;
   let streamError: ChatStreamError | null = null;
@@ -231,6 +308,12 @@ export async function streamChatCompletion(
           handlers.onReasoning(reasoning);
         }
 
+        const imageDelta = readImages(delta.images);
+        if (imageDelta.length > 0) {
+          images.push(...imageDelta);
+          handlers.onImages([...images]);
+        }
+
         const token = delta.content;
         if (typeof token !== "string" || token === "") continue;
         raw += token;
@@ -264,6 +347,7 @@ export async function streamChatCompletion(
   return {
     content: sawThink ? extractThinkTags(raw).content : raw,
     reasoning,
+    images,
     finishReason,
   };
 }

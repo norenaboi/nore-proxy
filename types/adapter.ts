@@ -81,9 +81,20 @@ export interface AdapterToolCallDelta {
   };
 }
 
+/**
+ * A generated image normalized to the OpenAI-compatible `images` convention,
+ * carried on `message.images` and `delta.images`. Providers that return image
+ * bytes are normalized to a data URL so clients need no second fetch.
+ */
+export interface OpenAIGeneratedImage {
+  type: "image_url";
+  image_url: { url: string; [key: string]: unknown };
+}
+
 export interface ParsedStreamChunk {
   deltaContent: string | null;
   deltaReasoning?: string | null;
+  images?: OpenAIGeneratedImage[] | null;
   finishReason: string | null;
   usage: OpenAIUsage | null;
   toolCalls: AdapterToolCallDelta[] | null;

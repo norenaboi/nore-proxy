@@ -54,6 +54,7 @@
     void messages.length;
     void last?.content;
     void last?.reasoning;
+    void last?.images?.length;
     scheduleScroll();
   });
 </script>

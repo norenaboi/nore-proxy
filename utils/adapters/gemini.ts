@@ -176,19 +176,40 @@ function buildGeminiBody(openaiReq: any) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Gemini returns generated image bytes as an inline_data part alongside text.
+ * Normalize one to the OpenAI `images` convention as a data URL, so clients
+ * receive the image in the same response rather than fetching it separately.
+ */
+function inlineDataToImage(part: any) {
+  const inline = part?.inline_data || part?.inlineData;
+  const data = inline?.data;
+  if (typeof data !== "string" || data.length === 0) return null;
+  const mimeType = inline.mime_type || inline.mimeType || "image/png";
+  if (!String(mimeType).startsWith("image/")) return null;
+  return { type: "image_url", image_url: { url: `data:${mimeType};base64,${data}` } };
+}
+
+/**
  * Extract text from a Gemini candidates response structure.
  * Gemini puts text in candidates[0].content.parts[].text
  * Parts with `thought: true` are reasoning and are returned separately.
- * Returns { content, reasoning }.
+ * Generated images arrive as inline_data parts.
+ * Returns { content, reasoning, images }.
  */
 function extractGeminiContent(data: any) {
   const candidate = data?.candidates?.[0];
-  if (!candidate) return { content: "", reasoning: "" };
+  if (!candidate) return { content: "", reasoning: "", images: [] };
 
   const parts = candidate.content?.parts || [];
   let content = "";
   let reasoning = "";
+  const images = [];
   for (const p of parts) {
+    const image = inlineDataToImage(p);
+    if (image) {
+      images.push(image);
+      continue;
+    }
     const text = p.text || "";
     if (!text) continue;
     if (p.thought === true) {
@@ -197,7 +218,7 @@ function extractGeminiContent(data: any) {
       content += text;
     }
   }
-  return { content, reasoning };
+  return { content, reasoning, images };
 }
 
 /**
@@ -254,6 +275,7 @@ export function parseStreamChunk(rawChunk: any, ctx: any) {
       return {
         deltaContent: null,
         deltaReasoning: null,
+        images: null,
         finishReason: null,
         usage: geminiUsageToOpenAI(rawChunk.usageMetadata),
         toolCalls: null,
@@ -265,11 +287,17 @@ export function parseStreamChunk(rawChunk: any, ctx: any) {
   const candidate = rawChunk.candidates[0];
   const parts = candidate.content?.parts || [];
 
-  // Separate thinking parts from regular content / tool-call parts
+  // Separate thinking parts from regular content / tool-call / image parts
   let text = "";
   let reasoning = "";
   let toolCalls = [];
+  const images = [];
   for (const part of parts) {
+    const image = inlineDataToImage(part);
+    if (image) {
+      images.push(image);
+      continue;
+    }
     if (part.thought === true) {
       if (part.text) reasoning += part.text;
       continue; // don't mix thinking into regular content
@@ -295,6 +323,7 @@ export function parseStreamChunk(rawChunk: any, ctx: any) {
   return {
     deltaContent: text || null,
     deltaReasoning: reasoning || null,
+    images: images.length > 0 ? images : null,
     finishReason: mapFinishReason(candidate.finishReason),
     usage,
     toolCalls: toolCalls.length > 0 ? toolCalls : null,
@@ -311,6 +340,7 @@ export function buildStreamChunk(rawChunk: any, ctx: any) {
   const delta: Record<string, unknown> = {};
   if (parsed.deltaContent) delta.content = parsed.deltaContent;
   if (parsed.deltaReasoning) delta.reasoning_content = parsed.deltaReasoning;
+  if (parsed.images) delta.images = parsed.images;
   if (parsed.toolCalls) delta.tool_calls = parsed.toolCalls;
 
   return {
@@ -333,7 +363,7 @@ export function buildStreamChunk(rawChunk: any, ctx: any) {
  * OpenAI-compatible response object.
  */
 export function parseResponseData(rawData: any) {
-  const { content, reasoning } = extractGeminiContent(rawData);
+  const { content, reasoning, images } = extractGeminiContent(rawData);
   const toolCalls = extractGeminiToolCalls(rawData);
   const finishReason = mapFinishReason(
     rawData?.candidates?.[0]?.finishReason,
@@ -342,6 +372,7 @@ export function parseResponseData(rawData: any) {
 
   const message: Record<string, unknown> = { role: "assistant", content };
   if (reasoning) message.reasoning_content = reasoning;
+  if (images.length > 0) message.images = images;
   if (toolCalls) message.tool_calls = toolCalls;
 
   const openaiResponse = {
