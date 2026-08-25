@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { maskKey } from "./helpers.js";
 
 function identitySecret() {
-  return process.env.NORE_PROXY_ANALYTICS_SECRET || process.env.MASTER_KEY || "";
+  return process.env.ANALYTICS_SECRET || process.env.MASTER_KEY || "";
 }
 
 export function getApiKeyId(apiKey: any) {

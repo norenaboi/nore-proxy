@@ -22,7 +22,7 @@ Nore Proxy is a unified LLM API gateway with OpenAI-compatible and Anthropic-com
 ### Configuration
 
 - `config/index.ts` loads process-level configuration and `endpoints.json`, validates required server settings, owns the in-memory endpoint map, and provides the key-rotation ordering helpers.
-- `utils/configPaths.ts` resolves the runtime JSON paths and supports isolated paths through `NORE_PROXY_MODELS_PATH`, `NORE_PROXY_ENDPOINTS_PATH`, and `NORE_PROXY_SETTINGS_PATH`.
+- `utils/configPaths.ts` resolves the runtime JSON paths and supports isolated paths through `MODELS_PATH`, `ENDPOINTS_PATH`, and `SETTINGS_PATH`.
 - `models.json` is the persisted model, pricing, and automatic-routing definition source. `loadModelsFromFile()` validates it and rebuilds the in-memory model registry, aliases, pricing, and automatic-routing counters while excluding disabled models.
 - `endpoints.json` contains upstream endpoint definitions and raw credentials. Loaded endpoints can use sticky or round-robin key selection; round-robin starts each request at a random position in the key list and walks forward from there, holding that position across the request's key hops. Key health and cooldown state are persisted separately by non-secret key identity.
 - `settings.json` contains runtime settings overrides merged with defaults in `services/settingsManager.ts`.
@@ -121,8 +121,9 @@ Public pages are eagerly imported. Admin pages are lazy imported and form build 
 ## Runtime configuration and data
 
 - SQLite data normally lives under `logs/`; PostgreSQL is selected only when `DATABASE_URL` begins with `postgres://` or `postgresql://`.
-- Use `NORE_PROXY_MODELS_PATH`, `NORE_PROXY_ENDPOINTS_PATH`, and `NORE_PROXY_SETTINGS_PATH` for isolated configuration.
-- Use `LOG_DB_PATH`, `API_KEY_DB_PATH`, `KEY_STATE_DB_PATH`, and `SESSION_DB_PATH` for isolated SQLite data; the corresponding `NORE_PROXY_*_DB_PATH` aliases are also supported. Never point tests at deployed databases or mounted production JSON.
+- Use `MODELS_PATH`, `ENDPOINTS_PATH`, and `SETTINGS_PATH` for isolated configuration.
+- Use `LOG_DB_PATH`, `API_KEY_DB_PATH`, `KEY_STATE_DB_PATH`, `SESSION_DB_PATH`, and `UPTIME_DB_PATH` for isolated SQLite data. Never point tests at deployed databases or mounted production JSON.
+- `TEST_POSTGRES_URL` opts into the PostgreSQL rollup integration test. It must reference a throwaway database; the test creates and drops a uniquely named schema and refuses to run if the connection is not scoped to it. Without the variable the test skips.
 - Settings files may contain legacy keys not accepted by the current update API. Preserve them unless an explicit migration is part of the task.
 - Endpoint files may also contain legacy fields. Do not delete unknown operational data during unrelated rewrites.
 

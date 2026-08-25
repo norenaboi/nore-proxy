@@ -75,6 +75,23 @@ test("admin stats normalize missing names and refresh after historical mutations
   assert.ok(!deleted.models.some((row) => row.name === "renamed"));
 });
 
+test("retention prunes details but preserves historical daily rollups", { skip: !sqliteAvailable }, async (t) => {
+  const manager = await createManager(); t.after(() => manager.close());
+  const oldTimestamp = Date.now() / 1000 - 10 * 86400;
+  const recentTimestamp = Date.now() / 1000 - 3600;
+  manager.writeRequestLog(requestEnd("Primary", "old-model", { timestamp: oldTimestamp }));
+  manager.writeRequestLog(requestEnd("Primary", "recent-model", { timestamp: recentTimestamp }));
+
+  const before = manager.db.prepare("SELECT COALESCE(SUM(requests), 0) AS count FROM request_daily_rollups").get().count;
+  const result = manager.pruneOldRequests(Date.now() / 1000 - 5 * 86400);
+  assert.equal(result.requests, 1);
+  assert.equal(manager.db.prepare("SELECT COUNT(*) AS count FROM request_logs WHERE type = 'request_end'").get().count, 1);
+  assert.equal(manager.db.prepare("SELECT COALESCE(SUM(requests), 0) AS count FROM request_daily_rollups").get().count, before);
+
+  manager.ensureRequestLogSchema();
+  assert.equal(manager.db.prepare("SELECT COALESCE(SUM(requests), 0) AS count FROM request_daily_rollups").get().count, before);
+});
+
 test("admin stats aggregation index exists", { skip: !sqliteAvailable }, async (t) => {
   const manager = await createManager(); t.after(() => manager.close());
   const indexes = manager.db.prepare("PRAGMA index_list(request_logs)").all().map((row) => row.name);

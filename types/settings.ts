@@ -4,6 +4,7 @@ export interface Settings {
   rpdDefault: number;
   rpmDefault: number;
   maxContextSizeDefault: number;
+  requestLogRetentionDays: number;
   defaultEndpointPromptCachingEnabled: boolean;
   defaultEndpointPromptCachingDepth: number;
   keyHopAttempts: number;

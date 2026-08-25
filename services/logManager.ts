@@ -525,12 +525,15 @@ export class LogManager {
       unrecorded_success_cache_read_tokens INTEGER NOT NULL DEFAULT 0, costs_success_only INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (day, api_key_id, api_key_masked, legacy_key, request_model, token_accounting_version, recorded_cost_mask)
     )`);
     const backfilled = this.backfillRequestProjections();
+    const retainedStartDay = this.retainedStartDay();
     const projectedCount = this.db.prepare(
       "SELECT COUNT(*) AS count FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND occurred_at IS NOT NULL",
     ).get().count;
-    const rollupCount = this.db.prepare(
-      "SELECT COALESCE(SUM(requests), 0) AS count FROM request_daily_rollups",
-    ).get().count;
+    const rollupCount = retainedStartDay === null
+      ? 0
+      : this.db.prepare(
+          "SELECT COALESCE(SUM(requests), 0) AS count FROM request_daily_rollups WHERE day >= ?",
+        ).get(retainedStartDay).count;
     if (migrated || backfilled || !rollupVersionCurrent || projectedCount !== rollupCount) {
       this.rebuildRequestRollups();
     }
@@ -586,9 +589,21 @@ export class LogManager {
     return updated;
   }
 
+  retainedStartDay(): string | null {
+    const row = this.db.prepare(`SELECT MIN(date(occurred_at, 'unixepoch')) AS day FROM request_logs
+      WHERE type = 'request_end' AND occurred_at IS NOT NULL AND projection_version >= 2`).get() as { day: string | null };
+    return row.day;
+  }
+
   rebuildRequestRollups() {
     const rebuild = this.db.transaction(() => {
-      this.db.exec("DELETE FROM request_daily_rollups");
+      const retainedStartDay = this.retainedStartDay();
+      if (retainedStartDay === null) {
+        const retained = this.db.prepare("SELECT COALESCE(SUM(requests), 0) AS count FROM request_daily_rollups").get().count;
+        if (Number(retained) === 0) this.db.exec("DELETE FROM request_daily_rollups");
+        return;
+      }
+      this.db.prepare("DELETE FROM request_daily_rollups WHERE day >= ?").run(retainedStartDay);
       this.db.exec(`INSERT INTO request_daily_rollups (
           day, api_key_id, api_key_masked, legacy_key, request_model,
           token_accounting_version, recorded_cost_mask, requests, successful, failed,
@@ -1487,6 +1502,26 @@ export class LogManager {
     return this.db.prepare("DELETE FROM error_logs").run().changes;
   }
 
+  pruneOldRequests(cutoffEpochSeconds: number) {
+    const cutoff = Math.floor(cutoffEpochSeconds / 86400) * 86400;
+    const cutoffIso = new Date(cutoff * 1000).toISOString();
+    const prune = this.db.transaction(() => {
+      const starts = this.db.prepare(`DELETE FROM request_logs WHERE type = 'request_start'
+        AND (CAST(json_extract(data, '$.timestamp') AS REAL) < ?
+          OR json_extract(data, '$.request_id') IN (
+            SELECT request_id FROM request_logs
+            WHERE type = 'request_end' AND occurred_at IS NOT NULL AND occurred_at < ? AND request_id IS NOT NULL
+          ))`).run(cutoff, cutoff).changes;
+      const ends = this.db.prepare(`DELETE FROM request_logs
+        WHERE type = 'request_end' AND occurred_at IS NOT NULL AND occurred_at < ?`).run(cutoff).changes;
+      const errors = this.db.prepare("DELETE FROM error_logs WHERE timestamp < ?").run(cutoffIso).changes;
+      return { requests: starts + ends, errors };
+    });
+    const result = prune();
+    this.invalidateAdminStatsCache();
+    return result;
+  }
+
   readErrorLogs(limit = 50) {
     return this.getErrorLogs({ limit });
   }
@@ -1498,7 +1533,7 @@ export class LogManager {
   }
 }
 
-class PostgresLogManager {
+export class PostgresLogManager {
   private database: DatabaseFacade | null = null;
   private adminStatsCache: { expiresAt: number; value?: AdminStatsSnapshot; pending?: Promise<AdminStatsSnapshot> } | null = null;
 
@@ -1530,6 +1565,24 @@ class PostgresLogManager {
         status_code INTEGER, error_type TEXT, error_code TEXT, error_message TEXT,
         request_params TEXT, request_headers TEXT, upstream_url TEXT, response_body TEXT,
         stack_trace TEXT, masked_api_key TEXT, auto_model TEXT, target_model TEXT, routing_attempts TEXT
+      );
+      CREATE TABLE IF NOT EXISTS request_daily_rollups (
+        day DATE NOT NULL, api_key_id TEXT NOT NULL DEFAULT '', api_key_masked TEXT NOT NULL DEFAULT '',
+        legacy_key INTEGER NOT NULL DEFAULT 0, request_model TEXT NOT NULL DEFAULT '',
+        token_accounting_version TEXT NOT NULL DEFAULT '', recorded_cost_mask INTEGER NOT NULL DEFAULT 0,
+        requests BIGINT NOT NULL DEFAULT 0, successful BIGINT NOT NULL DEFAULT 0, failed BIGINT NOT NULL DEFAULT 0,
+        input_tokens BIGINT NOT NULL DEFAULT 0, output_tokens BIGINT NOT NULL DEFAULT 0,
+        cache_write_tokens BIGINT NOT NULL DEFAULT 0, cache_read_tokens BIGINT NOT NULL DEFAULT 0,
+        duration_total DOUBLE PRECISION NOT NULL DEFAULT 0, duration_count BIGINT NOT NULL DEFAULT 0,
+        recorded_cost_input DOUBLE PRECISION NOT NULL DEFAULT 0, recorded_cost_output DOUBLE PRECISION NOT NULL DEFAULT 0,
+        recorded_cost_cache_write DOUBLE PRECISION NOT NULL DEFAULT 0, recorded_cost_cache_read DOUBLE PRECISION NOT NULL DEFAULT 0,
+        recorded_cost_total DOUBLE PRECISION NOT NULL DEFAULT 0, recorded_cost_count BIGINT NOT NULL DEFAULT 0,
+        success_input_tokens BIGINT NOT NULL DEFAULT 0, success_output_tokens BIGINT NOT NULL DEFAULT 0,
+        success_cache_write_tokens BIGINT NOT NULL DEFAULT 0, success_cache_read_tokens BIGINT NOT NULL DEFAULT 0,
+        unrecorded_success_input_tokens BIGINT NOT NULL DEFAULT 0, unrecorded_success_output_tokens BIGINT NOT NULL DEFAULT 0,
+        unrecorded_success_cache_write_tokens BIGINT NOT NULL DEFAULT 0, unrecorded_success_cache_read_tokens BIGINT NOT NULL DEFAULT 0,
+        costs_success_only INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (day, api_key_id, api_key_masked, legacy_key, request_model, token_accounting_version, recorded_cost_mask)
       );
     `);
       await this.migrateSchema();
@@ -1574,11 +1627,24 @@ class PostgresLogManager {
       CREATE INDEX IF NOT EXISTS idx_error_logs_model ON error_logs(model);
       CREATE INDEX IF NOT EXISTS idx_error_logs_endpoint_name ON error_logs(endpoint_name);
       CREATE INDEX IF NOT EXISTS idx_error_logs_status_code ON error_logs(status_code);
+      CREATE INDEX IF NOT EXISTS idx_request_daily_rollups_day ON request_daily_rollups(day);
+      CREATE INDEX IF NOT EXISTS idx_request_daily_rollups_key ON request_daily_rollups(api_key_id, api_key_masked, day);
+      CREATE INDEX IF NOT EXISTS idx_request_daily_rollups_model ON request_daily_rollups(request_model, token_accounting_version, day);
     `);
+    const backfilled = await this.backfillRequestProjections();
+    const retainedStartDay = await this.retainedStartDay();
+    const projectedCount = Number((await this.db.get<{ count: string }>(
+      "SELECT COUNT(*) AS count FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND occurred_at IS NOT NULL",
+    ))?.count || 0);
+    const rollupCount = retainedStartDay === null ? 0 : Number((await this.db.get<{ count: string }>(
+      "SELECT COALESCE(SUM(requests), 0) AS count FROM request_daily_rollups WHERE day >= ?::date",
+      [retainedStartDay],
+    ))?.count || 0);
+    if (backfilled > 0 || projectedCount !== rollupCount) await this.rebuildRequestRollups();
   }
 
-  private requestProjectionValues(logEntry: any) {
-    const normalized = normalizeRequestRow({ data: serializeJson(logEntry), model: logEntry.model });
+  private requestProjectionValues(logEntry: any, row: any = {}) {
+    const normalized = normalizeRequestRow({ ...row, data: serializeJson(logEntry), model: row.model ?? logEntry.model });
     return {
       projection_version: 2, occurred_at: normalized.timestamp, request_id: normalized.requestId,
       request_model: normalized.model === "Unknown" ? null : normalized.model,
@@ -1595,6 +1661,115 @@ class PostgresLogManager {
       recorded_cost_cache_read: normalized.recordedCosts?.cacheRead ?? null,
       recorded_cost_total: normalized.recordedCosts?.total ?? null, recorded_cost_mask: normalized.recordedCostMask,
     };
+  }
+
+  private async backfillRequestProjections(): Promise<number> {
+    let updated = 0;
+    while (true) {
+      const rows = await this.db.all<{ id: number; timestamp: string; model: string | null; data: any }>(`SELECT id, timestamp, model, data FROM request_logs
+        WHERE type = 'request_end' AND projection_version < 2 ORDER BY id LIMIT 500`);
+      if (!rows.length) return updated;
+      await this.db.transaction(async (db) => {
+        for (const row of rows) {
+          const projection = this.requestProjectionValues(parseJson(row.data) || {}, row);
+          await db.run(`UPDATE request_logs SET
+            projection_version=?,occurred_at=?,request_id=?,request_model=?,status=?,api_key_id=?,key_name=?,api_key_masked=?,legacy_key=?,
+            input_tokens=?,output_tokens=?,cache_write_tokens=?,cache_read_tokens=?,token_accounting_version=?,duration=?,endpoint_key=?,endpoint_name=?,
+            recorded_cost_input=?,recorded_cost_output=?,recorded_cost_cache_write=?,recorded_cost_cache_read=?,recorded_cost_total=?,recorded_cost_mask=? WHERE id=?`, [
+            projection.projection_version, projection.occurred_at, projection.request_id, projection.request_model, projection.status,
+            projection.api_key_id, projection.key_name, projection.api_key_masked, projection.legacy_key, projection.input_tokens,
+            projection.output_tokens, projection.cache_write_tokens, projection.cache_read_tokens, projection.token_accounting_version,
+            projection.duration, projection.endpoint_key, projection.endpoint_name, projection.recorded_cost_input,
+            projection.recorded_cost_output, projection.recorded_cost_cache_write, projection.recorded_cost_cache_read,
+            projection.recorded_cost_total, projection.recorded_cost_mask, row.id,
+          ]);
+        }
+      });
+      updated += rows.length;
+    }
+  }
+
+  private async retainedStartDay(): Promise<string | null> {
+    const row = await this.db.get<{ day: string | null }>(`SELECT MIN((to_timestamp(occurred_at) AT TIME ZONE 'UTC')::date)::text AS day FROM request_logs
+      WHERE type = 'request_end' AND occurred_at IS NOT NULL AND projection_version >= 2`);
+    return row?.day ?? null;
+  }
+
+  private async rebuildRequestRollups(): Promise<number> {
+    return this.db.transaction(async (db) => {
+      const retainedStartDay = await this.retainedStartDay();
+      if (retainedStartDay === null) return 0;
+      const deleted = await db.run("DELETE FROM request_daily_rollups WHERE day >= ?::date", [retainedStartDay]);
+      await db.exec(`INSERT INTO request_daily_rollups (
+        day,api_key_id,api_key_masked,legacy_key,request_model,token_accounting_version,recorded_cost_mask,
+        requests,successful,failed,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,duration_total,duration_count,
+        recorded_cost_input,recorded_cost_output,recorded_cost_cache_write,recorded_cost_cache_read,recorded_cost_total,recorded_cost_count,
+        success_input_tokens,success_output_tokens,success_cache_write_tokens,success_cache_read_tokens,
+        unrecorded_success_input_tokens,unrecorded_success_output_tokens,unrecorded_success_cache_write_tokens,unrecorded_success_cache_read_tokens)
+        SELECT (to_timestamp(occurred_at) AT TIME ZONE 'UTC')::date,COALESCE(api_key_id,''),COALESCE(api_key_masked,''),legacy_key,
+          COALESCE(request_model,''),COALESCE(token_accounting_version,''),recorded_cost_mask,COUNT(*),
+          COUNT(*) FILTER (WHERE status='success'),COUNT(*) FILTER (WHERE status='failed'),
+          COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_write_tokens),0),COALESCE(SUM(cache_read_tokens),0),
+          COALESCE(SUM(duration),0),COUNT(*) FILTER (WHERE duration > 0),
+          COALESCE(SUM(CASE WHEN status='success' THEN recorded_cost_input ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN status='success' THEN recorded_cost_output ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN status='success' THEN recorded_cost_cache_write ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN status='success' THEN recorded_cost_cache_read ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN status='success' THEN recorded_cost_total ELSE 0 END),0),
+          COUNT(*) FILTER (WHERE status='success' AND recorded_cost_total IS NOT NULL),
+          COALESCE(SUM(CASE WHEN status='success' THEN input_tokens ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN status='success' THEN output_tokens ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN status='success' THEN cache_write_tokens ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN status='success' THEN cache_read_tokens ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN status='success' AND (recorded_cost_mask & 16)=0 THEN input_tokens ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN status='success' AND (recorded_cost_mask & 16)=0 THEN output_tokens ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN status='success' AND (recorded_cost_mask & 16)=0 THEN cache_write_tokens ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN status='success' AND (recorded_cost_mask & 16)=0 THEN cache_read_tokens ELSE 0 END),0)
+        FROM request_logs WHERE type='request_end' AND occurred_at IS NOT NULL AND projection_version >= 2
+        GROUP BY (to_timestamp(occurred_at) AT TIME ZONE 'UTC')::date,COALESCE(api_key_id,''),COALESCE(api_key_masked,''),legacy_key,
+          COALESCE(request_model,''),COALESCE(token_accounting_version,''),recorded_cost_mask`);
+      return deleted.changes;
+    });
+  }
+
+  private async updateDailyRollup(db: DatabaseFacade, projection: any): Promise<void> {
+    if (projection.occurred_at === null) return;
+    const day = new Date(projection.occurred_at * 1000).toISOString().slice(0, 10);
+    const success = projection.status === "success";
+    await db.run(`INSERT INTO request_daily_rollups VALUES (
+      ?::date,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+      ON CONFLICT(day,api_key_id,api_key_masked,legacy_key,request_model,token_accounting_version,recorded_cost_mask) DO UPDATE SET
+      requests=request_daily_rollups.requests+1,successful=request_daily_rollups.successful+EXCLUDED.successful,
+      failed=request_daily_rollups.failed+EXCLUDED.failed,input_tokens=request_daily_rollups.input_tokens+EXCLUDED.input_tokens,
+      output_tokens=request_daily_rollups.output_tokens+EXCLUDED.output_tokens,cache_write_tokens=request_daily_rollups.cache_write_tokens+EXCLUDED.cache_write_tokens,
+      cache_read_tokens=request_daily_rollups.cache_read_tokens+EXCLUDED.cache_read_tokens,duration_total=request_daily_rollups.duration_total+EXCLUDED.duration_total,
+      duration_count=request_daily_rollups.duration_count+EXCLUDED.duration_count,recorded_cost_input=request_daily_rollups.recorded_cost_input+EXCLUDED.recorded_cost_input,
+      recorded_cost_output=request_daily_rollups.recorded_cost_output+EXCLUDED.recorded_cost_output,
+      recorded_cost_cache_write=request_daily_rollups.recorded_cost_cache_write+EXCLUDED.recorded_cost_cache_write,
+      recorded_cost_cache_read=request_daily_rollups.recorded_cost_cache_read+EXCLUDED.recorded_cost_cache_read,
+      recorded_cost_total=request_daily_rollups.recorded_cost_total+EXCLUDED.recorded_cost_total,
+      recorded_cost_count=request_daily_rollups.recorded_cost_count+EXCLUDED.recorded_cost_count,
+      success_input_tokens=request_daily_rollups.success_input_tokens+EXCLUDED.success_input_tokens,
+      success_output_tokens=request_daily_rollups.success_output_tokens+EXCLUDED.success_output_tokens,
+      success_cache_write_tokens=request_daily_rollups.success_cache_write_tokens+EXCLUDED.success_cache_write_tokens,
+      success_cache_read_tokens=request_daily_rollups.success_cache_read_tokens+EXCLUDED.success_cache_read_tokens,
+      unrecorded_success_input_tokens=request_daily_rollups.unrecorded_success_input_tokens+EXCLUDED.unrecorded_success_input_tokens,
+      unrecorded_success_output_tokens=request_daily_rollups.unrecorded_success_output_tokens+EXCLUDED.unrecorded_success_output_tokens,
+      unrecorded_success_cache_write_tokens=request_daily_rollups.unrecorded_success_cache_write_tokens+EXCLUDED.unrecorded_success_cache_write_tokens,
+      unrecorded_success_cache_read_tokens=request_daily_rollups.unrecorded_success_cache_read_tokens+EXCLUDED.unrecorded_success_cache_read_tokens`, [
+      day, projection.api_key_id ?? "", projection.api_key_masked ?? "", projection.legacy_key, projection.request_model ?? "",
+      projection.token_accounting_version ?? "", projection.recorded_cost_mask, success ? 1 : 0, projection.status === "failed" ? 1 : 0,
+      projection.input_tokens, projection.output_tokens, projection.cache_write_tokens, projection.cache_read_tokens,
+      projection.duration, projection.duration > 0 ? 1 : 0, success ? projection.recorded_cost_input ?? 0 : 0,
+      success ? projection.recorded_cost_output ?? 0 : 0, success ? projection.recorded_cost_cache_write ?? 0 : 0,
+      success ? projection.recorded_cost_cache_read ?? 0 : 0, success ? projection.recorded_cost_total ?? 0 : 0,
+      success && projection.recorded_cost_total !== null ? 1 : 0, success ? projection.input_tokens : 0,
+      success ? projection.output_tokens : 0, success ? projection.cache_write_tokens : 0, success ? projection.cache_read_tokens : 0,
+      success && projection.recorded_cost_total === null ? projection.input_tokens : 0,
+      success && projection.recorded_cost_total === null ? projection.output_tokens : 0,
+      success && projection.recorded_cost_total === null ? projection.cache_write_tokens : 0,
+      success && projection.recorded_cost_total === null ? projection.cache_read_tokens : 0,
+    ]);
   }
 
   async writeRequestLog(logEntry: any) {
@@ -1619,6 +1794,7 @@ class PostgresLogManager {
         p.duration, p.endpoint_key, p.endpoint_name, p.recorded_cost_input, p.recorded_cost_output,
         p.recorded_cost_cache_write, p.recorded_cost_cache_read, p.recorded_cost_total, p.recorded_cost_mask,
       ]);
+      if (projection) await this.updateDailyRollup(tx, projection);
       return Number(row?.id);
     });
     if (logEntry.type === "request_end") this.invalidateAdminStatsCache();
@@ -1765,15 +1941,45 @@ class PostgresLogManager {
         : 0;
       return { requestLogs, errorLogs };
     });
+    const rollups = await this.rebuildRequestRollups();
     this.invalidateAdminStatsCache();
-    return result;
+    return { ...result, rollups };
   }
   async getDashboardRequestLogs() { return (await this.requestRows()).map(normalizeRequestRow); }
   async getRequestHistory(filters: any = {}) { const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 50); const rows = await this.requestRows(filters, limit + 1); const visible = rows.slice(0, limit).map(normalizeRequestRow); return { requests: visible, hasMore: rows.length > limit, nextCursor: rows.length > limit && visible.length ? visible.at(-1)?.id : null }; }
   async getRequestHistoryById(id: unknown) { return normalizeRequestDetail(await this.db.get("SELECT * FROM request_logs WHERE id = ? AND type = 'request_end'", [id])); }
   async getRequestHistoryFilters() { const models = await this.db.all("SELECT DISTINCT request_model AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND request_model IS NOT NULL AND request_model != '' ORDER BY value"); const endpoints = await this.db.all("SELECT DISTINCT endpoint_name AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND endpoint_name IS NOT NULL AND endpoint_name != '' ORDER BY value"); const apiKeys = await this.db.all("SELECT api_key_id, api_key_masked, key_name FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND api_key_id IS NOT NULL GROUP BY api_key_id, api_key_masked, key_name ORDER BY key_name, api_key_masked"); return { models: models.map((r: any) => r.value), endpoints: endpoints.map((r: any) => r.value), apiKeys: apiKeys.map((r: any) => ({ value: r.api_key_id, label: r.key_name ? `${r.key_name} · ${r.api_key_masked}` : r.api_key_masked })), statuses: ["success", "failed"] }; }
 
-  async getRequestAggregates(filters: any = {}) { const rows = await this.requestRows(filters); return this.aggregate(rows); }
+  private useRollups(filters: any = {}) {
+    return filters.from == null && filters.to == null && !filters.status && !filters.endpoint && !filters.cursor;
+  }
+  private async rollupRows(filters: any = {}) {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    const add = (sql: string, value: unknown) => { params.push(value); clauses.push(sql.replace("?", `$${params.length}`)); };
+    if (filters.model) add("request_model = ?", filters.model);
+    if (filters.apiKey) {
+      params.push(filters.apiKey, filters.legacyMask ?? filters.apiKeyMask ?? "");
+      clauses.push(`(api_key_id = $${params.length - 1} OR (legacy_key = 1 AND api_key_masked = $${params.length}))`);
+    }
+    return this.db.all(`SELECT * FROM request_daily_rollups${clauses.length ? ` WHERE ${clauses.join(" AND ")}` : ""}`, params);
+  }
+  private aggregateRollups(rows: any[]) {
+    const sum = (field: string) => rows.reduce((total, row) => total + nonNegativeNumber(row[field]), 0);
+    const durationCount = sum("duration_count");
+    return {
+      total: sum("requests"), successful: sum("successful"), failed: sum("failed"),
+      inputTokens: sum("input_tokens"), outputTokens: sum("output_tokens"),
+      cacheWriteTokens: sum("cache_write_tokens"), cacheReadTokens: sum("cache_read_tokens"),
+      avgDuration: durationCount ? sum("duration_total") / durationCount : 0,
+      recordedCosts: { input: sum("recorded_cost_input"), output: sum("recorded_cost_output"),
+        cacheWrite: sum("recorded_cost_cache_write"), cacheRead: sum("recorded_cost_cache_read"),
+        total: sum("recorded_cost_total"), count: sum("recorded_cost_count") },
+    };
+  }
+  async getRequestAggregates(filters: any = {}) {
+    return this.useRollups(filters) ? this.aggregateRollups(await this.rollupRows(filters)) : this.aggregate(await this.requestRows(filters));
+  }
   async getRequestRangeAggregates(ranges: any[] = []) { return Promise.all(ranges.map(async (range) => ({ ...range, ...await this.getRequestAggregates(range) }))); }
   private aggregate(rows: any[]) {
     const successful = rows.filter((row: any) => row.status === "success");
@@ -1808,14 +2014,29 @@ class PostgresLogManager {
   async getModelAggregates(filters: any = {}) { return this.getBulkModelAggregates(filters); }
   async getBulkDashboardAggregates(ranges: any[] = []) { return Promise.all(ranges.map(async range => ({ ...range, total: await this.getGroupedAggregates(range), keys: await this.getGroupedAggregates(range, "key") }))); }
   private async getGroupedAggregates(filters: any, group: "key" | "model" = "model") {
-    const rows = await this.requestRows(filters); const groups = new Map<string, any[]>();
+    const rows = this.useRollups(filters) ? await this.rollupRows(filters) : await this.requestRows(filters);
+    const groups = new Map<string, any[]>();
     for (const row of rows) { const key = group === "key" ? `${row.api_key_id}|${row.api_key_masked}|${row.request_model}|${row.token_accounting_version}|${row.recorded_cost_mask}` : `${row.request_model}|${row.token_accounting_version}|${row.recorded_cost_mask}`; groups.set(key, [...(groups.get(key) ?? []), row]); }
-    return [...groups.values()].map(rows => {
-      const first: any = rows[0]; const successful = rows.filter(r => r.status === "success");
+    return [...groups.values()].map(groupRows => {
+      const first: any = groupRows[0];
+      if (this.useRollups(filters)) {
+        const sum = (field: string) => groupRows.reduce((n, row) => n + nonNegativeNumber(row[field]), 0);
+        return { ...(group === "key" ? { apiKeyId: first.api_key_id || null, apiKeyMask: first.api_key_masked || null, legacyKey: Number(first.legacy_key) || 0 } : {}),
+          model: first.request_model, tokenAccountingVersion: first.token_accounting_version, recordedCostMask: Number(first.recorded_cost_mask) || 0,
+          ...this.aggregateRollups(groupRows), successInputTokens: sum("success_input_tokens"), successOutputTokens: sum("success_output_tokens"),
+          successCacheWriteTokens: sum("success_cache_write_tokens"), successCacheReadTokens: sum("success_cache_read_tokens"),
+          fallbackInputTokens: sum("unrecorded_success_input_tokens"), fallbackOutputTokens: sum("unrecorded_success_output_tokens"),
+          fallbackCacheWriteTokens: sum("unrecorded_success_cache_write_tokens"), fallbackCacheReadTokens: sum("unrecorded_success_cache_read_tokens"),
+          recordedCostInput: sum("recorded_cost_input"), recordedCostOutput: sum("recorded_cost_output"),
+          recordedCostCacheWrite: sum("recorded_cost_cache_write"), recordedCostCacheRead: sum("recorded_cost_cache_read"),
+          recordedCostTotal: sum("recorded_cost_total"), recordedCostCount: sum("recorded_cost_count"),
+        };
+      }
+      const successful = groupRows.filter(r => r.status === "success");
       const sum = (field: string, source = successful) => source.reduce((n, r) => n + nonNegativeNumber(r[field]), 0);
       const unrecorded = successful.filter(r => r.recorded_cost_total == null);
       return { ...(group === "key" ? { apiKeyId: first.api_key_id || null, apiKeyMask: first.api_key_masked || null, legacyKey: Number(first.legacy_key) || 0 } : {}),
-        model: first.request_model, tokenAccountingVersion: first.token_accounting_version, recordedCostMask: Number(first.recorded_cost_mask) || 0, ...this.aggregate(rows),
+        model: first.request_model, tokenAccountingVersion: first.token_accounting_version, recordedCostMask: Number(first.recorded_cost_mask) || 0, ...this.aggregate(groupRows),
         successInputTokens: sum("input_tokens"), successOutputTokens: sum("output_tokens"), successCacheWriteTokens: sum("cache_write_tokens"), successCacheReadTokens: sum("cache_read_tokens"),
         fallbackInputTokens: sum("input_tokens", unrecorded), fallbackOutputTokens: sum("output_tokens", unrecorded), fallbackCacheWriteTokens: sum("cache_write_tokens", unrecorded), fallbackCacheReadTokens: sum("cache_read_tokens", unrecorded),
         recordedCostInput: sum("recorded_cost_input"), recordedCostOutput: sum("recorded_cost_output"), recordedCostCacheWrite: sum("recorded_cost_cache_write"), recordedCostCacheRead: sum("recorded_cost_cache_read"), recordedCostTotal: sum("recorded_cost_total"), recordedCostCount: successful.filter(r => r.recorded_cost_total != null).length,
@@ -1833,7 +2054,31 @@ class PostgresLogManager {
       return costs;
     }, { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, total: 0 });
   }
-  async getCostBreakdown(filters: any = {}) { const rows = await this.requestRows({ ...filters, status: "success" }); const groups = await this.getGroupedAggregates({ ...filters, status: "success" }); return groups.map((g: any) => ({ model: g.model || "Unknown", tokenAccountingVersion: g.tokenAccountingVersion || null, inputTokens: g.successInputTokens, outputTokens: g.successOutputTokens, cacheWriteTokens: g.successCacheWriteTokens, cacheReadTokens: g.successCacheReadTokens })); }
+  async getCostBreakdown(filters: any = {}) {
+    // Unbounded history reads success-only rollup counters, which stay exact after
+    // detail pruning. Bounded ranges read projections so their inclusive timestamp
+    // bounds remain exact, filtering successes directly.
+    const fullDay = filters.from == null && filters.to == null;
+    const source = fullDay ? "request_daily_rollups" : "request_logs";
+    const clauses = fullDay ? ["1=1"] : ["type = 'request_end'", "projection_version >= 2", "status = 'success'"];
+    const params: unknown[] = [];
+    const add = (sql: string, value: unknown) => { params.push(value); clauses.push(sql.replace("?", `$${params.length}`)); };
+    if (!fullDay && filters.from != null) add("occurred_at >= ?", filters.from);
+    if (!fullDay && filters.to != null) add("occurred_at <= ?", filters.to);
+    const tokens = (rollup: string, raw: string) => `SUM(${fullDay ? rollup : raw})`;
+    const rows = await this.db.all(`SELECT request_model, token_accounting_version,
+      ${tokens("success_input_tokens", "input_tokens")} AS input_tokens,
+      ${tokens("success_output_tokens", "output_tokens")} AS output_tokens,
+      ${tokens("success_cache_write_tokens", "cache_write_tokens")} AS cache_write_tokens,
+      ${tokens("success_cache_read_tokens", "cache_read_tokens")} AS cache_read_tokens
+      FROM ${source} WHERE ${clauses.join(" AND ")} GROUP BY request_model, token_accounting_version`, params);
+    return rows.map((row: any) => ({
+      model: row.request_model || "Unknown",
+      tokenAccountingVersion: row.token_accounting_version || null,
+      inputTokens: nonNegativeNumber(row.input_tokens), outputTokens: nonNegativeNumber(row.output_tokens),
+      cacheWriteTokens: nonNegativeNumber(row.cache_write_tokens), cacheReadTokens: nonNegativeNumber(row.cache_read_tokens),
+    }));
+  }
 
   private errorWhere(filters: any = {}) { const clauses: string[] = []; const params: unknown[] = []; for (const [field, column] of [["model", "model"], ["endpoint", "endpoint_name"], ["key", "masked_api_key"]] as const) if (filters[field]) { params.push(filters[field]); clauses.push(`${column} = $${params.length}`); } if (filters.statusCode != null && filters.statusCode !== "" && Number.isInteger(Number(filters.statusCode))) { params.push(Number(filters.statusCode)); clauses.push(`status_code = $${params.length}`); } return { clause: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "", params }; }
   async getErrorLogs(filters: any = {}) { const { clause, params } = this.errorWhere(filters); const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 200); const offset = Math.max(Number(filters.offset) || 0, 0); const rows = await this.db.all(`SELECT id,timestamp,request_id,model,upstream_model,endpoint_key,endpoint_name,api_format,status_code,error_type,error_code,error_message,auto_model,target_model,routing_attempts FROM error_logs${clause} ORDER BY timestamp DESC,id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`, [...params, limit, offset]); return rows.map(mapErrorRow); }
@@ -1842,6 +2087,24 @@ class PostgresLogManager {
   async getErrorLogById(id: unknown) { const n = Number(id); return Number.isInteger(n) && n > 0 ? mapErrorRow(await this.db.get("SELECT * FROM error_logs WHERE id = ?", [n])) : null; }
   async getLatestErrorForRequestId(requestId: string | null | undefined) { if (!requestId) return null; const row: any = await this.db.get("SELECT id,timestamp,status_code,error_type,error_code,error_message FROM error_logs WHERE request_id = ? ORDER BY id DESC LIMIT 1", [requestId]); return row ? { id: row.id, timestamp: row.timestamp, statusCode: row.status_code, errorType: row.error_type, errorCode: row.error_code, errorMessage: row.error_message } : null; }
   async clearErrorLogs() { return (await this.db.run("DELETE FROM error_logs")).changes; }
+  async pruneOldRequests(cutoffEpochSeconds: number) {
+    const cutoff = Math.floor(cutoffEpochSeconds / 86400) * 86400;
+    const cutoffIso = new Date(cutoff * 1000).toISOString();
+    const result = await this.db.transaction(async (db) => {
+      const starts = await db.run(`DELETE FROM request_logs WHERE type = 'request_start'
+        AND ((data->>'timestamp')::double precision < ?
+          OR data->>'request_id' IN (
+            SELECT request_id FROM request_logs
+            WHERE type = 'request_end' AND occurred_at IS NOT NULL AND occurred_at < ? AND request_id IS NOT NULL
+          ))`, [cutoff, cutoff]);
+      const ends = await db.run(`DELETE FROM request_logs
+        WHERE type = 'request_end' AND occurred_at IS NOT NULL AND occurred_at < ?`, [cutoff]);
+      const errors = await db.run("DELETE FROM error_logs WHERE timestamp < ?", [cutoffIso]);
+      return { requests: starts.changes + ends.changes, errors: errors.changes };
+    });
+    this.invalidateAdminStatsCache();
+    return result;
+  }
   async readErrorLogs(limit = 50) { return this.getErrorLogs({ limit }); }
   async renameModel(oldName: string, newName: string) { const result = await this.db.transaction(async tx => { const requestLogs = await tx.run("UPDATE request_logs SET model = ?, request_model = CASE WHEN request_model = ? THEN ? ELSE request_model END, data = jsonb_set(jsonb_set(jsonb_set(jsonb_set(data, '{model}', CASE WHEN data->>'model' = ? THEN to_jsonb(?::text) ELSE data->'model' END), '{requested_model}', CASE WHEN data->>'requested_model' = ? THEN to_jsonb(?::text) ELSE data->'requested_model' END), '{auto_model}', CASE WHEN data->>'auto_model' = ? THEN to_jsonb(?::text) ELSE data->'auto_model' END), '{target_model}', CASE WHEN data->>'target_model' = ? THEN to_jsonb(?::text) ELSE data->'target_model' END) WHERE model = ? OR request_model = ? OR data->>'model' = ? OR data->>'requested_model' = ? OR data->>'auto_model' = ? OR data->>'target_model' = ?", [newName, oldName, newName, oldName, newName, oldName, newName, oldName, newName, oldName, newName, oldName, oldName, oldName, oldName, oldName, oldName]); const errorLogs = await tx.run("UPDATE error_logs SET model = CASE WHEN model = ? THEN ? ELSE model END, auto_model = CASE WHEN auto_model = ? THEN ? ELSE auto_model END, target_model = CASE WHEN target_model = ? THEN ? ELSE target_model END WHERE model = ? OR auto_model = ? OR target_model = ?", [oldName, newName, oldName, newName, oldName, newName, oldName, oldName, oldName]); return { requestLogs: requestLogs.changes, requestData: requestLogs.changes, rollups: 0, errorLogs: errorLogs.changes }; }); this.invalidateAdminStatsCache(); return result; }
   async close() {

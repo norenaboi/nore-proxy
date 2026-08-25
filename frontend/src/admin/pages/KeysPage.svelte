@@ -20,6 +20,7 @@
   let addName = $state("");
   let addKey = $state("");
   let addLoading = $state(false);
+  let createdKey = $state("");
 
   async function load() {
     try {
@@ -76,18 +77,29 @@
     }
     addLoading = true;
     try {
+      const submittedKey = addKey.trim();
       await requestAdminJson("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: addName.trim(), api_key: addKey.trim() }),
+        body: JSON.stringify({ name: addName.trim(), api_key: submittedKey }),
       });
-      toast.show("API key added successfully");
+      createdKey = submittedKey;
+      toast.show("API key added — copy it now");
       addName = ""; addKey = "";
       await load();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : "Failed to add key", "error");
     } finally {
       addLoading = false;
+    }
+  }
+
+  async function copyCreatedKey() {
+    try {
+      await navigator.clipboard.writeText(createdKey);
+      toast.show("API key copied");
+    } catch {
+      toast.show("Could not copy automatically", "error");
     }
   }
 
@@ -124,6 +136,20 @@
     </div>
   </div>
 </section>
+
+{#if createdKey}
+  <section class="card created-key-card" role="status">
+    <div class="card-header"><h2><i class="fa-solid fa-triangle-exclamation"></i> Save this key now</h2></div>
+    <div class="card-body">
+      <p>This key is stored as a one-way hash and cannot be shown again.</p>
+      <div class="created-key-row">
+        <code>{createdKey}</code>
+        <button class="btn btn-secondary" type="button" onclick={copyCreatedKey}>Copy</button>
+        <button class="btn btn-secondary" type="button" onclick={() => createdKey = ""}>Dismiss</button>
+      </div>
+    </div>
+  </section>
+{/if}
 
 <section class="card keys-card">
   <div class="card-header">
@@ -191,6 +217,10 @@
 {/if}
 
 <style>
+  .created-key-card { border-color: color-mix(in srgb, var(--warning, #c58b00) 45%, var(--border-color)); }
+  .created-key-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .created-key-row code { flex: 1 1 28rem; min-width: 0; overflow-wrap: anywhere; padding: 10px 12px; border-radius: 6px; background: var(--surface-muted, rgba(127, 127, 127, 0.1)); }
+
   .card { overflow: hidden; margin-bottom: 18px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); box-shadow: none; }
   .card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 24px; border-bottom: 1px solid var(--border-color); }
   .card-header h2 { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--text-primary); font: 500 18px/1.2 Georgia, "Times New Roman", serif; }

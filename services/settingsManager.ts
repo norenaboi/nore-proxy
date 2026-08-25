@@ -9,6 +9,7 @@ import fs from "fs";
 import { getSettingsPath } from "../utils/configPaths.js";
 import type { GenerationDefaults } from "../types/endpoint.js";
 import type { Settings, SettingsUpdate } from "../types/settings.js";
+import { writeJsonAtomic } from "../utils/atomicJson.js";
 
 class SettingsManager {
   private _defaults!: Settings;
@@ -25,6 +26,7 @@ class SettingsManager {
       rpdDefault: 500,
       rpmDefault: 10,
       maxContextSizeDefault: 0,
+      requestLogRetentionDays: 0,
 
       // Default prompt caching for new endpoints (only applied at creation time)
       defaultEndpointPromptCachingEnabled: false,
@@ -84,10 +86,7 @@ class SettingsManager {
 
   _saveToFile() {
     try {
-      fs.writeFileSync(
-        getSettingsPath(),
-        JSON.stringify(this._overrides, null, 2),
-      );
+      writeJsonAtomic(getSettingsPath(), this._overrides);
     } catch (err) {
       console.error(
         "[SettingsManager] Failed to save settings.json:",

@@ -9,6 +9,7 @@ test-results/
 .env
 
 # Data files that should not be baked into images
+data/
 logs/
 models.json
 endpoints.json

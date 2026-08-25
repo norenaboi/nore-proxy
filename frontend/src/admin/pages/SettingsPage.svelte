@@ -5,6 +5,7 @@
 
   interface Settings {
     rpdDefault: number; rpmDefault: number; maxContextSizeDefault: number;
+    requestLogRetentionDays: number;
     keyHopAttempts: number; autoModelMaxTargetAttempts: number; keyTimeoutHours: number;
     defaultEndpointApiFormat: string; defaultEndpointKeyRotation: string;
     defaultEndpointKeyHealth: boolean; defaultEndpointRetryAttempts: number;
@@ -36,6 +37,7 @@
     if (isNaN(s.rpdDefault) || s.rpdDefault < 1) return toast.show("RPD default must be at least 1", "error");
     if (isNaN(s.rpmDefault) || s.rpmDefault < 1) return toast.show("RPM default must be at least 1", "error");
     if (isNaN(s.maxContextSizeDefault) || s.maxContextSizeDefault < 0) return toast.show("Max context size must be 0 or higher", "error");
+    if (!Number.isInteger(s.requestLogRetentionDays) || s.requestLogRetentionDays < 0) return toast.show("Request log retention must be a whole number of days, or 0", "error");
     if (isNaN(s.keyHopAttempts) || s.keyHopAttempts < 0) return toast.show("Key hop attempts must be 0 or higher", "error");
     if (isNaN(s.autoModelMaxTargetAttempts) || s.autoModelMaxTargetAttempts < 1 || s.autoModelMaxTargetAttempts > 20) return toast.show("Auto model target attempts must be 1–20", "error");
     if (isNaN(s.keyTimeoutHours) || s.keyTimeoutHours < 1) return toast.show("Key timeout hours must be at least 1", "error");
@@ -91,6 +93,16 @@
           <div class="setting-control"><input class="number-input" type="number" bind:value={(s as Record<string, unknown>)[field as string]} {min} {step} {placeholder} /></div>
         </div>
       {/each}
+      </div>
+    </section>
+
+    <section class="settings-card">
+      <div class="card-header"><i class="fa-solid fa-clock-rotate-left"></i><h2>Logs</h2><span class="card-subtitle">Data retention</span></div>
+      <div class="card-body">
+        <div class="setting-row">
+          <div class="setting-info"><div class="setting-label">Request Log Retention</div><div class="setting-description">Delete request details and errors older than this many days. 0 keeps them indefinitely.</div></div>
+          <div class="setting-control"><input class="number-input" type="number" bind:value={s.requestLogRetentionDays} min="0" step="1" placeholder="0" /></div>
+        </div>
       </div>
     </section>
 

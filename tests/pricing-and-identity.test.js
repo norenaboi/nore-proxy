@@ -48,10 +48,10 @@ test("cost calculation applies per-million token rates", () => {
 
 test("API key identity is stable, secret-bound, and safely masked", () => {
   const previousMasterKey = process.env.MASTER_KEY;
-  const previousAnalyticsSecret = process.env.NORE_PROXY_ANALYTICS_SECRET;
+  const previousAnalyticsSecret = process.env.ANALYTICS_SECRET;
   try {
     process.env.MASTER_KEY = "test-only-master-key";
-    delete process.env.NORE_PROXY_ANALYTICS_SECRET;
+    delete process.env.ANALYTICS_SECRET;
     const first = getApiKeyId("secret-api-key");
     assert.equal(first, getApiKeyId("secret-api-key"));
     assert.notEqual(first, getApiKeyId("different-key"));
@@ -74,7 +74,7 @@ test("API key identity is stable, secret-bound, and safely masked", () => {
   } finally {
     if (previousMasterKey === undefined) delete process.env.MASTER_KEY;
     else process.env.MASTER_KEY = previousMasterKey;
-    if (previousAnalyticsSecret === undefined) delete process.env.NORE_PROXY_ANALYTICS_SECRET;
-    else process.env.NORE_PROXY_ANALYTICS_SECRET = previousAnalyticsSecret;
+    if (previousAnalyticsSecret === undefined) delete process.env.ANALYTICS_SECRET;
+    else process.env.ANALYTICS_SECRET = previousAnalyticsSecret;
   }
 });

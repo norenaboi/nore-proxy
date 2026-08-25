@@ -141,6 +141,17 @@ function startBackgroundTasks(): void {
   }, 60 * 60 * 1000);
   backgroundTasks.add(sessionCleanupTask);
 
+  const logRetentionTask = setInterval(() => {
+    if (SHUTTING_DOWN) return;
+    const retentionDays = settingsManager.get("requestLogRetentionDays");
+    if (retentionDays <= 0) return;
+    const cutoff = Date.now() / 1000 - retentionDays * 24 * 60 * 60;
+    void logManager.pruneOldRequests(cutoff).catch((error: unknown) =>
+      console.error("Error pruning old request logs:", error),
+    );
+  }, 24 * 60 * 60 * 1000);
+  backgroundTasks.add(logRetentionTask);
+
   // Cleanup task
   const cleanupTask = setInterval(() => {
     if (SHUTTING_DOWN) return;

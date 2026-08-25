@@ -93,7 +93,7 @@ Environment variables configure server-level behavior that cannot be changed at 
 
 ### Runtime settings
 
-Rate-limit defaults, prompt caching, endpoint creation defaults, key-hop limits, and the global automatic-model target-attempt ceiling are managed through the admin Settings UI and persisted in `settings.json`. They can be changed without restarting the server. The automatic-model ceiling bounds each request; model-specific limits may lower it but cannot exceed it.
+Rate-limit defaults, prompt caching, endpoint creation defaults, key-hop limits, log retention, and the global automatic-model target-attempt ceiling are managed through the admin Settings UI and persisted in `settings.json`. They can be changed without restarting the server. A log-retention value of `0` keeps details indefinitely. SQLite and PostgreSQL retain all-time daily totals, per-key/model usage, and cost aggregates after detail pruning; bounded, status-filtered, and endpoint-specific history remains limited to the retained detail window. The automatic-model ceiling bounds each request; model-specific limits may lower it but cannot exceed it.
 
 The server will not start if `MASTER_KEY` is missing or shorter than 16 characters.
 

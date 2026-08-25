@@ -13,7 +13,6 @@ import { loadModelsFromFile, normalizeEndpointUrl, getModelsUrl, getEndpointForM
 import axios from "axios";
 import { testUpstreamModel } from "../utils/modelTest.js";
 import { calculateCost } from "../utils/logging.js";
-import { getApiKeyId } from "../utils/keyIdentity.js";
 import crypto from "crypto";
 import { createSession, deleteSession } from "../services/sessionManager.js";
 import {
@@ -21,6 +20,7 @@ import {
   validateModelDefinition,
 } from "../utils/autoRouting.js";
 import { getEndpointsPath, getModelsPath } from "../utils/configPaths.js";
+import { writeFileAtomic, writeJsonAtomic } from "../utils/atomicJson.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -213,13 +213,12 @@ function finalizeDashboardAggregate(aggregate: any) {
   };
 }
 
-function buildDashboardRanges(requests: any[], configuredKeys: Record<string, DynamicRecord>) {
+function buildDashboardRanges(
+  requests: any[],
+  configuredKeys: Array<{ id: string; mask: string; name: string }>,
+) {
   const now = Date.now() / 1000;
-  const keyDefinitions = Object.entries(configuredKeys).map(([apiKey, key]) => ({
-    id: getApiKeyId(apiKey),
-    mask: maskKey(apiKey),
-    name: key.name || "Unnamed",
-  }));
+  const keyDefinitions = configuredKeys;
   const masks = new Map();
   for (const key of keyDefinitions) {
     masks.set(key.mask, (masks.get(key.mask) || 0) + 1);
@@ -265,22 +264,23 @@ function buildDashboardRanges(requests: any[], configuredKeys: Record<string, Dy
 router.get("/api/logs", verifySession, async (req: any, res: any) => {
   const allApiKeys = await apiKeyManager.getKeyMap();
   const dashboardData = [];
+  const keyDefinitions: Array<{ id: string; mask: string; name: string }> = [];
 
   const allLogs = await logManager.readRequestLogs(10000);
   const currentTime = Date.now() / 1000;
   const dayAgo = currentTime - 86400;
 
-  for (const apiKey of Object.keys(allApiKeys)) {
-    const stats = await apiKeyManager.getUsageStats(apiKey);
+  for (const keyHash of Object.keys(allApiKeys)) {
+    const storedKey = await apiKeyManager.getStoredKey(keyHash);
+    if (!storedKey) continue;
+    const stats = await apiKeyManager.getUsageStats(keyHash, null, true);
+    keyDefinitions.push({ id: storedKey.id, mask: storedKey.mask, name: storedKey.name || "Unnamed" });
 
-    // Compute masked key used in logs for this API key
-    const maskedKey = maskKey(apiKey);
-
-    const keyLogs = allLogs.filter((l: any) => l.api_key === maskedKey);
+    const keyLogs = allLogs.filter((l: any) => l.api_key === storedKey.mask);
     const { total_cost, daily_cost } = computeCostsFromLogs(keyLogs);
 
     dashboardData.push({
-      name: await apiKeyManager.getKeyName(apiKey),
+      name: storedKey.name,
       total_requests: stats.total_requests,
       daily_requests: stats.daily_requests || 0,
       total_input_tokens: stats.total_input_tokens || 0,
@@ -391,7 +391,7 @@ router.get("/api/logs", verifySession, async (req: any, res: any) => {
 
   const ranges = buildDashboardRanges(
     await logManager.getDashboardRequestLogs(),
-    allApiKeys,
+    keyDefinitions,
   );
 
   res.json({
@@ -756,9 +756,10 @@ router.delete("/api/keys", verifySession, async (req: any, res: any) => {
       return res.status(404).json({ error: "API key not found" });
     }
 
-    const name = await apiKeyManager.getKeyName(apiKey);
+    const storedKey = await apiKeyManager.getStoredKey(apiKey);
+    const name = storedKey?.name || "Unknown";
     await apiKeyManager.removeKey(apiKey);
-    console.log(`Deleted API key: ${name} (${maskKey(apiKey)})`);
+    console.log(`Deleted API key: ${name} (${storedKey?.mask || "Unknown"})`);
 
     res.json({ message: "API key deleted successfully" });
   } catch (error: any) {
@@ -904,7 +905,7 @@ router.post("/api/models", verifySession, async (req: any, res: any) => {
     if (validationError) return res.status(400).json({ error: validationError });
 
     data.models[name] = stored;
-    fs.writeFileSync(getModelsPath(), JSON.stringify(data, null, 2));
+    writeJsonAtomic(getModelsPath(), data);
     loadModelsFromFile();
     return res.json({ message: "Model added" });
   } catch (error: any) {
@@ -955,11 +956,11 @@ router.put("/api/models", verifySession, async (req: any, res: any) => {
     if (validationError) return res.status(400).json({ error: validationError });
 
     data.models = candidateModels;
-    fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2));
+    writeJsonAtomic(modelsPath, data);
     try {
       if (nameChanged) await logManager.renameModel(oldName, name);
     } catch (error: any) {
-      fs.writeFileSync(modelsPath, originalContent);
+      writeFileAtomic(modelsPath, originalContent, { backups: 0 });
       throw error;
     }
 
@@ -982,7 +983,7 @@ router.delete("/api/models", verifySession, async (req: any, res: any) => {
     const existing = data.models[name];
     if (!existing) return res.status(404).json({ error: "Model not found" });
     delete data.models[name];
-    fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2));
+    writeJsonAtomic(modelsPath, data);
     loadModelsFromFile();
     return res.json({ message: "Model deleted" });
   } catch (error: any) {
@@ -1004,7 +1005,7 @@ router.patch("/api/models/visibility", verifySession, async (req: any, res: any)
 
     const hidden = existing.hidden !== true;
     data.models[name] = { ...existing, hidden };
-    fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2));
+    writeJsonAtomic(modelsPath, data);
     loadModelsFromFile();
     return res.json({ message: `Model ${hidden ? "hidden" : "shown"}`, hidden });
   } catch (error: any) {
@@ -1031,7 +1032,7 @@ router.patch("/api/models/toggle", verifySession, async (req: any, res: any) => 
       if (validationError) return res.status(400).json({ error: validationError });
     }
     data.models[name] = updated;
-    fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2));
+    writeJsonAtomic(modelsPath, data);
     loadModelsFromFile();
     return res.json({ message: `Model ${disabled ? "disabled" : "enabled"}`, disabled });
   } catch (error: any) {
@@ -1300,7 +1301,7 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
       retryAttempts,
     };
 
-    fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
+    writeJsonAtomic(endpointsPath, data);
     Config.loadEndpoints();
     res.json({ message: "Endpoint added", index: newIndex });
   } catch (error: any) {
@@ -1493,7 +1494,7 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
       data[endpointKey].retryAttempts = retryAttempts;
     }
 
-    fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
+    writeJsonAtomic(endpointsPath, data);
     Config.loadEndpoints();
     res.json({ message: "Endpoint updated" });
   } catch (error: any) {
@@ -1542,13 +1543,13 @@ router.delete("/api/endpoints", verifySession, async (req: any, res: any) => {
       delete modelsData.models[modelName];
     }
     delete data[endpointKey];
-    fs.writeFileSync(endpointsPath, JSON.stringify(data, null, 2));
+    writeJsonAtomic(endpointsPath, data);
     try {
       if (modelsContent !== null && endpointConcreteModels.length > 0) {
-        fs.writeFileSync(modelsPath, JSON.stringify(modelsData, null, 2));
+        writeJsonAtomic(modelsPath, modelsData);
       }
     } catch (error: any) {
-      fs.writeFileSync(endpointsPath, content);
+      writeFileAtomic(endpointsPath, content, { backups: 0 });
       throw error;
     }
 
@@ -1819,6 +1820,9 @@ router.put("/api/settings", verifySession, (req: any, res: any) => {
     if (updates.maxContextSizeDefault !== undefined && (!Number.isInteger(updates.maxContextSizeDefault) || updates.maxContextSizeDefault < 0)) {
       return res.status(400).json({ error: "Max context size default must be an integer >= 0" });
     }
+    if (updates.requestLogRetentionDays !== undefined && (!Number.isInteger(updates.requestLogRetentionDays) || updates.requestLogRetentionDays < 0)) {
+      return res.status(400).json({ error: "Request log retention must be an integer >= 0" });
+    }
 
     // Validate smart key management settings if present
     if (updates.keyHopAttempts !== undefined && (!Number.isInteger(updates.keyHopAttempts) || updates.keyHopAttempts < 0)) {
@@ -1910,12 +1914,14 @@ router.get("/api/users", verifySession, async (req: any, res: any) => {
     const allApiKeys = await apiKeyManager.getKeyMap();
     const users = [];
 
-    for (const apiKey of Object.keys(allApiKeys)) {
-      const stats = await apiKeyManager.getUsageStats(apiKey);
+    for (const keyHash of Object.keys(allApiKeys)) {
+      const storedKey = await apiKeyManager.getStoredKey(keyHash);
+      if (!storedKey) continue;
+      const stats = await apiKeyManager.getUsageStats(keyHash, null, true);
       users.push({
-        id: getApiKeyId(apiKey),
+        id: storedKey.id,
         name: stats.name || "Unnamed",
-        api_key: maskKey(apiKey),
+        api_key: storedKey.mask,
         active: stats.active,
         daily_requests: stats.daily_requests || 0,
         total_requests: stats.total_requests || 0,
@@ -1944,19 +1950,20 @@ router.get("/api/users", verifySession, async (req: any, res: any) => {
 // so the secret never appears in a URL, access log, or browser history.
 router.get("/api/users/:keyId", verifySession, async (req: any, res: any) => {
   try {
-    const fullApiKey = await apiKeyManager.resolveKeyId(req.params.keyId);
-    if (!fullApiKey) {
+    const keyHash = await apiKeyManager.resolveKeyId(req.params.keyId);
+    if (!keyHash) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const storedKey = await apiKeyManager.getStoredKey(keyHash);
+    if (!storedKey) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const stats = await apiKeyManager.getUsageStats(fullApiKey);
+    const stats = await apiKeyManager.getUsageStats(keyHash, null, true);
     const logs = await logManager.readRequestLogs(10000);
 
-    // Get masked key for log filtering
-    const maskedKey = maskKey(fullApiKey);
-
     // Filter logs for this user
-    const allUserLogs = logs.filter((log: any) => log.api_key === maskedKey);
+    const allUserLogs = logs.filter((log: any) => log.api_key === storedKey.mask);
     const userCosts = computeCostsFromLogs(allUserLogs);
 
     const userLogs = allUserLogs
@@ -1987,7 +1994,7 @@ router.get("/api/users/:keyId", verifySession, async (req: any, res: any) => {
 
     res.json({
       name: stats.name || "Unnamed",
-      api_key: maskKey(fullApiKey),
+      api_key: storedKey.mask,
       active: stats.active,
       daily_requests: stats.daily_requests || 0,
       total_requests: stats.total_requests || 0,
