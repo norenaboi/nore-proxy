@@ -59,6 +59,15 @@ export async function logRequestStart(requestId: any, model: any, params: any, m
   await logManager.writeRequestLog(logEntry);
 }
 
+/**
+ * Note that the first byte of a streaming response has reached the client.
+ * Every streaming write path must call this: the uptime layer's responsiveness
+ * metric is this instant, not stream completion. Repeat calls are no-ops.
+ */
+export function markFirstToken(requestId: string) {
+  realtimeStats.markFirstToken(requestId);
+}
+
 export async function logRequestEnd(
   requestId: string,
   success: boolean,
@@ -197,14 +206,25 @@ export async function logRequestEnd(
   // Hand the outcome to the uptime layer last, once request logging has
   // finished. The call is synchronous, in-memory, and cannot throw, so nothing
   // above it depends on the uptime layer being healthy.
+  //
+  // A stream stamps `first_token_time` when its first byte reaches the client,
+  // which splits the wall-clock duration into the wait for the first token and
+  // the generation that followed. Non-streaming requests have no first-token
+  // instant to measure, so they report latency only.
+  const latencyMs = duration * 1000;
+  const ttftMs = typeof req.first_token_time === "number"
+    ? Math.max(0, (req.first_token_time - req.start_time) * 1000)
+    : null;
   recordUptimeSample({
     model: typeof req.model === "string" ? req.model : "",
     endpoint: typeof allowedRoutingMetadata.endpoint_name === "string"
       ? allowedRoutingMetadata.endpoint_name
       : null,
     success,
-    latencyMs: duration * 1000,
+    latencyMs,
+    ttftMs,
     outputTokens,
+    generationMs: ttftMs === null ? null : Math.max(0, latencyMs - ttftMs),
   });
 }
 

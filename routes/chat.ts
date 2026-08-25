@@ -5,7 +5,7 @@ import { verifyApiKey } from "../middleware/auth.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import settingsManager from "../services/settingsManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
-import { logRequestStart, logRequestEnd, logError, normalizeBillingTokens } from "../utils/logging.js";
+import { logRequestStart, logRequestEnd, logError, markFirstToken, normalizeBillingTokens } from "../utils/logging.js";
 import { MODEL_REGISTRY, getEndpointForConcreteModel, getFullUrl, estimateTokens, estimateTokensFromLength, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, resolveKeyHealth, resolveRetryAttempts, getClientIp } from "../utils/helpers.js";
 import { createBoundedText, guardCarryBuffer, type BoundedText } from "../utils/streamLimits.js";
 import keyStateManager, { ACTIONABLE_CODES } from "../services/keyStateManager.js";
@@ -403,7 +403,7 @@ function consumeStream(stream: StreamWithDestroy, res: Response, state: any, ada
           if (parsed?.deltaContent) content.append(parsed.deltaContent);
           if (parsed?.deltaReasoning) reasoning.append(parsed.deltaReasoning);
           usage = mergeUsage(usage, parsed?.usage);
-          if (chunkOut && !res.writableEnded) { markStreamOutputStarted(state); res.write(`data: ${JSON.stringify(chunkOut)}\n\n`); }
+          if (chunkOut && !res.writableEnded) { markStreamOutputStarted(state); markFirstToken(requestId); res.write(`data: ${JSON.stringify(chunkOut)}\n\n`); }
         } catch (error: any) { fail(error); return; }
       }
     });

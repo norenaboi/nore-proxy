@@ -11,7 +11,7 @@ import {
   resetAutoRoutingCounters,
   validateModelDefinition,
 } from "./autoRouting.js";
-import type { ModelDefinition, ModelPricingRegistry, ModelRegistry } from "../types/models.js";
+import type { ModelDefinition, ModelPricingRegistry, ModelRegistry, RegisteredModel } from "../types/models.js";
 
 type ModelLoadOptions = {
   excludeHashes?: Set<string>;
@@ -282,6 +282,19 @@ export function estimateTokens(input: any) {
  */
 export function getModelDefinition(modelName: any) {
   return MODEL_REGISTRY[modelName] || null;
+}
+
+/**
+ * The models a client is allowed to see, as `[name, definition]` pairs.
+ *
+ * Every public surface must derive its model list from here rather than
+ * filtering `MODEL_REGISTRY` itself: when `/v1/models` and the status page each
+ * carry their own idea of visibility they drift, and a surface that answers
+ * with a model the catalog denies discloses it. Models that are hidden,
+ * disabled, or invalid are absent — the last two never reach the registry.
+ */
+export function publicModelEntries(): Array<[string, RegisteredModel]> {
+  return Object.entries(MODEL_REGISTRY).filter(([, model]) => model.hidden !== true);
 }
 
 export function getConcreteModelMeta(modelName: any) {

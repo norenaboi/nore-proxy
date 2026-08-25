@@ -10,6 +10,7 @@ import {
   logRequestStart,
   logRequestEnd,
   logError,
+  markFirstToken,
   normalizeBillingTokens,
 } from "../utils/logging.js";
 import {
@@ -188,7 +189,13 @@ function toolResultText(content: any) {
 
 function writeAnthropicEvent(res: any, event: any, data: any) {
   if (res.writableEnded) return;
-  if ((res as any).__routingState) markStreamOutputStarted((res as any).__routingState);
+  // The converted path routes every event through here, so this is also where
+  // its first client-visible byte is timed.
+  const state = (res as any).__routingState;
+  if (state) {
+    markStreamOutputStarted(state);
+    markFirstToken(state.requestId);
+  }
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
@@ -1087,6 +1094,7 @@ function streamAnthropicPassthrough(
         }
         if (!res.writableEnded) {
           markStreamOutputStarted(routingState);
+          markFirstToken(requestId);
           writeAnthropicEvent(res, eventName || data.type, data);
         }
       }

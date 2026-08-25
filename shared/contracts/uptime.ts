@@ -60,6 +60,13 @@ export interface PublicUptimeSummary {
   model_name: string;
   success_rate: number;
   avg_latency_ms: number;
+  /**
+   * Mean time to first token, or 0 when no sample carried one. This is the
+   * figure the status page headlines: `avg_latency_ms` covers the whole request,
+   * so for a stream it grows with the length of the answer rather than measuring
+   * how fast the model started replying.
+   */
+  avg_ttft_ms: number;
   status: UptimeStatus;
   series: PublicUptimeBucket[];
 }
@@ -83,9 +90,9 @@ export const UPTIME_RECENT_BUCKETS = 12;
 
 /** Availability bands used for status labelling, from new-api's UptimeStatusRow. */
 export const UPTIME_STATUS_THRESHOLDS = {
-  operational: 99.9,
-  minor: 99,
-  degraded: 95,
+  operational: 90,
+  minor: 80,
+  degraded: 70,
 } as const;
 
 export type UptimeStatus = "operational" | "minor" | "degraded" | "major" | "unknown";

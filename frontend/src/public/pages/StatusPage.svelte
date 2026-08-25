@@ -85,6 +85,15 @@
     return value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${Math.round(value)} ms`;
   }
 
+  /**
+   * The headline figure is time to first token, so a long answer does not read as
+   * a slow model. Total request time stays available on hover, and an em dash
+   * means no streaming sample was measured in this window.
+   */
+  function latencyTitle(model: PublicUptimeSummary): string {
+    return `Average time to first token${model.avg_ttft_ms > 0 ? "" : " — no streaming samples in this window"}\nAverage total response time: ${formatLatency(model.avg_latency_ms)}`;
+  }
+
   function formatBucketTime(ts: number): string {
     const date = new Date(ts * 1000);
     return bucketSeconds >= 86400
@@ -271,9 +280,9 @@
                   <span class="metric-label">Uptime</span>
                   <span class="metric-value">{formatRate(model.success_rate)}</span>
                 </div>
-                <div class="metric">
-                  <span class="metric-label">Avg latency</span>
-                  <span class="metric-value">{formatLatency(model.avg_latency_ms)}</span>
+                <div class="metric" title={latencyTitle(model)}>
+                  <span class="metric-label">Avg TTFT</span>
+                  <span class="metric-value">{formatLatency(model.avg_ttft_ms)}</span>
                 </div>
               </div>
 

@@ -9,7 +9,7 @@
 import express, { type Request, type Response } from "express";
 import { verifySession } from "../middleware/auth.js";
 import uptimeService from "../services/uptime/index.js";
-import { MODEL_REGISTRY } from "../utils/helpers.js";
+import { publicModelEntries } from "../utils/helpers.js";
 import {
   UPTIME_BUCKET_SECONDS_ALLOWED,
   UPTIME_BUCKET_SECONDS_DEFAULT,
@@ -45,25 +45,36 @@ function emptyResponse(hours: number, bucketSeconds: number): ModelUptimeRespons
   };
 }
 
-export function publicResponse(payload: ModelUptimeResponse): PublicUptimeResponse {
+/**
+ * Projects an internal payload onto the public status page.
+ *
+ * `publishedModels` is the catalog the page describes, defaulting to exactly what
+ * `/v1/models` serves. Recorded samples are attached to those models and nothing
+ * else: uptime is keyed by the model the client asked for, so a hidden model that
+ * receives traffic has history of its own, and folding that history in would put
+ * a model the catalog withholds onto a public page. Models the registry no longer
+ * carries — deleted, disabled, renamed in history — are dropped for the same
+ * reason; the page reports on what is being served now.
+ */
+export function publicResponse(
+  payload: ModelUptimeResponse,
+  publishedModels: string[] = publicModelEntries().map(([name]) => name),
+): PublicUptimeResponse {
   const observed = new Map(payload.models.map((model) => [model.model_name, model]));
-  const configuredModels = Object.entries(MODEL_REGISTRY as Record<string, { hidden?: boolean }>)
-    .filter(([, model]) => model.hidden !== true)
-    .map(([name]) => name);
-  const modelNames = [...new Set([...configuredModels, ...observed.keys()])];
 
   return {
     window_hours: payload.window_hours,
     bucket_seconds: payload.bucket_seconds,
     generated_at: payload.generated_at,
     available: payload.available,
-    models: modelNames.map((modelName) => {
+    models: publishedModels.map((modelName) => {
       const model = observed.get(modelName);
       if (!model) {
         return {
           model_name: modelName,
           success_rate: 0,
           avg_latency_ms: 0,
+          avg_ttft_ms: 0,
           status: "unknown",
           series: [],
         };
@@ -72,6 +83,7 @@ export function publicResponse(payload: ModelUptimeResponse): PublicUptimeRespon
         model_name: model.model_name,
         success_rate: model.success_rate,
         avg_latency_ms: model.avg_latency_ms,
+        avg_ttft_ms: model.avg_ttft_ms,
         status: uptimeStatus(model.success_rate, model.request_count),
         series: model.series.map((bucket) => ({
           ts: bucket.ts,
