@@ -35,6 +35,7 @@ function sqlitePath(file: string): string {
     "api_keys.db": process.env.API_KEY_DB_PATH || process.env.NORE_PROXY_API_KEY_DB_PATH,
     "key_states.db": process.env.KEY_STATE_DB_PATH || process.env.NORE_PROXY_KEY_STATE_DB_PATH,
     "logs.db": process.env.LOG_DB_PATH || process.env.NORE_PROXY_LOG_DB_PATH,
+    "uptime.db": process.env.UPTIME_DB_PATH || process.env.NORE_PROXY_UPTIME_DB_PATH,
   };
   return overrides[file] || path.join(Config.LOG_DIR, file);
 }

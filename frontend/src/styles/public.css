@@ -71,6 +71,8 @@ a { color: inherit; }
 .public-head nav a, .public-footer a { color: var(--muted); text-decoration: none; }
 .public-head nav a:hover, .public-head nav a[aria-current="page"] { color: var(--accent-ink); }
 .public-main { width: min(1200px, calc(100% - 48px)); margin: auto; padding: 54px 0 70px; }
+.status-main { width: min(1120px, calc(100% - 48px)); margin: 0 auto; padding: 36px 0 28px; }
+.public-utility.status-shell { top: max(16px, env(safe-area-inset-top)); }
 .public-main.not-found-main { min-height: 0; flex: 1; display: flex; }
 /* margin on .public-main centers vertically as well, which suits documents but
    not the wide pages; the horizontal auto must stay. */
@@ -192,6 +194,7 @@ button, input { font: inherit; }
   .public-head, .public-footer { width: calc(100% - 32px); align-items: flex-start; padding: 18px 0; }
   .public-head { display: grid; }
   .public-main { width: calc(100% - 32px); padding-top: 38px; }
+  .status-main { width: calc(100% - 32px); padding-top: 24px; }
   /* .wide-main outranks the rule above, so its mobile width is set explicitly. */
   .public-main.wide-main { width: calc(100% - 32px); }
   .public-head nav { gap: 16px; overflow-x: auto; }

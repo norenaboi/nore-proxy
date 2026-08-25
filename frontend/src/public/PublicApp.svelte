@@ -11,6 +11,7 @@
   import ModelsPage from "./pages/ModelsPage.svelte";
   import NotFoundPage from "./pages/NotFoundPage.svelte";
   import PlaygroundPage from "./pages/PlaygroundPage.svelte";
+  import StatusPage from "./pages/StatusPage.svelte";
   import UsagePage from "./pages/UsagePage.svelte";
 
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -26,6 +27,7 @@
     "/": "Unified model access",
     "/usage": "Usage",
     "/models": "Models",
+    "/status": "System Status",
     "/playground": "Playground",
     "/terms": "Terms of Service",
     "/privacy": "Privacy Policy",
@@ -44,6 +46,8 @@
     <UsagePage />
   {:else if path === "/models"}
     <ModelsPage />
+  {:else if path === "/status"}
+    <StatusPage />
   {:else if path === "/playground"}
     <PlaygroundPage />
   {:else if path === "/terms"}

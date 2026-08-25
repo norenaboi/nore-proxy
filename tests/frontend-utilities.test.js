@@ -18,6 +18,13 @@ import {
   readPublicTheme,
   setPublicTheme,
 } from "../frontend/src/lib/publicTheme.js";
+import {
+  groupStatusModels,
+  providerCounts,
+  statusMatchesFilter,
+  statusTotals,
+  worstStatus,
+} from "../frontend/src/lib/status.js";
 
 class MemoryStorage {
   values = new Map();
@@ -82,6 +89,42 @@ test("model catalog classifies, normalizes, caches, and formats models", () => {
   assert.equal(formatModelName("claude-3-7-sonnet-20250219"), "Claude 3.7 Sonnet 20250219");
   assert.equal(formatModelName("gpt-4-32k"), "GPT 4 32k");
   assert.equal(formatPrice(0.003), "$0.003");
+});
+
+test("status helpers roll up categories and group filtered models without mutating input", () => {
+  const models = [
+    { model_name: "gpt-zeta", success_rate: 100, avg_latency_ms: 10, status: "operational", series: [] },
+    { model_name: "claude-beta", success_rate: 99.5, avg_latency_ms: 20, status: "minor", series: [] },
+    { model_name: "claude-alpha", success_rate: 96, avg_latency_ms: 30, status: "degraded", series: [] },
+    { model_name: "gemini-down", success_rate: 90, avg_latency_ms: 40, status: "major", series: [] },
+    { model_name: "gemini-new", success_rate: 0, avg_latency_ms: 0, status: "unknown", series: [] },
+  ];
+  const originalOrder = models.map((model) => model.model_name);
+
+  assert.equal(statusMatchesFilter("minor", "degraded"), true);
+  assert.equal(statusMatchesFilter("degraded", "degraded"), true);
+  assert.equal(statusMatchesFilter("major", "down"), true);
+  assert.equal(statusMatchesFilter("unknown", "down"), true);
+  assert.equal(statusMatchesFilter("operational", "down"), false);
+  assert.equal(worstStatus(["operational", "minor", "major"]), "major");
+  assert.equal(worstStatus([]), "unknown");
+  assert.deepEqual(statusTotals(models), { total: 5, operational: 1, degraded: 2, down: 2 });
+  assert.deepEqual([...providerCounts(models)], [["Anthropic", 2], ["Google", 2], ["OpenAI", 1]]);
+
+  const groups = groupStatusModels(models);
+  assert.deepEqual(groups.map((group) => group.provider), ["Anthropic", "Google", "OpenAI"]);
+  assert.deepEqual(groups[0].models.map((model) => model.model_name), ["claude-alpha", "claude-beta"]);
+  assert.equal(groups[0].status, "degraded");
+  assert.deepEqual(models.map((model) => model.model_name), originalOrder);
+
+  assert.deepEqual(groupStatusModels(models, { query: "ANTHROPIC" }).map((group) => group.provider), ["Anthropic"]);
+  assert.deepEqual(groupStatusModels(models, { query: "GPT-Z" })[0].models.map((model) => model.model_name), ["gpt-zeta"]);
+  assert.deepEqual(
+    groupStatusModels(models, { filter: "degraded", providers: new Set(["Anthropic"]) })[0].models.map((model) => model.model_name),
+    ["claude-alpha", "claude-beta"],
+  );
+  assert.equal(groupStatusModels(models, { filter: "operational", providers: new Set(["Google"]) }).length, 0);
+  assert.equal(groupStatusModels(models, { providers: new Set() }).length, 3);
 });
 
 test("model editor derives names and detects duplicates", () => {

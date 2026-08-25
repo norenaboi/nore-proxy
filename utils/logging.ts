@@ -6,6 +6,7 @@ import { getSafeKeyMetadata } from "./keyIdentity.js";
 import { calculateModelCost, normalizeModelPricing } from "./pricing.js";
 import { sanitizeHeadersForLogging } from "./errorLogging.js";
 import { sanitizeUpstreamUrl } from "./upstreamErrors.js";
+import { recordUptimeSample } from "../services/uptime/index.js";
 import type { ErrorLogContext } from "../types/log.js";
 
 type RoutingMetadata = {
@@ -192,6 +193,19 @@ export async function logRequestEnd(
   await logManager.writeRequestLog(logEntry);
 
   realtimeStats.activeRequests.delete(requestId);
+
+  // Hand the outcome to the uptime layer last, once request logging has
+  // finished. The call is synchronous, in-memory, and cannot throw, so nothing
+  // above it depends on the uptime layer being healthy.
+  recordUptimeSample({
+    model: typeof req.model === "string" ? req.model : "",
+    endpoint: typeof allowedRoutingMetadata.endpoint_name === "string"
+      ? allowedRoutingMetadata.endpoint_name
+      : null,
+    success,
+    latencyMs: duration * 1000,
+    outputTokens,
+  });
 }
 
 export async function logError(

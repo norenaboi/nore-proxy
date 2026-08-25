@@ -11,6 +11,7 @@ import keyStateManager from "./services/keyStateManager.js";
 import logManager from "./services/logManager.js";
 import { closeSessionManager, cleanupExpiredSessions, initializeSessionManager } from "./services/sessionManager.js";
 import realtimeStats from "./services/realtimeStats.js";
+import uptimeService from "./services/uptime/index.js";
 
 // Import routes
 import rateLimiter from "./middleware/rateLimiter.js";
@@ -21,6 +22,7 @@ import statsRoutes, { setStartupTime } from "./routes/stats.js";
 import adminRoutes from "./routes/admin.js";
 import pagesRoutes from "./routes/pages.js";
 import logsRoutes from "./routes/logs.js";
+import uptimeRoutes from "./routes/uptime.js";
 import { initializeFrontend, renderFrontend } from "./frontend/server/frontendHost.js";
 
 const app = express();
@@ -109,6 +111,10 @@ async function initialize(): Promise<void> {
   // Load models from file
   loadModelsFromFile();
 
+  // Bring up the uptime layer. It never rejects — a failure degrades that layer
+  // alone and leaves the proxy fully operational.
+  await uptimeService.initialize();
+
   // Start rate limiter cleanup
   rateLimiter.startCleanup();
 
@@ -169,6 +175,7 @@ app.use(statsRoutes);
 app.use(adminRoutes);
 app.use(pagesRoutes);
 app.use(logsRoutes);
+app.use(uptimeRoutes);
 
 // Health check
 app.get("/health", (_req: Request, res: Response) => {
@@ -212,6 +219,7 @@ function gracefulShutdown(signal: string): void {
       keyStateManager.close(),
       logManager.close(),
       closeSessionManager(),
+      uptimeService.shutdown(),
     ]);
     process.exit(0);
   };
