@@ -229,7 +229,6 @@
     margin-bottom: 26px;
   }
 
-  .catalog-head .lead { max-width: 760px; margin-bottom: 0; }
   .back-link { white-space: nowrap; }
 
   .toolbar { display: grid; gap: 14px; margin-bottom: 24px; }

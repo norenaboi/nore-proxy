@@ -22,6 +22,7 @@
   --text-primary: #241b2d; --text-secondary: #70657c; --text-tertiary: #9a8fa5;
   --border-color: #ddd4e7; --sidebar-bg: #f3eefc;
   --sidebar-text: #70657c; --sidebar-text-hover: #241b2d;
+  --sidebar-rule: rgba(86,61,124,.1);
   --card-bg: #fff; --card-shadow: none; --card-shadow-hover: 0 12px 30px rgba(63,40,100,.08);
   --input-bg: #fff; --input-border: #d8cce3; --focus: #3f2864;
 }
@@ -33,6 +34,7 @@
   --text-primary: #f2edf7; --text-secondary: #c7bbd2; --text-tertiary: #94869f;
   --border-color: #403449; --sidebar-bg: #211a29;
   --sidebar-text: #b7a9c3; --sidebar-text-hover: #fff;
+  --sidebar-rule: rgba(255,255,255,.07);
   --card-bg: #231d2a; --input-bg: #19151e; --input-border: #4a3c55;
   --gray-50: #211a29; --gray-100: #2d2437; --gray-200: #3b3045; --gray-300: #4a3c55;
   --gray-400: #796b84; --gray-500: #a99bb5; --gray-600: #c7bbd2;
@@ -41,7 +43,7 @@
 
 html { scroll-behavior: smooth; }
 body {
-  min-height: 100vh; padding-left: 220px;
+  min-height: 100vh; padding-left: 236px;
   background: var(--bg-primary); color: var(--text-primary);
   font: 14px/1.5 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   transition: background-color .2s ease, color .2s ease;
@@ -53,19 +55,34 @@ a { color: inherit; }
 .skip-link:focus { transform: translateY(0); }
 
 /* Sidebar */
-.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 100; width: 220px; padding: 28px 22px; display: flex; flex-direction: column; background: var(--sidebar-bg); border-right: 1px solid var(--border-color); }
+.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 100; width: 236px; padding: 28px 22px; display: flex; flex-direction: column; overflow-y: auto; background: var(--sidebar-bg); border-right: 1px solid var(--border-color); }
 .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .logo::after { content: "Administration"; position: absolute; top: 79px; color: var(--text-secondary); font: 800 10px/1.2 Inter,sans-serif; letter-spacing: .12em; }
 .logo-icon { width: 36px; height: 36px; display: block; border-radius: 8px; object-fit: contain; }
 .logo-text { color: var(--text-primary); font: 600 18px/1 Georgia,"Times New Roman",serif; }
-.nav-menu { display: grid; align-content: start; gap: 3px; margin-top: 44px; flex: 1; }
-.nav-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-left: 2px solid transparent; border-radius: 7px; color: var(--sidebar-text); text-decoration: none; cursor: pointer; transition: color .16s ease, background .16s ease; }
+/* The rule clears the absolutely-positioned "Administration" eyebrow, so it
+   reads as the end of the header block rather than a nav divider. The nav grows
+   into free space but never shrinks below its content, leaving the sidebar to
+   scroll on short viewports: making the nav its own scroll container instead
+   turns the 2px hover shift into a horizontal scrollbar across the footer rule. */
+.nav-menu { display: grid; align-content: start; gap: 18px; margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--sidebar-rule); flex: 1 0 auto; }
+.nav-section { display: grid; gap: 3px; }
+.nav-item, .logout { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 8px; font-size: 15px; font-weight: 500; cursor: pointer; }
+.nav-item { border-left: 2px solid transparent; color: var(--sidebar-text); text-decoration: none; transition: color .16s ease, background .16s ease; }
+/* Logout is a button with a uniform 1px border where the links carry a 2px one
+   on the left only, so a 1px narrower left padding lands both icons on the same
+   pixel. */
+.logout { width: 100%; padding-left: 13px; border: 1px solid transparent; background: transparent; color: var(--danger); }
+/* 1.25em is the widest Font Awesome glyph used here, so the box fits every icon
+   and aligning left keeps their left edges flush — centring would stagger them
+   by up to 2px, since the glyphs are not all the same width. */
+.nav-item i, .logout i { width: 1.25em; text-align: left; }
 .nav-item:hover { color: var(--sidebar-text-hover); background: rgba(255,255,255,.45); }
 [data-theme="dark"] .nav-item:hover { background: rgba(255,255,255,.05); }
 .nav-item[aria-current="page"] { color: var(--text-primary); background: var(--primary); border-left-color: var(--primary-dark); }
-.nav-item i { width: 17px; text-align: center; }
-.logout { display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 11px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--danger); cursor: pointer; }
 .logout:hover { background: var(--danger-alpha-01); border-color: var(--danger-alpha-02); }
+.sidebar-footer { display: grid; gap: 3px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--sidebar-rule); }
+.site-link { color: var(--sidebar-text); }
 
 /* Layout */
 .main-content { width: min(1244px, calc(100% - 64px)); min-height: 100vh; margin-inline: auto; padding: 46px 0 80px; }
@@ -213,18 +230,26 @@ pre.detail-pre { background: var(--bg-tertiary); border: 1px solid var(--border-
 @media (max-width: 1024px) {
   body { padding-left: 0; }
   .sidebar { position: static; width: 100%; padding: 16px; border-right: 0; border-bottom: 1px solid var(--border-color); }
-  .logo::after, .logout span { display: none; }
-  .nav-menu { display: flex; gap: 4px; margin: 0; overflow-x: auto; padding-bottom: 4px; }
+  .logo::after, .logout span, .site-link span { display: none; }
+  /* The bar is horizontal here, so the two rules and the section spacing that
+     structure the tall sidebar are dropped; the sections stay grouped by the
+     wider gap between them. */
+  .nav-menu { display: flex; gap: 14px; margin: 0; padding: 0 0 4px; border-top: 0; overflow-x: auto; }
+  .nav-section { display: flex; flex: 0 0 auto; gap: 4px; }
   .nav-item { flex: 0 0 auto; white-space: nowrap; }
   /* Kept clear of the pinned theme pill, which holds the top-right corner. */
-  .logout { position: absolute; top: 20px; right: calc(16px + var(--pill-reserve) + 12px); width: auto; }
+  .sidebar-footer { position: absolute; top: 20px; right: calc(16px + var(--pill-reserve) + 12px); display: flex; gap: 6px; margin: 0; padding: 0; border-top: 0; }
+  .logout, .site-link { width: auto; }
+  /* Label-less from here down, so the glyph is centred in its box instead. */
+  .logout i, .site-link i { text-align: center; }
   .main-content { width: 100%; margin-left: 0; padding-top: 30px; }
 }
 @media (max-width: 640px) {
   .main-content { padding: 26px 16px 60px; }
   .header { display: grid; }
   .nav-item span { display: none; }
-  .nav-item { padding: 9px 12px; }
+  .nav-item { padding: 11px 13px; }
+  .nav-item i { text-align: center; }
   .toast-viewport { right: 16px; bottom: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {

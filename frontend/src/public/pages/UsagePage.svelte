@@ -106,8 +106,6 @@
     margin-bottom: 34px;
   }
 
-  .usage-head .lead { max-width: 650px; }
-
   .input-group {
     display: block;
     padding: 24px;

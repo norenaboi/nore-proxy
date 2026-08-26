@@ -4,9 +4,15 @@
   import { requestAdminJson } from "$frontend/lib/api/admin";
   import { motionDuration } from "$frontend/lib/motion";
   import {
+    emptyHeaderPresets,
+    extractHeaderPresets,
     isDuplicateToken,
     mergeBulkTokens,
+    mergeHeaderPresets,
+    parseCustomHeaders,
     removeTokenAt,
+    serializeCustomHeaders,
+    type HeaderPresets,
   } from "$frontend/lib/endpoints/editor";
   import { pageHeaderActions, toast } from "$frontend/lib/stores";
 
@@ -50,6 +56,7 @@
   let fKeyHealth = $state(true);
   let fRetryAttempts = $state(0);
   let fHeaders = $state("");
+  let fHeaderPresets = $state<HeaderPresets>(emptyHeaderPresets());
   let tokenInput = $state("");
   let bulkInput = $state("");
   let pendingTokens = $state<string[]>([]);
@@ -140,7 +147,7 @@
 
   async function openAdd() {
     editingIndex = null;
-    fName = ""; fUrl = ""; fAppendSuffix = true; fHeaders = "";
+    fName = ""; fUrl = ""; fAppendSuffix = true; fHeaders = ""; fHeaderPresets = emptyHeaderPresets();
     tokenInput = ""; bulkInput = ""; pendingTokens = []; pendingDeleteConfirm = new Set();
     let defaults: Settings | undefined;
     try {
@@ -171,7 +178,9 @@
     tokenInput = ""; bulkInput = "";
     pendingTokens = [...(ep.tokens || (ep.token ? [ep.token] : []))];
     pendingDeleteConfirm = new Set();
-    fHeaders = ep.headers && Object.keys(ep.headers).length > 0 ? JSON.stringify(ep.headers, null, 2) : "";
+    const extracted = extractHeaderPresets(ep.headers);
+    fHeaderPresets = extracted.presets;
+    fHeaders = serializeCustomHeaders(extracted.rest);
     fApiFormat = ep.apiFormat || "openai";
     fKeyRotation = ep.keyRotation || "sticky";
     fKeyHealth = ep.keyHealth !== false;
@@ -183,6 +192,7 @@
 
   function closeModal() {
     modalOpen = false; editingIndex = null; pendingTokens = []; pendingDeleteConfirm = new Set();
+    fHeaderPresets = emptyHeaderPresets();
   }
 
   function collectGenDefaults() {
@@ -213,13 +223,12 @@
     if (!url) return toast.show("Please enter a URL", "error");
     if (!Number.isInteger(fRetryAttempts) || fRetryAttempts < 0 || fRetryAttempts > 10) return toast.show("Retry attempts must be 0–10", "error");
 
-    let headers: Record<string, string> = {};
-    if (fHeaders.trim()) {
-      let parsed: unknown;
-      try { parsed = JSON.parse(fHeaders); } catch { return toast.show("Invalid JSON in custom headers", "error"); }
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return toast.show("Custom headers must be a JSON object", "error");
-      headers = parsed as Record<string, string>;
+    if (fHeaderPresets.userAgent && !fHeaderPresets.userAgentValue.trim()) {
+      return toast.show("Enter a User-Agent value or turn the header off", "error");
     }
+    const parsedHeaders = parseCustomHeaders(fHeaders);
+    if (!parsedHeaders.ok) return toast.show(parsedHeaders.error, "error");
+    const headers = mergeHeaderPresets(parsedHeaders.headers, fHeaderPresets);
 
     const payload: Record<string, unknown> = {
       name, url, tokens: finalTokens, headers, apiFormat: fApiFormat, appendApiSuffix: fAppendSuffix,
@@ -385,8 +394,34 @@
 
       <div class="modal-body modal-body-grid">
         <div class="modal-body-col">
-          <div class="form-group"><label for="epName">Endpoint Name</label><input id="epName" type="text" bind:value={fName} placeholder="e.g., My API Server" /><p class="form-hint">A friendly name to identify this endpoint</p></div>
-          <div class="form-group"><label for="epUrl">Endpoint URL</label><input id="epUrl" type="url" bind:value={fUrl} placeholder="e.g., https://api.example.com" /><p class="form-hint">Use a base URL when automatic suffixes are on, or include a provider prefix such as /v4 or /v1beta/openai when off.</p><label class="gen-toggle suffix-toggle"><input type="checkbox" bind:checked={fAppendSuffix} /><span class="gen-toggle-slider"></span><span>Append API version suffix</span></label><p class="form-hint">On adds the format's full versioned route. Off preserves your URL prefix and adds only the operation path.</p></div>
+          <div class="form-group"><label for="epName">Endpoint Name</label><input id="epName" type="text" bind:value={fName} placeholder="e.g., My API Server" /></div>
+          <div class="form-group"><label for="epUrl">Endpoint URL</label><input id="epUrl" type="url" bind:value={fUrl} placeholder="e.g., https://api.example.com" /><label class="gen-toggle suffix-toggle"><input type="checkbox" bind:checked={fAppendSuffix} /><span class="gen-toggle-slider"></span><span>Append API version suffix (/v1)</span></label></div>
+          <div class="form-group"><label for="epFmt">API Format</label><select id="epFmt" bind:value={fApiFormat} class="form-select"><option value="openai">OpenAI — /v1/chat/completions (default)</option><option value="anthropic">Anthropic — /v1/messages</option><option value="gemini">Gemini — /v1beta/generateContent</option><option value="openai-responses">OpenAI Responses — /v1/responses</option><option value="openai-codex">OpenAI Codex — /v1/responses</option></select></div>
+          <div class="form-group"><div class="section-label">Generation Settings</div><p class="form-hint gen-hint">Off strips the client value. On with a blank field passes the client value through. On with a value overrides the client.</p>
+            <div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gTempEnabled} /><span class="gen-toggle-slider"></span><span>Temperature</span></label><input class="gen-input" class:active={gTempEnabled} disabled={!gTempEnabled} type="number" step="0.1" min="0" max="2" bind:value={gTemp} placeholder="1" /></div>
+            <div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gTopPEnabled} /><span class="gen-toggle-slider"></span><span>Top P</span></label><input class="gen-input" class:active={gTopPEnabled} disabled={!gTopPEnabled} type="number" step="0.05" min="0" max="1" bind:value={gTopP} placeholder="1" /></div>
+            <div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gMaxEnabled} /><span class="gen-toggle-slider"></span><span>Max Tokens</span></label><input class="gen-input" class:active={gMaxEnabled} disabled={!gMaxEnabled} type="number" step="1" min="1" bind:value={gMax} placeholder="4096" /></div>
+          </div>
+        </div>
+        <div class="modal-body-col">
+          <div class="form-group">
+            <div class="section-label">Custom Headers</div>
+            <div class="gen-setting-row header-preset-row">
+              <label class="gen-toggle"><input type="checkbox" bind:checked={fHeaderPresets.anthropicBeta} /><span class="gen-toggle-slider"></span><span class="header-preset-text"><span class="header-preset-name">anthropic-beta</span><span class="header-preset-value">context-1m-2025-08-07</span></span></label>
+            </div>
+            <div class="gen-setting-row header-preset-row">
+              <label class="gen-toggle"><input type="checkbox" bind:checked={fHeaderPresets.anthropicVersion} /><span class="gen-toggle-slider"></span><span class="header-preset-text"><span class="header-preset-name">anthropic-version</span><span class="header-preset-value">2023-06-01</span></span></label>
+            </div>
+            <div class="gen-setting-row header-preset-row header-preset-custom">
+              <label class="gen-toggle"><input type="checkbox" bind:checked={fHeaderPresets.userAgent} /><span class="gen-toggle-slider"></span><span class="header-preset-text"><span class="header-preset-name">User-Agent</span></span></label>
+              <input class="header-value-input" class:active={fHeaderPresets.userAgent} disabled={!fHeaderPresets.userAgent} type="text" bind:value={fHeaderPresets.userAgentValue} placeholder="e.g., my-app/1.0" aria-label="User-Agent header value" />
+            </div>
+            <label class="headers-json-label" for="epHeaders">Other headers (JSON)</label>
+            <textarea id="epHeaders" class="headers-input" bind:value={fHeaders} rows="4" placeholder={'{ "X-Custom-Header": "value" }'}></textarea>
+          </div>
+          <div class="form-group"><div class="section-label">Prompt Caching for Claude</div><p class="form-hint gen-hint">When enabled, cache_control breakpoints are injected into Claude messages. No effect on non-Claude models.</p><div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gCacheEnabled} /><span class="gen-toggle-slider"></span><span>Enable caching</span></label><input class="gen-input" class:active={gCacheEnabled} disabled={!gCacheEnabled} type="number" step="1" min="0" bind:value={gCacheDepth} placeholder="2" /></div><div class="gen-setting-row cache-ttl-row"><label class="gen-toggle" class:disabled={!gCacheEnabled}><input type="checkbox" bind:checked={gCacheOneHour} disabled={!gCacheEnabled} /><span class="gen-toggle-slider"></span><span>Caching for 1hr</span></label></div></div>
+        </div>
+        <div class="modal-body-col">
           <div class="form-group">
             <div class="section-label token-heading">API Tokens <span class="token-count">{pendingTokens.length ? `(${pendingTokens.length})` : ""}</span></div>
             <div class="tokens-scroll-list">
@@ -396,24 +431,32 @@
               {/each}
             </div>
             <div class="input-row"><input type="password" bind:value={tokenInput} placeholder={editingIndex !== null ? "Add a new token (optional)" : "Paste a token and press Add"} onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTokenFromInput(); } }} /><button class="btn btn-secondary" type="button" onclick={addTokenFromInput} disabled={!tokenInput.trim()}>Add</button></div>
-            <p class="form-hint">Keys are optional. Requests cannot use this endpoint until at least one key is configured.</p>
-            <div class="bulk-token-section"><textarea class="bulk-input" bind:value={bulkInput} rows="3" placeholder="Paste many tokens, one per line, then click Import"></textarea><div class="bulk-actions"><button class="btn btn-danger btn-sm" type="button" onclick={() => bulkDeleteOpen = true} disabled={pendingTokens.length === 0}><i class="fa-solid fa-trash"></i> Delete all keys</button><button class="btn btn-secondary btn-sm" type="button" onclick={importBulk} disabled={!bulkInput.trim()}><i class="fa-solid fa-file-import"></i> Import lines</button></div><p class="form-hint">One token per line. Blank lines, duplicates, and masked placeholders are skipped.</p></div>
+            <div class="bulk-token-section"><textarea class="bulk-input" bind:value={bulkInput} rows="3" placeholder="Paste many tokens, one per line, then click Import"></textarea><div class="bulk-actions"><button class="btn btn-danger btn-sm" type="button" onclick={() => bulkDeleteOpen = true} disabled={pendingTokens.length === 0}><i class="fa-solid fa-trash"></i> Delete all keys</button><button class="btn btn-secondary btn-sm" type="button" onclick={importBulk} disabled={!bulkInput.trim()}><i class="fa-solid fa-file-import"></i> Import lines</button></div></div>
           </div>
-        </div>
-        <div class="modal-body-col">
-          <div class="form-group"><label for="epHeaders">Custom Headers (JSON)</label><textarea id="epHeaders" bind:value={fHeaders} rows="4" placeholder={'{ "X-Custom-Header": "value" }'}></textarea><p class="form-hint">Add custom request headers as JSON. Example: {`{"X-Custom-Header": "value"}`}</p></div>
-          <div class="form-group"><div class="section-label">Generation Settings</div><p class="form-hint gen-hint">Off strips the client value. On with a blank field passes the client value through. On with a value overrides the client.</p>
-            <div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gTempEnabled} /><span class="gen-toggle-slider"></span><span>Temperature</span></label><input class="gen-input" class:active={gTempEnabled} disabled={!gTempEnabled} type="number" step="0.1" min="0" max="2" bind:value={gTemp} placeholder="1" /></div>
-            <div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gTopPEnabled} /><span class="gen-toggle-slider"></span><span>Top P</span></label><input class="gen-input" class:active={gTopPEnabled} disabled={!gTopPEnabled} type="number" step="0.05" min="0" max="1" bind:value={gTopP} placeholder="1" /></div>
-            <div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gMaxEnabled} /><span class="gen-toggle-slider"></span><span>Max Tokens</span></label><input class="gen-input" class:active={gMaxEnabled} disabled={!gMaxEnabled} type="number" step="1" min="1" bind:value={gMax} placeholder="4096" /></div>
+          <div class="form-group">
+            <div class="section-label">Key Settings</div>
+            <div class="gen-setting-row key-settings-row">
+              <label class="gen-toggle key-toggle">
+                <input type="checkbox" checked={fKeyRotation === "roundrobin"} onchange={(e) => fKeyRotation = e.currentTarget.checked ? "roundrobin" : "sticky"} />
+                <span class="gen-toggle-slider"></span>
+                <span>Round-robin</span>
+              </label>
+              <label class="gen-toggle key-toggle">
+                <input type="checkbox" bind:checked={fKeyHealth} />
+                <span class="gen-toggle-slider"></span>
+                <span>Key health</span>
+              </label>
+              <label class="key-retry-field">
+                <span>Retries</span>
+                <input class="gen-input active key-retry-input" type="number" min="0" max="10" step="1" bind:value={fRetryAttempts} />
+              </label>
+            </div>
+            <div class="key-hints">
+              <p class="form-hint"><strong>Round-robin</strong> off keeps using the first healthy key until it fails. On starts at a random healthy key, then cycles.</p>
+              <p class="form-hint"><strong>Key health</strong> on benches a failing key: 401/402 marks it invalid, 429 times it out for a while. Off leaves every key in play, which suits short-lived RPM limits.</p>
+              <p class="form-hint"><strong>Retries</strong> are extra attempts on the same key after a 5xx, timeout, or network error; 0 disables them. A 400/401/402/403/429 hops to the next healthy key either way.</p>
+            </div>
           </div>
-          <div class="form-group"><div class="section-label">Prompt Caching for Claude</div><p class="form-hint gen-hint">When enabled, cache_control breakpoints are injected into Claude messages. No effect on non-Claude models.</p><div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gCacheEnabled} /><span class="gen-toggle-slider"></span><span>Enable caching</span></label><input class="gen-input" class:active={gCacheEnabled} disabled={!gCacheEnabled} type="number" step="1" min="0" bind:value={gCacheDepth} placeholder="2" /></div><div class="gen-setting-row cache-ttl-row"><label class="gen-toggle" class:disabled={!gCacheEnabled}><input type="checkbox" bind:checked={gCacheOneHour} disabled={!gCacheEnabled} /><span class="gen-toggle-slider"></span><span>Caching for 1hr</span></label></div></div>
-        </div>
-        <div class="modal-body-col">
-          <div class="form-group"><label for="epFmt">API Format</label><select id="epFmt" bind:value={fApiFormat} class="form-select"><option value="openai">OpenAI — /v1/chat/completions (default)</option><option value="anthropic">Anthropic — /v1/messages</option><option value="gemini">Gemini — /v1beta/generateContent</option><option value="openai-responses">OpenAI Responses — /v1/responses</option><option value="openai-codex">OpenAI Codex — /v1/responses</option></select><p class="form-hint">Controls which API path is appended when forwarding requests to this endpoint.</p></div>
-          <div class="form-group"><label for="epRot">Key Rotation</label><select id="epRot" bind:value={fKeyRotation} class="form-select"><option value="sticky">Sticky — use the first healthy key until it fails</option><option value="roundrobin">Round-robin — start at a random healthy key, then cycle</option></select><p class="form-hint">How this endpoint picks among its keys. On a 400/401/402/403/429, the request hops to the next healthy key automatically.</p></div>
-          <div class="form-group"><label for="epHealth">Key Health</label><select id="epHealth" bind:value={fKeyHealth} class="form-select"><option value={true}>On — bench a key on 401/402/429</option><option value={false}>Off — never bench keys, just hop and return</option></select><p class="form-hint">When on, 401/402 marks a key invalid and 429 times it out temporarily. Turn this off for short-lived RPM/TPM limits so a good key is not parked for hours; requests still hop either way.</p></div>
-          <div class="form-group"><label for="epRetries">Retry Attempts</label><input id="epRetries" class="gen-input active" type="number" min="0" max="10" step="1" bind:value={fRetryAttempts} /><p class="form-hint">Extra attempts on the same key after a 5xx, timeout, or network error. 0 disables retries. Authentication and rate-limit errors hop keys immediately.</p></div>
         </div>
       </div>
 
@@ -519,7 +562,7 @@
   :global(.endpoint-modal .modal-close) { display: flex; width: 32px; height: 32px; align-items: center; justify-content: center; padding: 0; border-radius: 8px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 14px; transition: background .2s ease, color .2s ease; }
   :global(.endpoint-modal .modal-close:hover) { background: var(--gray-200); color: var(--text-primary); }
   .modal-body { min-height: 0; flex: 1; padding: 24px; overflow-y: auto; }
-  .modal-body-grid { display: grid; grid-template-columns: 1.5fr 1fr 1fr; align-items: start; gap: 24px; }
+  .modal-body-grid { display: grid; grid-template-columns: 1fr 1fr 1.4fr; align-items: start; gap: 24px; }
   .modal-body-col { min-width: 0; }
   .modal-body-col :global(.form-group:last-child) { margin-bottom: 0; }
   :global(.endpoint-modal .form-group) { margin-bottom: 20px; }
@@ -530,6 +573,19 @@
   :global(.endpoint-modal .modal-footer) { flex-shrink: 0; gap: 12px; margin: 0; padding: 16px 24px; border-top: 1px solid var(--border-color); }
   .form-hint { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
   .suffix-toggle { margin-top: 10px; }
+  .header-preset-row { align-items: flex-start; margin-bottom: 10px; }
+  .header-preset-text { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+  .header-preset-name { font-family: monospace; font-size: 12.5px; overflow-wrap: anywhere; }
+  .header-preset-value { color: var(--text-secondary); font: 400 11px monospace; overflow-wrap: anywhere; }
+  .header-preset-custom { align-items: center; gap: 10px; }
+  /* The toggle keeps its natural width so the slider lines up with the rows
+     above it, and the value input takes whatever is left of the row. */
+  .header-preset-custom .gen-toggle { flex: 0 0 auto; }
+  .header-value-input { min-width: 0; flex: 1 1 0; width: auto; box-sizing: border-box; padding: 9px 12px; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); font: 12.5px/normal monospace; opacity: .5; pointer-events: none; transition: border-color .2s ease, box-shadow .2s ease, opacity .2s ease; }
+  .header-value-input.active { opacity: 1; pointer-events: auto; }
+  .header-value-input:focus { outline: none; border-color: var(--primary); background-color: var(--card-bg); box-shadow: 0 0 0 3px var(--primary-alpha-01); }
+  .headers-json-label { display: block; margin: 14px 0 8px; color: var(--text-secondary); font-size: 11px; font-weight: 700; letter-spacing: .03em; }
+  .headers-input { width: 100%; max-width: 100%; box-sizing: border-box; resize: vertical; font-family: monospace; font-size: 13px; }
   .token-heading { margin-bottom: 8px; }
   .section-label { color: var(--text-secondary); }
   .token-count { color: var(--text-secondary); font-weight: 400; }
@@ -549,8 +605,11 @@
   .bulk-actions .btn { white-space: nowrap; }
   .gen-hint { margin-bottom: 12px; }
   .gen-setting-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-  .gen-toggle { display: inline-flex; align-items: center; flex: 1; gap: 10px; color: var(--gray-700); font-size: 14px; font-weight: 500; cursor: pointer; user-select: none; }
-  .gen-toggle input { display: none; }
+  .gen-toggle { position: relative; display: inline-flex; align-items: center; flex: 1; gap: 10px; color: var(--gray-700); font-size: 14px; font-weight: 500; cursor: pointer; user-select: none; }
+  /* Hidden but still focusable, so every toggle here stays reachable by keyboard.
+     The checkbox itself is invisible, so the ring is drawn on the slider. */
+  .gen-toggle input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; }
+  .gen-toggle input:focus-visible + .gen-toggle-slider { outline: 3px solid var(--focus); outline-offset: 2px; }
   .gen-toggle-slider { position: relative; width: 40px; height: 22px; flex-shrink: 0; border-radius: 22px; background: var(--gray-300); transition: background .2s ease; }
   .gen-toggle-slider::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: white; transition: transform .2s ease; }
   .gen-toggle input:checked + .gen-toggle-slider { background: var(--primary-dark); }
@@ -559,6 +618,17 @@
   .cache-ttl-row { margin-top: -4px; }
   .gen-input { width: 120px; flex-shrink: 0; opacity: .5; pointer-events: none; }
   .gen-input.active { opacity: 1; pointer-events: auto; }
+  /* Rotation, health, and retries share one row, so the toggles drop the
+     stretch that Generation Settings relies on and wrap instead of overflowing
+     when the column gets narrow. */
+  .key-settings-row { flex-wrap: wrap; gap: 10px 18px; margin-bottom: 0; }
+  .key-toggle { flex: 0 0 auto; }
+  .key-retry-field { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; color: var(--gray-700); font-size: 14px; font-weight: 500; cursor: pointer; user-select: none; }
+  .key-retry-input { width: 72px; }
+  /* One hint per control, so each line names the toggle it explains. */
+  .key-hints { display: grid; gap: 5px; margin-top: 12px; }
+  .key-hints .form-hint { margin: 0; }
+  .key-hints strong { color: var(--text-primary); font-weight: 600; }
   .key-health-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
   .key-health-toolbar p { margin: 0; }
   .key-health-toolbar > div { display: flex; gap: 8px; }

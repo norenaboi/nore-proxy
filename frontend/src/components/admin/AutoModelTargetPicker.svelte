@@ -10,17 +10,16 @@
 
   let {
     options,
-    selectedId,
-    onSelect,
+    onAdd,
   }: {
     options: CatalogModel[];
-    selectedId: string;
-    onSelect: (modelName: string) => void;
+    onAdd: (modelNames: string[]) => void;
   } = $props();
 
   let open = $state(false);
   let searchQuery = $state("");
   let activeFilters = $state(new Set<Provider>());
+  let pending = $state(new Set<string>());
   let wrapper: HTMLDivElement | undefined = $state();
   let trigger: HTMLButtonElement | undefined = $state();
   let searchBox: HTMLInputElement | undefined = $state();
@@ -69,6 +68,7 @@
     if (!open) return;
     searchQuery = "";
     activeFilters = new Set();
+    pending = new Set();
     positionPanel();
     void tick().then(() => {
       positionPanel();
@@ -79,12 +79,30 @@
   function close(): void {
     if (!open) return;
     open = false;
+    pending = new Set();
     trigger?.focus();
   }
 
-  function choose(modelName: string): void {
-    onSelect(modelName);
+  function togglePending(modelName: string): void {
+    const next = new Set(pending);
+    if (next.has(modelName)) next.delete(modelName);
+    else next.add(modelName);
+    pending = next;
+  }
+
+  // Emit in option order so the caller's failover priority matches what the
+  // list showed rather than the order rows happened to be clicked.
+  function confirm(): void {
+    const chosen = options.filter((option) => pending.has(option.id)).map((option) => option.id);
+    if (chosen.length === 0) return;
+    onAdd(chosen);
     close();
+  }
+
+  function selectVisible(): void {
+    const next = new Set(pending);
+    for (const option of visibleOptions) next.add(option.id);
+    pending = next;
   }
 
   function toggleFilter(provider: Provider): void {
@@ -137,14 +155,18 @@
     aria-controls={PANEL_ID}
     onclick={toggle}
   >
-    <span class:placeholder={!selectedId} class="trigger-id">
-      {selectedId || (options.length === 0 ? "No enabled concrete models available" : "Select a concrete model")}
+    <span class:placeholder={pending.size === 0} class="trigger-id">
+      {pending.size > 0
+        ? `${pending.size} selected`
+        : options.length === 0
+          ? "No enabled concrete models available"
+          : "Select concrete models"}
     </span>
     <span class="caret" aria-hidden="true">▾</span>
   </button>
 
   {#if open}
-    <div bind:this={panel} class="panel" id={PANEL_ID} role="dialog" aria-label="Select a concrete model" style={panelStyle}>
+    <div bind:this={panel} class="panel" id={PANEL_ID} role="dialog" aria-label="Select concrete models" style={panelStyle}>
       <div class:has-value={searchQuery.length > 0} class="search-wrap">
         <i class="fa-solid fa-magnifying-glass search-icon" aria-hidden="true"></i>
         <input bind:this={searchBox} bind:value={searchQuery} class="search-input" type="search" placeholder="Search models…" autocomplete="off" aria-label="Search concrete models" />
@@ -175,16 +197,24 @@
           <p class="empty">No models match.</p>
         {:else}
           {#each visibleOptions as option (option.id)}
-            <button class:selected={option.id === selectedId} class="row" type="button" aria-pressed={option.id === selectedId} onclick={() => choose(option.id)}>
+            <button class:selected={pending.has(option.id)} class="row" type="button" aria-pressed={pending.has(option.id)} onclick={() => togglePending(option.id)}>
               <img src={getProviderIcon(option.provider)} class="icon" alt="" loading="lazy" onerror={hideBrokenImage} />
               <span class="row-id">{option.id}</span>
               <span class="row-price">{formatPrice(option.pricing.input)} / {formatPrice(option.pricing.output)}</span>
-              {#if option.id === selectedId}<i class="fa-solid fa-check check" aria-hidden="true"></i>{/if}
+              {#if pending.has(option.id)}<i class="fa-solid fa-check check" aria-hidden="true"></i>{/if}
             </button>
           {/each}
         {/if}
       </div>
-      <p class="panel-note">Input / output price per million tokens.</p>
+      <div class="panel-actions">
+        <p class="panel-note">Input / output price per million tokens.</p>
+        <div class="panel-buttons">
+          <button class="panel-btn" type="button" disabled={visibleOptions.length === 0} onclick={selectVisible}>Select all shown</button>
+          <button class="panel-btn primary" type="button" disabled={pending.size === 0} onclick={confirm}>
+            Add {pending.size || ""} target{pending.size === 1 ? "" : "s"}
+          </button>
+        </div>
+      </div>
     </div>
   {/if}
 </div>
@@ -210,7 +240,7 @@
   .chip .count { position: absolute; right: -5px; bottom: -5px; display: inline-flex; min-width: 17px; height: 17px; align-items: center; justify-content: center; padding: 0 3px; border: 2px solid var(--card-bg); border-radius: 999px; background: var(--primary-dark); color: var(--card-bg); font: 700 9px/1 ui-monospace, monospace; }
   .icon { width: 24px; height: 24px; flex-shrink: 0; border-radius: 5px; object-fit: contain; }
   .chip .icon { width: 27px; height: 27px; }
-  .rows { display: grid; min-height: 0; max-height: min(320px, calc(var(--picker-room) - 112px)); overflow-y: auto; gap: 2px; }
+  .rows { display: grid; min-height: 0; max-height: min(320px, calc(var(--picker-room) - 148px)); overflow-y: auto; gap: 2px; }
   .row { display: grid; width: 100%; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; padding: 8px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; }
   .row-id { min-width: 0; overflow: hidden; overflow-wrap: anywhere; font-family: "Courier New", monospace; font-size: 12px; }
   .row-price { color: var(--text-secondary); font: 400 10.5px "Courier New", monospace; white-space: nowrap; }
@@ -219,6 +249,12 @@
   .row.selected { background: var(--primary-alpha-012); color: var(--primary-dark); font-weight: 600; }
   .empty, .panel-note { margin: 0; color: var(--text-secondary); font-size: 11.5px; }
   .empty { padding: 18px 6px; text-align: center; }
-  @media (max-width: 480px) { .target-dropdown { flex-basis: 100%; } .row-price { display: none; } }
+  .panel-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .panel-buttons { display: flex; flex-shrink: 0; gap: 6px; }
+  .panel-btn { padding: 6px 11px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--card-bg); color: var(--text-secondary); font-size: 11.5px; font-weight: 600; cursor: pointer; }
+  .panel-btn:hover:not(:disabled) { border-color: var(--primary-dark); color: var(--primary-dark); }
+  .panel-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .panel-btn.primary { border-color: var(--primary-dark); background: var(--primary-alpha-012); color: var(--primary-dark); }
+  @media (max-width: 480px) { .target-dropdown { flex-basis: 100%; } .row-price { display: none; } .panel-actions { justify-content: flex-end; } .panel-note { order: 1; } }
   @media (prefers-reduced-motion: reduce) { .trigger, .row { transition: none; } }
 </style>

@@ -96,7 +96,6 @@
   }
 
   .intro h1 { max-width: 700px; }
-  .intro .lead { max-width: 720px; }
 
   .live-facts {
     margin: 0;

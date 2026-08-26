@@ -110,9 +110,14 @@
   }
 </script>
 
+<!-- The drag handlers are a pointer-only shortcut for the "Attach files" button
+     below, which stays the keyboard and screen-reader path. The role gives the
+     control cluster an identity so the handlers are not on an anonymous div. -->
 <div
   class:dragging
   class="composer panel"
+  role="group"
+  aria-label="Message composer"
   ondragenter={handleDragEnter}
   ondragover={handleDragOver}
   ondragleave={handleDragLeave}

@@ -6,8 +6,8 @@
  * `uptime.db` file; when `DATABASE_URL` selects PostgreSQL it is one more table
  * in that database, consistent with every other service here.
  *
- * Schema ported from new-api's `perf_metrics` table, with `endpoint_name`
- * replacing its `group` dimension since routing here is per endpoint.
+ * Buckets are keyed by model and `endpoint_name` rather than by any tenant or
+ * group dimension, since routing here is per endpoint.
  */
 import { DatabaseFacade } from "../database.js";
 import type { BucketCounters, BucketRow } from "./types.js";

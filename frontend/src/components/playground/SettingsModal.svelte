@@ -317,13 +317,6 @@
   .key-current { margin: 0; font-size: 13px; }
   .key-current code { font: 600 13px ui-monospace, monospace; }
 
-  .note {
-    margin: 0;
-    color: var(--muted);
-    font-size: 11.5px;
-    line-height: 1.55;
-  }
-
   .dialog-foot {
     display: flex;
     justify-content: flex-end;

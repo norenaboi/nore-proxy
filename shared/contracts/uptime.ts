@@ -1,10 +1,9 @@
 /**
  * Model uptime contracts.
  *
- * Ported from new-api's `pkg/perf_metrics`: per-model availability is the success
- * ratio of real relay traffic inside fixed time buckets, not a synthetic prober.
- * Field names mirror the upstream DTOs (`success_rate`, `avg_latency_ms`,
- * `avg_tps`, `recent_success_rates`) so the two implementations stay comparable.
+ * Per-model availability is the success ratio of real relay traffic inside fixed
+ * time buckets rather than the verdict of a synthetic prober, so a model counts
+ * as healthy exactly when the requests users actually sent it succeeded.
  *
  * The uptime layer is self-contained: it owns its storage, its aggregation, and
  * its routes, and it is designed so no failure inside it can reach the request
@@ -83,12 +82,12 @@ export const UPTIME_WINDOW_HOURS_DEFAULT = 24;
 /** Upstream caps queries at 30 days; the same ceiling applies here. */
 export const UPTIME_WINDOW_HOURS_MAX = 24 * 30;
 export const UPTIME_BUCKET_SECONDS_DEFAULT = 3600;
-/** Selectable granularities, matching new-api's minute/5-minute/hour options plus a day. */
+/** Selectable granularities: a minute, 5 and 15 minutes, an hour, and a day. */
 export const UPTIME_BUCKET_SECONDS_ALLOWED = [60, 300, 900, 3600, 86400] as const;
-/** Trailing buckets returned as `recent_success_rates`; new-api uses 3. */
+/** Trailing buckets returned as `recent_success_rates`. */
 export const UPTIME_RECENT_BUCKETS = 12;
 
-/** Availability bands used for status labelling, from new-api's UptimeStatusRow. */
+/** Availability bands used for status labelling. */
 export const UPTIME_STATUS_THRESHOLDS = {
   operational: 90,
   minor: 80,

@@ -127,7 +127,7 @@
   {#each images as image (image.id)}
     <figure class="bubble generated-image">
       {#if image.dataUrl}
-        <img src={image.dataUrl} alt="Generated image" />
+        <img src={image.dataUrl} alt="Generated output" />
         <figcaption>
           <a href={image.dataUrl} download={`generated-image.${extensionFor(image.mimeType)}`}>Download</a>
         </figcaption>
@@ -454,8 +454,6 @@
     color: var(--muted);
     cursor: pointer;
   }
-
-  .hint { margin: 0; color: var(--muted); font-size: 11.5px; }
 
   .turn-error {
     max-width: 100%;

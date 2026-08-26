@@ -14,18 +14,27 @@
     actions,
   }: { activePath: string; title: string; eyebrow?: string; children: Snippet; actions?: Snippet } = $props();
 
-  const navItems = [
-    { href: "/admin/dashboard", icon: "fa-brands fa-quinscape", label: "Dashboard" },
-    { href: "/admin/keys", icon: "fa-solid fa-key", label: "API Keys" },
-    { href: "/admin/endpoints", icon: "fa-solid fa-hexagon-nodes", label: "Endpoints" },
-    { href: "/admin/models", icon: "fa-solid fa-comment-nodes", label: "Models" },
-    { href: "/admin/users", icon: "fa-solid fa-chart-column", label: "API Key Stats" },
-    { href: "/admin/endpoint-stats", icon: "fa-solid fa-diagram-project", label: "Endpoint Stats" },
-    { href: "/admin/model-stats", icon: "fa-solid fa-chart-line", label: "Model Stats" },
-    { href: "/admin/logs", icon: "fa-solid fa-clock-rotate-left", label: "Logs" },
-    { href: "/admin/errors", icon: "fa-solid fa-triangle-exclamation", label: "Errors" },
-    { href: "/admin/console", icon: "fa-solid fa-terminal", label: "Console" },
-    { href: "/admin/settings", icon: "fa-solid fa-sliders", label: "Settings" },
+  // Resources, then the reporting pages, then everything operational. The groups
+  // are spaced apart in the sidebar rather than ruled off, so the two rules stay
+  // the only ones and keep reading as header / navigation / footer.
+  const navSections = [
+    [
+      { href: "/admin/dashboard", icon: "fa-brands fa-quinscape", label: "Dashboard" },
+      { href: "/admin/keys", icon: "fa-solid fa-key", label: "API Keys" },
+      { href: "/admin/endpoints", icon: "fa-solid fa-hexagon-nodes", label: "Endpoints" },
+      { href: "/admin/models", icon: "fa-solid fa-comment-nodes", label: "Models" },
+    ],
+    [
+      { href: "/admin/users", icon: "fa-solid fa-chart-column", label: "API Key Stats" },
+      { href: "/admin/endpoint-stats", icon: "fa-solid fa-diagram-project", label: "Endpoint Stats" },
+      { href: "/admin/model-stats", icon: "fa-solid fa-chart-line", label: "Model Stats" },
+    ],
+    [
+      { href: "/admin/logs", icon: "fa-solid fa-clock-rotate-left", label: "Logs" },
+      { href: "/admin/errors", icon: "fa-solid fa-triangle-exclamation", label: "Errors" },
+      { href: "/admin/console", icon: "fa-solid fa-terminal", label: "Console" },
+      { href: "/admin/settings", icon: "fa-solid fa-sliders", label: "Settings" },
+    ],
   ];
 </script>
 
@@ -41,21 +50,31 @@
     <span class="logo-text">Nore Proxy</span>
   </div>
   <nav class="nav-menu" aria-label="Admin navigation">
-    {#each navItems as item}
-      <a
-        class="nav-item"
-        href={item.href}
-        aria-current={activePath === item.href ? "page" : undefined}
-      >
-        <i class={item.icon}></i>
-        <span>{item.label}</span>
-      </a>
+    {#each navSections as section}
+      <div class="nav-section">
+        {#each section as item}
+          <a
+            class="nav-item"
+            href={item.href}
+            aria-current={activePath === item.href ? "page" : undefined}
+          >
+            <i class={item.icon}></i>
+            <span>{item.label}</span>
+          </a>
+        {/each}
+      </div>
     {/each}
   </nav>
-  <button class="logout" type="button" onclick={logout}>
-    <i class="fa-solid fa-right-from-bracket"></i>
-    <span>Logout</span>
-  </button>
+  <div class="sidebar-footer">
+    <a class="nav-item site-link" href="/">
+      <i class="fa-solid fa-arrow-left"></i>
+      <span>Back to Site</span>
+    </a>
+    <button class="logout" type="button" onclick={logout}>
+      <i class="fa-solid fa-right-from-bracket"></i>
+      <span>Logout</span>
+    </button>
+  </div>
 </aside>
 
 <main class="main-content" class:wide-content={activePath === "/admin/logs" || activePath === "/admin/endpoint-stats"} id="main">

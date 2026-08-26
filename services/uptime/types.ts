@@ -54,7 +54,7 @@ export function addCounters(target: BucketCounters, source: BucketCounters): voi
   target.generationMs += source.generationMs;
 }
 
-/** Bucket start for `ts`, matching new-api's `ts - (ts % bucketSeconds)`. */
+/** Bucket start for `ts`, floored as `ts - (ts % bucketSeconds)`. */
 export function bucketStart(ts: number, bucketSeconds: number): number {
   const size = bucketSeconds > 0 ? bucketSeconds : 3600;
   const seconds = Math.floor(ts);

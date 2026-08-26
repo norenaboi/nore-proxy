@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { effectiveModelName, filterModelNames, isDuplicateModelName, numericInputValue } from "../frontend/src/admin/modelForm.js";
-import { mergeBulkTokens, removeTokenAt } from "../frontend/src/lib/endpoints/editor.js";
+import { effectiveModelName, filterModelNames, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue } from "../frontend/src/admin/modelForm.js";
+import {
+  extractHeaderPresets,
+  mergeBulkTokens,
+  mergeHeaderPresets,
+  parseCustomHeaders,
+  removeTokenAt,
+  serializeCustomHeaders,
+} from "../frontend/src/lib/endpoints/editor.js";
 import {
   clearModelCache,
   formatModelName,
@@ -158,4 +165,106 @@ test("endpoint token editing skips duplicates and remaps confirmations", () => {
   const removed = removeTokenAt(["a", "b", "c"], new Set([0, 2]), 1);
   assert.deepEqual(removed.tokens, ["a", "c"]);
   assert.deepEqual([...removed.pendingConfirmations], [0, 1]);
+});
+
+test("custom header JSON parsing rejects anything that is not a string map", () => {
+  assert.deepEqual(parseCustomHeaders(""), { ok: true, headers: {} });
+  assert.deepEqual(parseCustomHeaders("   "), { ok: true, headers: {} });
+  assert.deepEqual(parseCustomHeaders('{"X-A":"1"}'), { ok: true, headers: { "X-A": "1" } });
+
+  assert.equal(parseCustomHeaders("{nope}").ok, false);
+  assert.equal(parseCustomHeaders("{nope}").error, "Invalid JSON in custom headers");
+  assert.equal(parseCustomHeaders("[]").error, "Custom headers must be a JSON object");
+  assert.equal(parseCustomHeaders("null").error, "Custom headers must be a JSON object");
+  assert.equal(parseCustomHeaders('{"X-A":3}').error, 'Custom header "X-A" must have a text value');
+  assert.equal(parseCustomHeaders('{"X-A":true}').ok, false);
+  assert.equal(parseCustomHeaders('{"X-A":{"b":"c"}}').ok, false);
+});
+
+test("header presets extract case-insensitively and keep unrecognized headers arbitrary", () => {
+  const extracted = extractHeaderPresets({
+    "ANTHROPIC-BETA": "context-1m-2025-08-07",
+    "Anthropic-Version": "2023-06-01",
+    "user-agent": "my-app/2.0",
+    "X-Keep": "keep-me",
+  });
+  assert.deepEqual(extracted.presets, {
+    anthropicBeta: true,
+    anthropicVersion: true,
+    userAgent: true,
+    userAgentValue: "my-app/2.0",
+  });
+  assert.deepEqual(extracted.rest, { "X-Keep": "keep-me" });
+
+  // A preset name carrying a non-canonical value stays arbitrary so editing never rewrites it.
+  const other = extractHeaderPresets({ "anthropic-beta": "some-other-beta" });
+  assert.equal(other.presets.anthropicBeta, false);
+  assert.deepEqual(other.rest, { "anthropic-beta": "some-other-beta" });
+
+  assert.deepEqual(extractHeaderPresets(undefined).rest, {});
+  assert.equal(extractHeaderPresets(undefined).presets.userAgentValue, "");
+});
+
+test("header presets merge once with canonical names and preserve arbitrary headers", () => {
+  const merged = mergeHeaderPresets(
+    { "X-Keep": "keep-me", "ANTHROPIC-BETA": "stale", "User-agent": "stale-agent" },
+    { anthropicBeta: true, anthropicVersion: true, userAgent: true, userAgentValue: "  my-app/1.0  " },
+  );
+  assert.deepEqual(merged, {
+    "X-Keep": "keep-me",
+    "anthropic-beta": "context-1m-2025-08-07",
+    "anthropic-version": "2023-06-01",
+    "User-Agent": "my-app/1.0",
+  });
+
+  const noPresets = mergeHeaderPresets(
+    { "anthropic-beta": "manual-value", "X-Keep": "keep-me" },
+    { anthropicBeta: false, anthropicVersion: false, userAgent: false, userAgentValue: "" },
+  );
+  assert.deepEqual(noPresets, { "anthropic-beta": "manual-value", "X-Keep": "keep-me" });
+});
+
+test("header presets survive an edit and resubmit round trip", () => {
+  const stored = {
+    "Anthropic-Beta": "context-1m-2025-08-07",
+    "user-agent": "my-app/3.1",
+    "X-Trace": "on",
+  };
+  const { presets, rest } = extractHeaderPresets(stored);
+  assert.equal(serializeCustomHeaders(rest), '{\n  "X-Trace": "on"\n}');
+
+  const resubmitted = mergeHeaderPresets(parseCustomHeaders(serializeCustomHeaders(rest)).headers, presets);
+  assert.deepEqual(resubmitted, {
+    "X-Trace": "on",
+    "anthropic-beta": "context-1m-2025-08-07",
+    "User-Agent": "my-app/3.1",
+  });
+  assert.equal(serializeCustomHeaders({}), "");
+});
+
+test("auto model targets reorder to any position and guard bad indexes", () => {
+  const targets = ["a", "b", "c", "d"];
+
+  assert.deepEqual(moveTargetTo(targets, 3, 0), ["d", "a", "b", "c"]);
+  assert.deepEqual(moveTargetTo(targets, 0, 3), ["b", "c", "d", "a"]);
+  assert.deepEqual(moveTargetTo(targets, 1, 2), ["a", "c", "b", "d"]);
+  assert.deepEqual(moveTargetTo(targets, 0, 9), ["b", "c", "d", "a"]);
+  assert.deepEqual(moveTargetTo(targets, 2, -4), ["c", "a", "b", "d"]);
+
+  // Unchanged input is returned as-is so callers can skip redundant updates.
+  assert.equal(moveTargetTo(targets, 1, 1), targets);
+  assert.equal(moveTargetTo(targets, -1, 0), targets);
+  assert.equal(moveTargetTo(targets, 4, 0), targets);
+  assert.deepEqual(targets, ["a", "b", "c", "d"]);
+});
+
+test("auto model target merging appends new names in order without duplicates", () => {
+  assert.deepEqual(mergeTargets(["a"], ["b", "c"]), ["a", "b", "c"]);
+  assert.deepEqual(mergeTargets(["a", "b"], ["b", "a"]), ["a", "b"]);
+  assert.deepEqual(mergeTargets(["a"], ["c", "c", "b"]), ["a", "c", "b"]);
+  assert.deepEqual(mergeTargets([], ["z", "", "y"]), ["z", "y"]);
+
+  const existing = ["a"];
+  assert.deepEqual(mergeTargets(existing, []), ["a"]);
+  assert.deepEqual(existing, ["a"]);
 });

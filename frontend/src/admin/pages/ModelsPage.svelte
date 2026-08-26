@@ -6,7 +6,7 @@
   import { pageHeaderActions, toast } from "$frontend/lib/stores";
   import AutoModelTargetPicker from "$frontend/components/admin/AutoModelTargetPicker.svelte";
   import { getProvider, type CatalogModel } from "$frontend/lib/models/catalog";
-  import { effectiveModelName, isDuplicateModelName, numericInputValue, type NumericInputValue } from "$frontend/admin/modelForm";
+  import { effectiveModelName, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, type NumericInputValue } from "$frontend/admin/modelForm";
   import type { ModelTestResult } from "$contracts/models";
 
   interface Pricing { input?: number; output?: number; cache_write?: number; cache_read?: number; }
@@ -74,7 +74,12 @@
   let fTargets = $state<string[]>([]);
   let fTargetSelection = $state<"sticky" | "roundrobin">("sticky");
   let fMaxAttempts = $state("");
-  let fTargetCandidate = $state("");
+
+  // Target drag reordering
+  let dragIndex = $state<number | null>(null);
+  let dragOrigin: number | null = null;
+  let dragAnnouncement = $state("");
+  let targetListEl = $state<HTMLDivElement | null>(null);
 
   // Upstream model fetching
   let availableModels = $state<string[]>([]);
@@ -294,7 +299,8 @@
     resetDraftTest();
     editingModel = null; modalMode = "add"; fName = ""; fType = "concrete"; fDisabled = false; fHidden = false;
     fVersion = ""; fBackend = ""; fPricing = { input: "", output: "", cache_write: "", cache_read: "" };
-    fTargets = []; fTargetSelection = "sticky"; fMaxAttempts = ""; fTargetCandidate = "";
+    fTargets = []; fTargetSelection = "sticky"; fMaxAttempts = "";
+    dragIndex = null; dragOrigin = null; dragAnnouncement = "";
     availableModels = []; upstreamFetched = false;
   }
 
@@ -343,19 +349,60 @@
 
   function closeModal() { modalOpen = false; resetForm(); }
 
-  function addTarget() {
-    if (!fTargetCandidate || fTargets.includes(fTargetCandidate)) return;
-    fTargets = [...fTargets, fTargetCandidate];
-    fTargetCandidate = "";
+  function addTargets(names: string[]) {
+    const merged = mergeTargets(fTargets, names);
+    const added = merged.length - fTargets.length;
+    if (added === 0) return;
+    fTargets = merged;
+    dragAnnouncement = `Added ${added} target${added === 1 ? "" : "s"}. ${fTargets.length} total.`;
   }
+
+  function announceOrder(name: string, index: number) {
+    dragAnnouncement = `${name} moved to position ${index + 1} of ${fTargets.length}.`;
+  }
+
   function moveTarget(i: number, delta: number) {
-    const j = i + delta;
-    if (j < 0 || j >= fTargets.length) return;
-    const next = [...fTargets];
-    [next[i], next[j]] = [next[j], next[i]];
+    const next = moveTargetTo(fTargets, i, i + delta);
+    if (next === fTargets) return;
     fTargets = next;
+    announceOrder(next[i + delta], i + delta);
   }
   function removeTarget(i: number) { fTargets = fTargets.filter((_, idx) => idx !== i); }
+
+  // Drag reordering. The up/down buttons stay the keyboard path; this only adds a
+  // pointer affordance, swapping rows as the pointer crosses them.
+  function rowIndexFromPoint(clientY: number): number | null {
+    if (!targetListEl) return null;
+    const rows = [...targetListEl.querySelectorAll("[data-target-row]")];
+    if (rows.length === 0) return null;
+    for (let i = 0; i < rows.length; i++) {
+      if (clientY < rows[i].getBoundingClientRect().bottom) return i;
+    }
+    return rows.length - 1;
+  }
+
+  function startTargetDrag(event: PointerEvent, index: number) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.preventDefault();
+    dragIndex = index;
+    dragOrigin = index;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function moveTargetDrag(event: PointerEvent) {
+    if (dragIndex === null) return;
+    const over = rowIndexFromPoint(event.clientY);
+    if (over === null || over === dragIndex) return;
+    fTargets = moveTargetTo(fTargets, dragIndex, over);
+    dragIndex = over;
+  }
+
+  function endTargetDrag() {
+    if (dragIndex === null) return;
+    if (dragIndex !== dragOrigin) announceOrder(fTargets[dragIndex], dragIndex);
+    dragIndex = null;
+    dragOrigin = null;
+  }
 
   async function testDraftModel() {
     if (testingDraft) return;
@@ -745,20 +792,25 @@
         <div class="form-group auto-controls">
           <div class="form-section-label">Targets (ordered)</div>
           <div class="backend-select-row target-picker">
-            <AutoModelTargetPicker
-              options={availableTargets}
-              selectedId={fTargetCandidate}
-              onSelect={(modelName) => (fTargetCandidate = modelName)}
-            />
-            <button class="btn btn-secondary btn-sm" type="button" onclick={addTarget} disabled={!fTargetCandidate}>Add</button>
+            <AutoModelTargetPicker options={availableTargets} onAdd={addTargets} />
           </div>
-          <p class="form-help">Add any number of concrete model names. Order controls failover priority; unavailable names are skipped at request time.</p>
-          <div class="selected-targets">
+          <p class="form-help">Select any number of concrete models at once. Order controls failover priority — drag a row by its handle or use the arrows. Unavailable names are skipped at request time.</p>
+          <div class="selected-targets" bind:this={targetListEl}>
             {#if fTargets.length === 0}
               <p class="targets-empty">No targets selected.</p>
             {:else}
               {#each fTargets as t, i (t)}
-                <div class="selected-target-row">
+                <div class="selected-target-row" class:dragging={dragIndex === i} data-target-row>
+                  <button
+                    class="target-handle"
+                    type="button"
+                    aria-label={`Reorder ${t}, currently position ${i + 1} of ${fTargets.length}`}
+                    title="Drag to reorder"
+                    onpointerdown={(e) => startTargetDrag(e, i)}
+                    onpointermove={moveTargetDrag}
+                    onpointerup={endTargetDrag}
+                    onpointercancel={endTargetDrag}
+                  ><i class="fa-solid fa-grip-vertical"></i></button>
                   <span class="target-order">{i + 1}</span>
                   <span class="target-name">{t}</span>
                   <div class="target-actions">
@@ -770,6 +822,7 @@
               {/each}
             {/if}
           </div>
+          <p class="sr-only" role="status" aria-live="polite">{dragAnnouncement}</p>
         </div>
         <div style="display:flex;gap:12px;">
           <div class="form-group" style="flex:1;">
@@ -922,11 +975,14 @@
   .backend-test-actions { display: flex; flex-shrink: 0; gap: 8px; }
   .draft-test-status { display: flex; margin-top: 8px; }
   .target-picker { min-width: 0; margin-bottom: 0; }
-  .target-picker > .btn { flex-shrink: 0; }
   .auto-controls { padding: 18px; border: 1px solid var(--primary-alpha-035); border-radius: 12px; background: var(--primary-alpha-01); }
   .selected-targets { display: flex; min-height: 48px; flex-direction: column; gap: 7px; margin-top: 10px; padding: 8px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); }
   .targets-empty { margin: auto; padding: 6px; color: var(--text-secondary); font-size: 12px; text-align: center; }
   .selected-target-row { display: flex; align-items: center; gap: 10px; padding: 8px 9px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--bg-secondary); }
+  .selected-target-row.dragging { border-color: var(--primary-dark); background: var(--primary-alpha-01); box-shadow: 0 4px 14px rgba(36, 27, 45, .16); }
+  .target-handle { display: inline-flex; width: 22px; height: 28px; align-items: center; justify-content: center; flex-shrink: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-tertiary); cursor: grab; touch-action: none; }
+  .target-handle:hover { color: var(--primary-dark); }
+  .selected-target-row.dragging .target-handle { cursor: grabbing; }
   .target-order { display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 7px; background: var(--primary-alpha-015); color: var(--primary-dark); font-size: 11px; font-weight: 700; }
   .target-name { min-width: 0; flex: 1; overflow: hidden; color: var(--gray-700); font-family: "Courier New", monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .target-actions { display: flex; gap: 4px; }
@@ -962,6 +1018,6 @@
     .action-popover { right: 0; width: min(210px, calc(100vw - 64px)); }
     .backend-test-row, .target-picker { flex-wrap: wrap; }
     .backend-test-row > input { flex-basis: 100%; }
-    .backend-test-actions, .target-picker > .btn { margin-left: auto; }
+    .backend-test-actions { margin-left: auto; }
   }
 </style>

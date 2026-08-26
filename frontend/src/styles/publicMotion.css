@@ -62,7 +62,6 @@
 .public-footer,
 .intro .eyebrow,
 .intro h1,
-.intro .lead,
 .live-facts > div,
 .service-strip,
 .destinations > a,
@@ -112,7 +111,6 @@
 /* Overview */
 .intro .eyebrow { --motion-delay: 0.06s; }
 .intro h1 { --motion-delay: 0.12s; }
-.intro .lead { --motion-delay: 0.2s; }
 .live-facts > div:nth-child(1) { --motion-delay: 0.18s; }
 .live-facts > div:nth-child(2) { --motion-delay: 0.22s; }
 .live-facts > div:nth-child(3) { --motion-delay: 0.26s; }
