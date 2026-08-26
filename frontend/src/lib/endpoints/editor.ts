@@ -19,26 +19,39 @@ export function emptyHeaderPresets(): HeaderPresets {
   return { anthropicBeta: false, anthropicVersion: false, userAgent: false, userAgentValue: "" };
 }
 
+// Arbitrary headers are edited as one "Name: value" pair per line. Only the first
+// colon separates the two, so values holding colons (URLs, timestamps) survive a
+// round trip. Names must be RFC 7230 tokens; anything else is rejected here rather
+// than failing later inside the upstream fetch.
+const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~\dA-Za-z]+$/;
+
 export function parseCustomHeaders(text: string): ParsedCustomHeaders {
-  if (!text.trim()) return { ok: true, headers: {} };
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return { ok: false, error: "Invalid JSON in custom headers" };
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return { ok: false, error: "Custom headers must be a JSON object" };
-  }
-
   const headers: Record<string, string> = {};
-  for (const [name, value] of Object.entries(parsed)) {
-    if (typeof value !== "string") {
-      return { ok: false, error: `Custom header "${name}" must have a text value` };
+  const seenNames = new Set<string>();
+  const lines = text.split("\n");
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index].trim();
+    if (!line) continue;
+
+    const lineNumber = index + 1;
+    const separator = line.indexOf(":");
+    if (separator === -1) {
+      return { ok: false, error: `Custom header line ${lineNumber} must look like "Header: value"` };
     }
-    headers[name] = value;
+
+    const name = line.slice(0, separator).trim();
+    if (!HEADER_NAME_PATTERN.test(name)) {
+      return { ok: false, error: `Custom header line ${lineNumber} does not start with a valid header name` };
+    }
+    if (seenNames.has(name.toLowerCase())) {
+      return { ok: false, error: `Custom header "${name}" is listed more than once` };
+    }
+
+    seenNames.add(name.toLowerCase());
+    headers[name] = line.slice(separator + 1).trim();
   }
+
   return { ok: true, headers };
 }
 
@@ -94,7 +107,9 @@ export function mergeHeaderPresets(
 }
 
 export function serializeCustomHeaders(headers: Record<string, string>): string {
-  return Object.keys(headers).length > 0 ? JSON.stringify(headers, null, 2) : "";
+  return Object.entries(headers)
+    .map(([name, value]) => `${name}: ${value}`)
+    .join("\n");
 }
 
 export function maskTokenLikeServer(token: string): string {

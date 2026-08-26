@@ -167,18 +167,25 @@ test("endpoint token editing skips duplicates and remaps confirmations", () => {
   assert.deepEqual([...removed.pendingConfirmations], [0, 1]);
 });
 
-test("custom header JSON parsing rejects anything that is not a string map", () => {
+test('custom headers parse one "Name: value" pair per line', () => {
   assert.deepEqual(parseCustomHeaders(""), { ok: true, headers: {} });
   assert.deepEqual(parseCustomHeaders("   "), { ok: true, headers: {} });
-  assert.deepEqual(parseCustomHeaders('{"X-A":"1"}'), { ok: true, headers: { "X-A": "1" } });
+  assert.deepEqual(parseCustomHeaders("X-A: 1"), { ok: true, headers: { "X-A": "1" } });
 
-  assert.equal(parseCustomHeaders("{nope}").ok, false);
-  assert.equal(parseCustomHeaders("{nope}").error, "Invalid JSON in custom headers");
-  assert.equal(parseCustomHeaders("[]").error, "Custom headers must be a JSON object");
-  assert.equal(parseCustomHeaders("null").error, "Custom headers must be a JSON object");
-  assert.equal(parseCustomHeaders('{"X-A":3}').error, 'Custom header "X-A" must have a text value');
-  assert.equal(parseCustomHeaders('{"X-A":true}').ok, false);
-  assert.equal(parseCustomHeaders('{"X-A":{"b":"c"}}').ok, false);
+  // Blank lines are skipped, surrounding whitespace is trimmed, and only the first
+  // colon separates a pair, so a value may hold colons of its own.
+  assert.deepEqual(parseCustomHeaders("  X-A :  1  \n\n X-Ref: https://example.com:8443/a "), {
+    ok: true,
+    headers: { "X-A": "1", "X-Ref": "https://example.com:8443/a" },
+  });
+  assert.deepEqual(parseCustomHeaders("X-Empty:"), { ok: true, headers: { "X-Empty": "" } });
+
+  assert.equal(parseCustomHeaders("X-A 1").ok, false);
+  assert.equal(parseCustomHeaders("X-A: 1\nnope").error, 'Custom header line 2 must look like "Header: value"');
+  assert.equal(parseCustomHeaders(": 1").error, "Custom header line 1 does not start with a valid header name");
+  assert.equal(parseCustomHeaders("X A: 1").error, "Custom header line 1 does not start with a valid header name");
+  assert.equal(parseCustomHeaders('{ "X-A": "1" }').ok, false);
+  assert.equal(parseCustomHeaders("X-A: 1\nx-a: 2").error, 'Custom header "x-a" is listed more than once');
 });
 
 test("header presets extract case-insensitively and keep unrecognized headers arbitrary", () => {
@@ -231,7 +238,7 @@ test("header presets survive an edit and resubmit round trip", () => {
     "X-Trace": "on",
   };
   const { presets, rest } = extractHeaderPresets(stored);
-  assert.equal(serializeCustomHeaders(rest), '{\n  "X-Trace": "on"\n}');
+  assert.equal(serializeCustomHeaders(rest), "X-Trace: on");
 
   const resubmitted = mergeHeaderPresets(parseCustomHeaders(serializeCustomHeaders(rest)).headers, presets);
   assert.deepEqual(resubmitted, {
@@ -240,6 +247,7 @@ test("header presets survive an edit and resubmit round trip", () => {
     "User-Agent": "my-app/3.1",
   });
   assert.equal(serializeCustomHeaders({}), "");
+  assert.equal(serializeCustomHeaders({ "X-A": "1", "X-B": "2" }), "X-A: 1\nX-B: 2");
 });
 
 test("auto model targets reorder to any position and guard bad indexes", () => {

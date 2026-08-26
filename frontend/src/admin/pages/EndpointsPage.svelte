@@ -416,8 +416,8 @@
               <label class="gen-toggle"><input type="checkbox" bind:checked={fHeaderPresets.userAgent} /><span class="gen-toggle-slider"></span><span class="header-preset-text"><span class="header-preset-name">User-Agent</span></span></label>
               <input class="header-value-input" class:active={fHeaderPresets.userAgent} disabled={!fHeaderPresets.userAgent} type="text" bind:value={fHeaderPresets.userAgentValue} placeholder="e.g., my-app/1.0" aria-label="User-Agent header value" />
             </div>
-            <label class="headers-json-label" for="epHeaders">Other headers (JSON)</label>
-            <textarea id="epHeaders" class="headers-input" bind:value={fHeaders} rows="4" placeholder={'{ "X-Custom-Header": "value" }'}></textarea>
+            <label class="headers-list-label" for="epHeaders">Other headers (one per line)</label>
+            <textarea id="epHeaders" class="headers-input" bind:value={fHeaders} rows="4" placeholder={"X-Custom-Header: value\nX-Another-Header: value"}></textarea>
           </div>
           <div class="form-group"><div class="section-label">Prompt Caching for Claude</div><p class="form-hint gen-hint">When enabled, cache_control breakpoints are injected into Claude messages. No effect on non-Claude models.</p><div class="gen-setting-row"><label class="gen-toggle"><input type="checkbox" bind:checked={gCacheEnabled} /><span class="gen-toggle-slider"></span><span>Enable caching</span></label><input class="gen-input" class:active={gCacheEnabled} disabled={!gCacheEnabled} type="number" step="1" min="0" bind:value={gCacheDepth} placeholder="2" /></div><div class="gen-setting-row cache-ttl-row"><label class="gen-toggle" class:disabled={!gCacheEnabled}><input type="checkbox" bind:checked={gCacheOneHour} disabled={!gCacheEnabled} /><span class="gen-toggle-slider"></span><span>Caching for 1hr</span></label></div></div>
         </div>
@@ -584,7 +584,7 @@
   .header-value-input { min-width: 0; flex: 1 1 0; width: auto; box-sizing: border-box; padding: 9px 12px; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); font: 12.5px/normal monospace; opacity: .5; pointer-events: none; transition: border-color .2s ease, box-shadow .2s ease, opacity .2s ease; }
   .header-value-input.active { opacity: 1; pointer-events: auto; }
   .header-value-input:focus { outline: none; border-color: var(--primary); background-color: var(--card-bg); box-shadow: 0 0 0 3px var(--primary-alpha-01); }
-  .headers-json-label { display: block; margin: 14px 0 8px; color: var(--text-secondary); font-size: 11px; font-weight: 700; letter-spacing: .03em; }
+  .headers-list-label { display: block; margin: 14px 0 8px; color: var(--text-secondary); font-size: 11px; font-weight: 700; letter-spacing: .03em; }
   .headers-input { width: 100%; max-width: 100%; box-sizing: border-box; resize: vertical; font-family: monospace; font-size: 13px; }
   .token-heading { margin-bottom: 8px; }
   .section-label { color: var(--text-secondary); }
