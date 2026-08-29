@@ -31,16 +31,48 @@ interface CachedCatalog {
   models: Array<Pick<CatalogModel, "id" | "pricing">>;
 }
 
+/**
+ * Model-family tokens: these name whoever trained the model. Patterns are
+ * anchored on token boundaries so a family name is never matched mid-word, and
+ * the first match wins, so every model id resolves to exactly one provider —
+ * a model can only ever appear under one filter chip.
+ *
+ * `o\d` covers the OpenAI o-series (o1, o3, o4-mini). Its boundary excludes a
+ * preceding digit as well, so the `4o` in `gpt-4o` is not read as an o-series
+ * marker.
+ */
+const PROVIDER_FAMILIES: ReadonlyArray<readonly [Provider, RegExp]> = [
+  ["Google", /(?:^|[^a-z])(?:gemini|gemma|veo|imagen|nano-?banana)/],
+  ["Anthropic", /(?:^|[^a-z])(?:claude|sonnet|opus|haiku|fable|mythos)/],
+  ["OpenAI", /(?:^|[^a-z])(?:chatgpt|gpt|codex|dall-?e)|(?:^|[^a-z0-9])o\d/],
+  ["DeepSeek", /(?:^|[^a-z])deepseek/],
+  ["ZhipuAI", /(?:^|[^a-z])glm/],
+  ["xAI", /(?:^|[^a-z])grok/],
+  ["MoonshotAI", /(?:^|[^a-z])(?:kimi|moonshot)/],
+  ["Qwen", /(?:^|[^a-z])(?:qwen|qwq)/],
+];
+
+/**
+ * Routing prefixes: these name whoever *serves* the model, so they only decide
+ * the provider when no family token is present. `kiro-glm-5` is a ZhipuAI model
+ * routed through Kiro, not an Anthropic one.
+ */
+const PROVIDER_ROUTES: ReadonlyArray<readonly [Provider, RegExp]> = [
+  ["Google", /(?:^|[^a-z])google/],
+  ["Anthropic", /(?:^|[^a-z])(?:anthropic|kiro)/],
+  ["OpenAI", /(?:^|[^a-z])openai/],
+  ["ZhipuAI", /(?:^|[^a-z])zhipu/],
+  ["xAI", /(?:^|[^a-z])x-?ai/],
+];
+
 export function getProvider(modelId: string): Provider {
   const name = modelId.toLowerCase();
-  if (["gemini", "google", "gemma", "veo", "nanobanana"].some((value) => name.includes(value))) return "Google";
-  if (["claude", "sonnet", "fable", "mythos", "kiro", "opus"].some((value) => name.includes(value))) return "Anthropic";
-  if (["gpt", "chatgpt"].some((value) => name.includes(value)) || name.startsWith("o")) return "OpenAI";
-  if (name.includes("deepseek")) return "DeepSeek";
-  if (name.includes("glm")) return "ZhipuAI";
-  if (name.includes("grok")) return "xAI";
-  if (name.includes("kimi")) return "MoonshotAI";
-  if (name.includes("qwen")) return "Qwen";
+  for (const [provider, pattern] of PROVIDER_FAMILIES) {
+    if (pattern.test(name)) return provider;
+  }
+  for (const [provider, pattern] of PROVIDER_ROUTES) {
+    if (pattern.test(name)) return provider;
+  }
   return "Others";
 }
 

@@ -73,6 +73,21 @@ test("model catalog classifies, normalizes, caches, and formats models", () => {
   assert.equal(getProvider("gemini-2.5-pro"), "Google");
   assert.equal(getProvider("gpt-5"), "OpenAI");
 
+  // Only the o-series counts as OpenAI, not every id that happens to start with "o".
+  assert.equal(getProvider("o3-mini"), "OpenAI");
+  assert.equal(getProvider("o1"), "OpenAI");
+  assert.equal(getProvider("or-deepseek-r1"), "DeepSeek");
+  assert.equal(getProvider("openrouter-kimi-k2"), "MoonshotAI");
+  assert.equal(getProvider("omni-router"), "Others");
+  assert.equal(getProvider("gpt-4o"), "OpenAI");
+
+  // A routing prefix never outranks the model family that follows it.
+  assert.equal(getProvider("kiro-glm-5"), "ZhipuAI");
+  assert.equal(getProvider("kiro-claude-opus-5"), "Anthropic");
+  assert.equal(getProvider("openai-gpt-5.6-sol"), "OpenAI");
+  assert.equal(getProvider("models/nano-banana-pro-preview"), "Google");
+  assert.equal(getProvider("harvester"), "Others");
+
   const models = normalizeModels({
     object: "list",
     data: [
