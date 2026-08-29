@@ -22,6 +22,7 @@ import {
 } from "../utils/autoRouting.js";
 import { getEndpointsPath, getModelsPath } from "../utils/configPaths.js";
 import { writeFileAtomic, writeJsonAtomic } from "../utils/atomicJson.js";
+import { isReservedBodyParam } from "../shared/contracts/bodyParams.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1119,6 +1120,7 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
       customHeaders: endpoint.headers,
       apiFormat: endpoint.apiFormat,
       appendApiSuffix: endpoint.appendApiSuffix,
+      bodyParams: endpoint.bodyParams,
     });
     return res.json(result);
   }
@@ -1155,6 +1157,7 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
       customHeaders: endpointInfo.customHeaders,
       apiFormat: endpointInfo.apiFormat,
       appendApiSuffix: endpointInfo.appendApiSuffix,
+      bodyParams: endpointInfo.bodyParams,
     });
     return res.json(result);
   } catch (error: any) {
@@ -1203,6 +1206,7 @@ router.get("/api/endpoints", verifySession, async (req: any, res: any) => {
         promptCaching: endpoint.promptCaching !== undefined ? endpoint.promptCaching : null,
         keyRotation: endpoint.keyRotation ?? null,
         keyHealth: endpoint.keyHealth ?? null,
+        bodyParams: endpoint.bodyParams ?? null,
         retryAttempts: endpoint.retryAttempts ?? null,
       });
     }
@@ -1325,6 +1329,14 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
       retryAttempts = settingsManager.get("defaultEndpointRetryAttempts");
     }
 
+    // Custom outbound body params. Absent => no policy for this endpoint.
+    let bodyParams = null;
+    if (req.body.bodyParams !== undefined) {
+      const validated = validateBodyParams(req.body.bodyParams);
+      if (!validated.ok) return res.status(400).json({ error: validated.error });
+      bodyParams = validated.value;
+    }
+
     data[endpointKey] = {
       name: name || `Endpoint ${newIndex}`,
       url: normalizedUrl,
@@ -1336,6 +1348,7 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
       promptCaching,
       keyRotation,
       keyHealth,
+      bodyParams,
       retryAttempts,
     };
 
@@ -1407,6 +1420,14 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
       if (retryAttempts === null) {
         return res.status(400).json({ error: "Retry attempts must be an integer from 0 to 10" });
       }
+    }
+
+    // Validate optional body-param policy (undefined = keep existing)
+    let bodyParams = undefined;
+    if (req.body.bodyParams !== undefined) {
+      const validated = validateBodyParams(req.body.bodyParams);
+      if (!validated.ok) return res.status(400).json({ error: validated.error });
+      bodyParams = validated.value;
     }
 
     // Validate index is a plain positive integer to prevent RegExp injection
@@ -1527,6 +1548,9 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
     }
     if (keyHealth !== undefined) {
       data[endpointKey].keyHealth = keyHealth;
+    }
+    if (bodyParams !== undefined) {
+      data[endpointKey].bodyParams = bodyParams;
     }
     if (retryAttempts !== undefined) {
       data[endpointKey].retryAttempts = retryAttempts;
@@ -2206,6 +2230,71 @@ function validatePromptCaching(input: any) {
 // multiplying request latency or upstream load without bound.
 function validateRetryAttempts(input: any) {
   if (Number.isInteger(input) && input >= 0 && input <= 10) return input;
+  return null;
+}
+
+// A body-param policy is copied verbatim onto every outbound request for the
+// endpoint, so it is bounded here: names cannot be blank or hold whitespace,
+// the reserved names in shared/contracts/bodyParams.ts are refused, and the
+// serialized policy is capped so endpoints.json cannot be grown without limit
+// through the admin API.
+const MAX_BODY_PARAM_ENTRIES = 64;
+const MAX_BODY_PARAM_NAME_LENGTH = 128;
+const MAX_BODY_PARAM_POLICY_BYTES = 16384;
+
+function validateBodyParams(input: any): { ok: true; value: any } | { ok: false; error: string } {
+  if (input === null) return { ok: true, value: null };
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ok: false, error: "bodyParams must be a JSON object" };
+  }
+
+  const rawAdd = input.add;
+  if (rawAdd !== undefined && (typeof rawAdd !== "object" || rawAdd === null || Array.isArray(rawAdd))) {
+    return { ok: false, error: "bodyParams.add must be a JSON object" };
+  }
+  const rawStrip = input.strip;
+  if (rawStrip !== undefined && !Array.isArray(rawStrip)) {
+    return { ok: false, error: "bodyParams.strip must be an array of names" };
+  }
+
+  const add: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(rawAdd ?? {})) {
+    const error = bodyParamNameError(name);
+    if (error) return { ok: false, error };
+    if (value === undefined) continue;
+    add[name] = value;
+  }
+
+  const strip: string[] = [];
+  for (const entry of rawStrip ?? []) {
+    if (typeof entry !== "string") {
+      return { ok: false, error: "bodyParams.strip must contain only strings" };
+    }
+    const name = entry.trim();
+    if (!name) continue;
+    const error = bodyParamNameError(name);
+    if (error) return { ok: false, error };
+    if (!strip.includes(name)) strip.push(name);
+  }
+
+  if (Object.keys(add).length > MAX_BODY_PARAM_ENTRIES || strip.length > MAX_BODY_PARAM_ENTRIES) {
+    return { ok: false, error: `A body-param list cannot exceed ${MAX_BODY_PARAM_ENTRIES} entries` };
+  }
+
+  const value = { add, strip };
+  if (Buffer.byteLength(JSON.stringify(value), "utf-8") > MAX_BODY_PARAM_POLICY_BYTES) {
+    return { ok: false, error: "Custom body params are too large" };
+  }
+
+  return { ok: true, value };
+}
+
+function bodyParamNameError(name: string): string | null {
+  if (!name || /\s/.test(name)) return `"${name}" is not a valid body param name`;
+  if (name.length > MAX_BODY_PARAM_NAME_LENGTH) return "A body param name is too long";
+  if (isReservedBodyParam(name)) {
+    return `"${name}" is reserved and cannot be set or stripped`;
+  }
   return null;
 }
 

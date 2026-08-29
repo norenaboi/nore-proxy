@@ -88,6 +88,7 @@ Public pages are eagerly imported. Admin pages are lazy imported and form build 
 - Keep routing, key health, retry classification, accounting, and error semantics aligned between `routes/chat.ts` and `routes/messages.ts`.
 - Never retry or switch targets after any response bytes have been emitted to the client.
 - Endpoint generation settings are enforced policies: disabled parameters are removed, and enabled configured values override the client request. Preserve this behavior consistently across protocols.
+- Endpoint custom body params are applied after the adapter builds the outbound body and after the generation policy, so they are the endpoint's final say on the wire body. Stripping runs before adding. `model` and `stream` are reserved: the admin API rejects them and `applyBodyParamPolicy` ignores them, because they carry the resolved routing target and the response framing both routes depend on.
 - Prompt caching remains endpoint-specific and opt-in for older endpoints; absent/null legacy values must not silently inherit new-endpoint defaults.
 - The supported upstream formats are `openai`, `anthropic`, `gemini`, `openai-responses`, and `openai-codex`. Each has distinct URL, authentication, request, response, and streaming requirements; `appendApiSuffix` also controls whether the proxy adds `/v1` or `/v1beta`. Do not implement a format as a URL-only switch.
 - Logging failures must not crash request/stream finalization. Client-aborted streams are not upstream failures.

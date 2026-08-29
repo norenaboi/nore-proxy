@@ -3,12 +3,17 @@ import test from "node:test";
 
 import { deadTargets, effectiveModelName, filterModelNames, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, targetHealth } from "../frontend/src/admin/modelForm.js";
 import {
+  bodyParamCounts,
   extractHeaderPresets,
   mergeBulkTokens,
   mergeHeaderPresets,
+  parseBodyParams,
   parseCustomHeaders,
+  parseStripBodyParams,
   removeTokenAt,
+  serializeBodyParams,
   serializeCustomHeaders,
+  serializeStripBodyParams,
 } from "../frontend/src/lib/endpoints/editor.js";
 import {
   clearModelCache,
@@ -283,6 +288,89 @@ test("header presets survive an edit and resubmit round trip", () => {
   });
   assert.equal(serializeCustomHeaders({}), "");
   assert.equal(serializeCustomHeaders({ "X-A": "1", "X-B": "2" }), "X-A: 1\nX-B: 2");
+});
+
+test('body params parse one "name: value" pair per line and read JSON values', () => {
+  assert.deepEqual(parseBodyParams(""), { ok: true, params: {} });
+  assert.deepEqual(parseBodyParams("  \n\n "), { ok: true, params: {} });
+
+  // A value that parses as JSON keeps its JSON type, so arrays, objects, numbers,
+  // and booleans all survive; anything else stays the literal string.
+  assert.deepEqual(
+    parseBodyParams(
+      'reasoning_effort: high\nstop: ["\\n\\n", "END"]\nsafety: {"threshold": "BLOCK_NONE"}\nseed: 42\nlogprobs: true\nnothing: null',
+    ),
+    {
+      ok: true,
+      params: {
+        reasoning_effort: "high",
+        stop: ["\n\n", "END"],
+        safety: { threshold: "BLOCK_NONE" },
+        seed: 42,
+        logprobs: true,
+        nothing: null,
+      },
+    },
+  );
+
+  // Only the first colon splits the pair, so a string value may hold colons.
+  assert.deepEqual(parseBodyParams("callback: https://example.com:8443/hook"), {
+    ok: true,
+    params: { callback: "https://example.com:8443/hook" },
+  });
+  assert.deepEqual(parseBodyParams("blank:"), { ok: true, params: { blank: "" } });
+
+  assert.equal(parseBodyParams("no_colon").ok, false);
+  assert.equal(parseBodyParams("a: 1\nnope").error, 'Body param line 2 must look like "name: value"');
+  assert.equal(parseBodyParams(": 1").error, "Body param line 1 does not start with a valid name");
+  assert.equal(parseBodyParams("two words: 1").error, "Body param line 1 does not start with a valid name");
+  assert.equal(parseBodyParams("a: 1\na: 2").error, 'Body param "a" is listed more than once');
+});
+
+test("body params refuse the names the proxy owns", () => {
+  // model carries the resolved routing target and stream decides response
+  // framing, so neither may be set or stripped by an endpoint policy.
+  assert.equal(parseBodyParams("model: gpt-4").error, 'Body param line 1 uses the reserved name "model"');
+  assert.equal(parseBodyParams("STREAM: true").error, 'Body param line 1 uses the reserved name "STREAM"');
+  assert.equal(parseBodyParams("__proto__: {}").error, 'Body param line 1 uses the reserved name "__proto__"');
+  assert.equal(parseStripBodyParams("model").error, 'Stripped param line 1 uses the reserved name "model"');
+  assert.equal(parseStripBodyParams("stream").error, 'Stripped param line 1 uses the reserved name "stream"');
+});
+
+test("stripped body params take one name per line and tolerate pasted pairs", () => {
+  assert.deepEqual(parseStripBodyParams(""), { ok: true, names: [] });
+  assert.deepEqual(parseStripBodyParams("frequency_penalty\n\npresence_penalty"), {
+    ok: true,
+    names: ["frequency_penalty", "presence_penalty"],
+  });
+
+  // A line moved over from the add editor keeps working; its value is ignored.
+  assert.deepEqual(parseStripBodyParams("reasoning_effort: high"), {
+    ok: true,
+    names: ["reasoning_effort"],
+  });
+  assert.deepEqual(parseStripBodyParams("a\na"), { ok: true, names: ["a"] });
+  assert.equal(parseStripBodyParams("two words").error, "Stripped param line 1 is not a valid name");
+});
+
+test("body params survive an edit and resubmit round trip", () => {
+  const stored = {
+    add: { reasoning_effort: "high", stop: ["END"], seed: 7 },
+    strip: ["frequency_penalty", "presence_penalty"],
+  };
+
+  const addText = serializeBodyParams(stored.add);
+  assert.equal(addText, 'reasoning_effort: high\nstop: ["END"]\nseed: 7');
+  assert.deepEqual(parseBodyParams(addText).params, stored.add);
+
+  const stripText = serializeStripBodyParams(stored.strip);
+  assert.equal(stripText, "frequency_penalty\npresence_penalty");
+  assert.deepEqual(parseStripBodyParams(stripText).names, stored.strip);
+
+  assert.equal(serializeBodyParams(undefined), "");
+  assert.equal(serializeStripBodyParams(undefined), "");
+  assert.deepEqual(bodyParamCounts(stored), { added: 3, stripped: 2 });
+  assert.deepEqual(bodyParamCounts(null), { added: 0, stripped: 0 });
 });
 
 test("auto model targets reorder to any position and guard bad indexes", () => {

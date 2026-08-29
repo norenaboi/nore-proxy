@@ -1,3 +1,7 @@
+// Relative rather than through the $contracts alias: this is a runtime value, and
+// the root test runner resolves this module without Vite's alias map.
+import { isReservedBodyParam } from "../../../../shared/contracts/bodyParams.js";
+
 export const ANTHROPIC_BETA_HEADER = "anthropic-beta";
 export const ANTHROPIC_BETA_VALUE = "context-1m-2025-08-07";
 export const ANTHROPIC_VERSION_HEADER = "anthropic-version";
@@ -110,6 +114,128 @@ export function serializeCustomHeaders(headers: Record<string, string>): string 
   return Object.entries(headers)
     .map(([name, value]) => `${name}: ${value}`)
     .join("\n");
+}
+
+export interface BodyParamPolicy {
+  add: Record<string, unknown>;
+  strip: string[];
+}
+
+export type ParsedBodyParams =
+  | { ok: true; params: Record<string, unknown> }
+  | { ok: false; error: string };
+
+export type ParsedStripList =
+  | { ok: true; names: string[] }
+  | { ok: false; error: string };
+
+/**
+ * Body params the proxy owns; see shared/contracts/bodyParams.ts. Rejected here
+ * so the editor names the problem, and again server-side because a policy can
+ * also arrive from a hand-edited endpoints.json.
+ */
+function reservedBodyParamError(label: string, name: string, line: number): string | null {
+  if (!isReservedBodyParam(name)) return null;
+  return `${label} line ${line} uses the reserved name "${name}"`;
+}
+
+/**
+ * Arbitrary body params are edited as one "name: value" pair per line, matching
+ * the custom-header editor. The value is read as JSON when it parses, so arrays,
+ * objects, numbers, and booleans all round trip; anything else is kept as the
+ * literal string, which is what makes `reasoning_effort: high` work without
+ * quoting.
+ */
+export function parseBodyParams(text: string): ParsedBodyParams {
+  const params: Record<string, unknown> = {};
+  const seenNames = new Set<string>();
+  const lines = text.split("\n");
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index].trim();
+    if (!line) continue;
+
+    const lineNumber = index + 1;
+    const separator = line.indexOf(":");
+    if (separator === -1) {
+      return { ok: false, error: `Body param line ${lineNumber} must look like "name: value"` };
+    }
+
+    const name = line.slice(0, separator).trim();
+    if (!name || /\s/.test(name)) {
+      return { ok: false, error: `Body param line ${lineNumber} does not start with a valid name` };
+    }
+    const reserved = reservedBodyParamError("Body param", name, lineNumber);
+    if (reserved) return { ok: false, error: reserved };
+    if (seenNames.has(name)) {
+      return { ok: false, error: `Body param "${name}" is listed more than once` };
+    }
+
+    seenNames.add(name);
+    params[name] = parseBodyParamValue(line.slice(separator + 1).trim());
+  }
+
+  return { ok: true, params };
+}
+
+function parseBodyParamValue(raw: string): unknown {
+  if (!raw) return "";
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * Stripped params are one name per line. A pasted "name: value" pair is accepted
+ * and its value ignored, so a line can be moved between the two editors without
+ * being rewritten first.
+ */
+export function parseStripBodyParams(text: string): ParsedStripList {
+  const names: string[] = [];
+  const seenNames = new Set<string>();
+  const lines = text.split("\n");
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index].trim();
+    if (!line) continue;
+
+    const lineNumber = index + 1;
+    const separator = line.indexOf(":");
+    const name = (separator === -1 ? line : line.slice(0, separator)).trim();
+    if (!name || /\s/.test(name)) {
+      return { ok: false, error: `Stripped param line ${lineNumber} is not a valid name` };
+    }
+    const reserved = reservedBodyParamError("Stripped param", name, lineNumber);
+    if (reserved) return { ok: false, error: reserved };
+    if (seenNames.has(name)) continue;
+
+    seenNames.add(name);
+    names.push(name);
+  }
+
+  return { ok: true, names };
+}
+
+export function serializeBodyParams(params: Record<string, unknown> | undefined): string {
+  return Object.entries(params ?? {})
+    .map(([name, value]) => `${name}: ${typeof value === "string" ? value : JSON.stringify(value)}`)
+    .join("\n");
+}
+
+export function serializeStripBodyParams(names: string[] | undefined): string {
+  return (names ?? []).join("\n");
+}
+
+export function bodyParamCounts(policy: BodyParamPolicy | null | undefined): {
+  added: number;
+  stripped: number;
+} {
+  return {
+    added: Object.keys(policy?.add ?? {}).length,
+    stripped: (policy?.strip ?? []).length,
+  };
 }
 
 export function maskTokenLikeServer(token: string): string {

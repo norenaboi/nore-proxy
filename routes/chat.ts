@@ -6,7 +6,7 @@ import apiKeyManager from "../services/apiKeyManager.js";
 import settingsManager from "../services/settingsManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
 import { logRequestStart, logRequestEnd, logError, markFirstToken, normalizeBillingTokens } from "../utils/logging.js";
-import { MODEL_REGISTRY, getEndpointForConcreteModel, getFullUrl, estimateTokens, estimateTokensFromLength, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, resolveKeyHealth, resolveRetryAttempts, getClientIp } from "../utils/helpers.js";
+import { MODEL_REGISTRY, getEndpointForConcreteModel, getFullUrl, estimateTokens, estimateTokensFromLength, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, applyBodyParamPolicy, resolveKeyHealth, resolveRetryAttempts, getClientIp } from "../utils/helpers.js";
 import { createBoundedText, guardCarryBuffer, type BoundedText } from "../utils/streamLimits.js";
 import keyStateManager, { ACTIONABLE_CODES } from "../services/keyStateManager.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
@@ -111,6 +111,7 @@ function prepareAttempt(baseRequest: any, endpoint: any, requestId: any, isStrea
   const ctx = { requestId, isStreaming };
   const adapter = getAdapter(endpoint.apiFormat);
   const data = isStreaming ? adapter.transformStreamRequest(request, endpoint.actualModel, ctx) : adapter.transformRequest(request, endpoint.actualModel, ctx);
+  applyBodyParamPolicy(data, endpoint.bodyParams);
   const headers = { ...endpoint.customHeaders, ...getExtraHeaders(endpoint.apiFormat, ctx), "Content-Type": "application/json" };
   if (endpoint.apiFormat === "anthropic") headers["x-api-key"] = endpoint.token;
   else if (endpoint.apiFormat !== "gemini") headers.Authorization = `Bearer ${endpoint.token}`;

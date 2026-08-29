@@ -33,6 +33,7 @@ export {
   getModelsUrl,
   getFullUrl,
   applyGenerationPolicy,
+  applyBodyParamPolicy,
 } from "./endpointPolicies.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -341,6 +342,8 @@ export function getConcreteModelMeta(modelName: any) {
     // Whether an actionable error benches the key (invalid/timeout). Absent =>
     // fall back to the global default at the point of use.
     keyHealth: endpoint.keyHealth ?? null,
+    // Per-endpoint outbound body edits. Absent => leave the adapter's body alone.
+    bodyParams: endpoint.bodyParams ?? null,
     // Extra same-key attempts on a transient failure. Absent => fall back to
     // the global default at the point of use.
     retryAttempts: endpoint.retryAttempts ?? null,

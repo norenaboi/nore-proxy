@@ -1,9 +1,9 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
 import crypto from "crypto";
 import type { ModelTestResult } from "../shared/contracts/models.js";
-import type { ApiFormat } from "../types/endpoint.js";
+import type { ApiFormat, BodyParamPolicy } from "../types/endpoint.js";
 import { getAdapter, getExtraHeaders } from "./adapters/index.js";
-import { getFullUrl } from "./endpointPolicies.js";
+import { applyBodyParamPolicy, getFullUrl } from "./endpointPolicies.js";
 
 export interface UpstreamModelTestInput {
   url: string;
@@ -12,6 +12,7 @@ export interface UpstreamModelTestInput {
   customHeaders?: Record<string, string>;
   apiFormat: ApiFormat;
   appendApiSuffix: boolean;
+  bodyParams?: BodyParamPolicy | null;
 }
 
 export type ModelTestRequester = (
@@ -40,7 +41,7 @@ export async function testUpstreamModel(
   input: UpstreamModelTestInput,
   requester: ModelTestRequester = axios,
 ): Promise<ModelTestResult> {
-  const { url, token, backend, customHeaders = {}, apiFormat, appendApiSuffix } = input;
+  const { url, token, backend, customHeaders = {}, apiFormat, appendApiSuffix, bodyParams = null } = input;
   const fullUrl = getFullUrl(url, apiFormat, backend, false, appendApiSuffix);
   const start = Date.now();
   const isGemini = apiFormat === "gemini";
@@ -73,6 +74,12 @@ export async function testUpstreamModel(
   } else {
     data = { model: backend, messages: [{ role: "user", content: "ping" }], stream: false };
   }
+
+  // The ping carries the endpoint's body-param policy so a test reflects the
+  // same wire body a real request would send: an upstream that rejects a param
+  // the policy strips, or requires one it adds, fails or passes here for the
+  // same reason it would in production.
+  applyBodyParamPolicy(data, bodyParams);
 
   try {
     const response = await requester({

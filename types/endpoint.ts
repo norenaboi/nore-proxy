@@ -26,6 +26,17 @@ export interface PromptCachingConfig {
   ttl?: "1h";
 }
 
+/**
+ * Per-endpoint edits applied to the outbound request body after the adapter has
+ * built it. `strip` removes top-level params the upstream rejects; `add` sets
+ * params it requires. Values are arbitrary JSON, so arrays and objects are
+ * supported.
+ */
+export interface BodyParamPolicy {
+  add: Record<string, unknown>;
+  strip: string[];
+}
+
 /** Persisted endpoint configuration in endpoints.json. */
 export interface Endpoint {
   name?: string;
@@ -41,6 +52,8 @@ export interface Endpoint {
   keyRotation?: KeyRotation | null;
   /** Null/absent defers to the global default. */
   keyHealth?: boolean | null;
+  /** Absent on endpoints that were never given a body-param policy. */
+  bodyParams?: BodyParamPolicy | null;
   /**
    * Extra attempts against the same key after a transient failure, before the
    * request hops keys or falls back to another target. Null/absent defers to
@@ -52,7 +65,7 @@ export interface Endpoint {
 export type EndpointsDocument = Record<EndpointKey, Endpoint>;
 
 /** Normalized configuration held by Config.ENDPOINTS. */
-export interface LoadedEndpoint extends Omit<Endpoint, "name" | "headers" | "apiFormat" | "appendApiSuffix" | "generationDefaults" | "promptCaching"> {
+export interface LoadedEndpoint extends Omit<Endpoint, "name" | "headers" | "apiFormat" | "appendApiSuffix" | "generationDefaults" | "promptCaching" | "bodyParams"> {
   name: string;
   token: string | null;
   headers: Record<string, string>;
@@ -62,6 +75,7 @@ export interface LoadedEndpoint extends Omit<Endpoint, "name" | "headers" | "api
   promptCaching: PromptCachingConfig | null;
   keyRotation: KeyRotation | null;
   keyHealth: boolean | null;
+  bodyParams: BodyParamPolicy | null;
   retryAttempts: number | null;
 }
 
@@ -78,6 +92,7 @@ export interface EndpointMetadata {
   promptCaching: PromptCachingConfig | null;
   keyRotation: KeyRotation | null;
   keyHealth: boolean | null;
+  bodyParams: BodyParamPolicy | null;
   retryAttempts: number | null;
 }
 
@@ -102,5 +117,6 @@ export interface EndpointListItem {
   promptCaching: PromptCachingConfig | null;
   keyRotation: KeyRotation | null;
   keyHealth: boolean | null;
+  bodyParams: BodyParamPolicy | null;
   retryAttempts: number | null;
 }

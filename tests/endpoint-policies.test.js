@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyBodyParamPolicy,
   applyGenerationPolicy,
   getFullUrl,
   getModelsUrl,
@@ -27,4 +28,48 @@ test("generation policy removes disabled values and overrides enabled values", (
 
   assert.equal(result, request);
   assert.deepEqual(result, { temperature: 0.2, max_tokens: 512, messages: [] });
+});
+
+test("body param policy strips before adding and keeps JSON values intact", () => {
+  const request = { model: "m", stream: true, frequency_penalty: 0.5, temperature: 0.7 };
+  const result = applyBodyParamPolicy(request, {
+    add: { reasoning_effort: "high", stop: ["\n\n", "END"], safety: { threshold: "BLOCK_NONE" }, temperature: 0.1 },
+    strip: ["frequency_penalty", "temperature"],
+  });
+
+  assert.equal(result, request);
+  assert.deepEqual(result, {
+    model: "m",
+    stream: true,
+    reasoning_effort: "high",
+    stop: ["\n\n", "END"],
+    safety: { threshold: "BLOCK_NONE" },
+    // Listed in both lists: the strip runs first, so the added value wins.
+    temperature: 0.1,
+  });
+});
+
+test("body param policy refuses the params the proxy owns", () => {
+  // A hand-edited endpoints.json could name these even though the admin API
+  // rejects them, so the runtime declines rather than letting an endpoint
+  // redirect its own routing target or change response framing.
+  const request = { model: "resolved-model", stream: true, messages: [] };
+  applyBodyParamPolicy(request, {
+    add: { model: "other-model", stream: false, __proto__: { polluted: true } },
+    strip: ["model", "stream"],
+  });
+
+  assert.deepEqual(request, { model: "resolved-model", stream: true, messages: [] });
+  assert.equal({}.polluted, undefined);
+});
+
+test("body param policy leaves the body alone when absent or malformed", () => {
+  const request = { model: "m", messages: [] };
+  const snapshot = { ...request };
+
+  for (const policy of [null, undefined, {}, "nope", 7, [], { add: null, strip: null }]) {
+    assert.deepEqual(applyBodyParamPolicy(request, policy), snapshot);
+  }
+
+  assert.equal(applyBodyParamPolicy(null, { add: { a: 1 }, strip: [] }), null);
 });

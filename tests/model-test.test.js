@@ -116,3 +116,19 @@ test("non-200 requester responses become failed test results", async () => {
     latency_ms: result.latency_ms,
   });
 });
+
+test("model tests send the endpoint's body-param policy", async () => {
+  // The ping must match the wire body a real request would send, or a test
+  // passes against a body the endpoint never actually uses.
+  const { request } = await captureRequest({
+    ...baseInput,
+    bodyParams: { add: { reasoning_effort: "high", stop: ["END"] }, strip: ["messages"] },
+  });
+
+  assert.deepEqual(request.data, {
+    model: "test-model",
+    stream: false,
+    reasoning_effort: "high",
+    stop: ["END"],
+  });
+});

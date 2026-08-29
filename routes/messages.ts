@@ -20,6 +20,7 @@ import {
   estimateTokens,
   estimateTokensFromLength,
   applyGenerationPolicy,
+  applyBodyParamPolicy,
   resolveKeyHealth,
   resolveRetryAttempts,
   getClientIp,
@@ -643,6 +644,7 @@ async function makeMessagesAttempt(
           stream: false,
         };
         delete data.stream;
+        applyBodyParamPolicy(data, endpointInfo.bodyParams);
 
         const extraHeaders = getExtraHeaders(apiFormat, {});
         headers = {
@@ -672,6 +674,7 @@ async function makeMessagesAttempt(
         });
 
         data = adapter.transformRequest(openaiReq, actualModel, {});
+        applyBodyParamPolicy(data, endpointInfo.bodyParams);
 
         const extraHeaders = getExtraHeaders(apiFormat, {});
         headers = {
@@ -908,6 +911,7 @@ async function streamMessagesAttempt(
           model: actualModel,
           stream: true,
         };
+        applyBodyParamPolicy(data, endpointInfo.bodyParams);
 
         const extraHeaders = getExtraHeaders(apiFormat, {});
         headers = {
@@ -937,6 +941,7 @@ async function streamMessagesAttempt(
         });
 
         data = adapter.transformStreamRequest(openaiReq, actualModel, {});
+        applyBodyParamPolicy(data, endpointInfo.bodyParams);
 
         const extraHeaders = getExtraHeaders(apiFormat, {});
         headers = {
