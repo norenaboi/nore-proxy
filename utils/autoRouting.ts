@@ -13,6 +13,20 @@ type ValidationContext = {
   models?: ModelsByName;
   endpoints?: EndpointMap;
   globalCeiling?: number;
+  /**
+   * Reject targets that name no concrete model. Only admin writes set this: the
+   * registry loader must stay permissive, since failing the whole definition
+   * would take an auto model offline over one stale name instead of routing
+   * around it.
+   */
+  requireExistingTargets?: boolean;
+  /**
+   * Targets exempt from that check because the stored definition already had
+   * them. Without this an auto model left holding a stale name after a deletion
+   * could not be saved at all, so an unrelated edit would be blocked by damage
+   * the operator did not cause.
+   */
+  grandfatheredTargets?: readonly string[];
 };
 type RoutingState = {
   requestId: string;
@@ -53,6 +67,12 @@ function modelType(config: ModelConfig | null | undefined) {
 
 function positiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function isConcreteModel(config: ModelConfig | null | undefined): boolean {
+  // modelType() defaults an absent definition to "concrete", so existence has to
+  // be checked before its type — otherwise a target naming nothing reads as valid.
+  return Boolean(config) && modelType(config) === "concrete";
 }
 
 export function validateModelDefinition(
@@ -119,6 +139,21 @@ export function validateModelDefinition(
     }
   }
 
+  if (context.requireExistingTargets && context.models) {
+    const grandfathered = new Set(context.grandfatheredTargets || []);
+    const unknown = uniqueTargets.filter(
+      (target) =>
+        target !== trimmedName &&
+        !grandfathered.has(target) &&
+        !isConcreteModel(context.models?.[target]),
+    );
+    // Named individually: the operator needs to know which one to fix, and a
+    // typo and a since-deleted model look identical without the name.
+    for (const target of unknown) {
+      errors.push(`Auto model target '${target}' is not an existing concrete model`);
+    }
+  }
+
   return {
     valid: errors.length === 0,
     errors,
@@ -156,8 +191,59 @@ export function rewriteAutoTargetReferences(
   }
 }
 
+/**
+ * Drops the named concrete models from every auto model's target list, returning
+ * the auto models that changed so the caller can report them.
+ *
+ * Called wherever a concrete model stops existing under its name — deletion, or
+ * conversion to an auto model. Pruning at the write is what keeps `models.json`
+ * free of dead targets, rather than leaving them to be filtered on every request
+ * forever.
+ */
+export function pruneAutoTargetReferences(
+  models: ModelsByName | null | undefined,
+  removedNames: readonly string[],
+) {
+  const removed = new Set(removedNames);
+  if (removed.size === 0) return [];
+  const affected: Array<{ name: string; remainingTargets: number }> = [];
+  for (const [name, config] of Object.entries(models || {})) {
+    if (modelType(config) !== "auto" || !Array.isArray(config.targets)) continue;
+    const kept = config.targets.filter((target) => !removed.has(target));
+    if (kept.length === config.targets.length) continue;
+    config.targets = kept;
+    affected.push({ name, remainingTargets: kept.length });
+  }
+  return affected;
+}
+
 export function resetAutoRoutingCounters() {
   autoModelCounters.clear();
+}
+
+/**
+ * Splits an auto model's configured targets into the ones that can actually be
+ * routed to and the dead ones, preserving configured order.
+ *
+ * A target is only routable while it is registered as a concrete model. Names
+ * that were deleted, models that are disabled or invalid (neither reaches the
+ * registry), and other auto models are all dead ends. They have to be dropped
+ * before the attempt ceiling is applied: counted in, a dead name consumes one
+ * of the few failover slots and a healthy target further down the list is never
+ * reached, so an auto model with one stale target can fail while a working one
+ * sits right behind it.
+ */
+export function resolveAutoTargets(
+  targets: readonly string[] | null | undefined,
+  registry: ModelRegistry | null | undefined,
+): { targets: string[]; dropped: string[] } {
+  const live: string[] = [];
+  const dropped: string[] = [];
+  for (const target of new Set(targets || [])) {
+    if (registry?.[target]?.routingType === "concrete") live.push(target);
+    else dropped.push(target);
+  }
+  return { targets: live, dropped };
 }
 
 export function getTargetSequence(
@@ -169,7 +255,7 @@ export function getTargetSequence(
   if (!definition) return [];
   if (definition.routingType !== "auto") return [requestedModel];
 
-  const targets = [...new Set(definition.targets || [])];
+  const { targets } = resolveAutoTargets(definition.targets, registry);
   if (targets.length === 0) return [];
   const modelLimit = definition.maxTargetAttempts ?? globalCeiling;
   const limit = Math.min(targets.length, modelLimit, globalCeiling);

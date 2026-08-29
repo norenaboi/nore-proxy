@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { effectiveModelName, filterModelNames, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue } from "../frontend/src/admin/modelForm.js";
+import { deadTargets, effectiveModelName, filterModelNames, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, targetHealth } from "../frontend/src/admin/modelForm.js";
 import {
   extractHeaderPresets,
   mergeBulkTokens,
@@ -157,8 +157,28 @@ test("model editor derives names and detects duplicates", () => {
   assert.equal(isDuplicateModelName("existing", [{ name: "existing" }], "existing"), false);
 });
 
-test("model target search filters names without changing their order", () => {
-  const names = ["Claude/Sonnet-5", "gemini-2.5-pro", "GPT-5 Mini"];
+test("auto target health separates missing targets from disabled ones", () => {
+  const models = [
+    { name: "live", modelType: "concrete" },
+    { name: "off", modelType: "concrete", disabled: true },
+    { name: "router", modelType: "auto", targets: [] },
+  ];
+  const targets = ["live", "off", "router", "deleted"];
+
+  assert.deepEqual([...targetHealth(targets, models)], [
+    ["live", "live"],
+    ["off", "disabled"],
+    ["router", "missing"],
+    ["deleted", "missing"],
+  ]);
+  // Only names nothing answers to are offered for removal: a disabled target
+  // comes back on its own when it is re-enabled.
+  assert.deepEqual(deadTargets(targets, models), ["router", "deleted"]);
+  assert.deepEqual(deadTargets(["live"], models), []);
+  assert.deepEqual(deadTargets([], models), []);
+});
+
+test("model target search filters names without changing their order", () => {  const names = ["Claude/Sonnet-5", "gemini-2.5-pro", "GPT-5 Mini"];
 
   assert.equal(filterModelNames(names, ""), names);
   assert.equal(filterModelNames(names, "   "), names);

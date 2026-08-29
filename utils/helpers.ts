@@ -9,6 +9,7 @@ import { addModelPricing } from "./pricing.js";
 import { getModelsPath } from "./configPaths.js";
 import {
   resetAutoRoutingCounters,
+  resolveAutoTargets,
   validateModelDefinition,
 } from "./autoRouting.js";
 import type { ModelDefinition, ModelPricingRegistry, ModelRegistry, RegisteredModel } from "../types/models.js";
@@ -119,6 +120,16 @@ export function loadModelsFromFile() {
       }
       const definition = result.definition;
       if (!definition || definition.type !== "auto") continue;
+      // Concrete models are registered by the loop above, so the registry is
+      // already complete enough to tell a live target from a dead one. Warn
+      // rather than reject: routing skips the dead names, and taking the whole
+      // auto model offline over one of them would be the worse failure.
+      const { dropped } = resolveAutoTargets(definition.targets as string[], MODEL_REGISTRY);
+      if (dropped.length > 0) {
+        console.warn(
+          `Auto model '${displayName}' has ${dropped.length} unroutable target(s) that will be skipped: ${dropped.join(", ")}`,
+        );
+      }
       MODEL_REGISTRY[displayName] = {
         type: "chat",
         routingType: "auto",

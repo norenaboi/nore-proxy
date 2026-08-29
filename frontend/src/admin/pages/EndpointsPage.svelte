@@ -254,8 +254,21 @@
   async function confirmDelete() {
     if (deletingIndex === null) return;
     try {
-      await requestAdminJson("/api/endpoints", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ index: deletingIndex }) });
-      toast.show("Endpoint deleted successfully");
+      const result = await requestAdminJson<{ deletedModels?: number; updatedAutoModels?: string[]; emptiedAutoModels?: string[] }>(
+        "/api/endpoints",
+        { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ index: deletingIndex }) },
+      );
+      const deletedModels = result.deletedModels ?? 0;
+      const updated = result.updatedAutoModels ?? [];
+      const emptied = result.emptiedAutoModels ?? [];
+      toast.show(
+        deletedModels
+          ? `Endpoint deleted along with ${deletedModels} model${deletedModels === 1 ? "" : "s"}${updated.length ? `, removed from ${updated.length} auto model${updated.length === 1 ? "" : "s"}` : ""}`
+          : "Endpoint deleted successfully",
+      );
+      if (emptied.length) {
+        toast.show(`${emptied.join(", ")} ${emptied.length === 1 ? "has" : "have"} no targets left and cannot serve requests`, "error");
+      }
       deletingIndex = null;
       await load();
     } catch (e) {

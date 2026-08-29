@@ -1,5 +1,36 @@
 export type NumericInputValue = string | number | undefined;
 export type ModelFormType = "concrete" | "auto";
+export type TargetHealth = "live" | "disabled" | "missing";
+
+/**
+ * Health of each configured target of an auto model, keyed by target name.
+ *
+ * "missing" means no concrete model answers to that name any more, so routing
+ * skips it and only an edit can fix it; "disabled" is recoverable by re-enabling
+ * the target. Both are dead at request time, which is why the editor has to
+ * distinguish them from a target that simply hasn't been tested.
+ */
+export function targetHealth(
+  targets: readonly string[],
+  models: ReadonlyArray<{ name: string; modelType?: "auto" | "concrete"; disabled?: boolean }>,
+): Map<string, TargetHealth> {
+  const byName = new Map(models.map((model) => [model.name, model]));
+  return new Map(
+    targets.map((target) => {
+      const model = byName.get(target);
+      if (!model || model.modelType === "auto") return [target, "missing"];
+      return [target, model.disabled === true ? "disabled" : "live"];
+    }),
+  );
+}
+
+export function deadTargets(
+  targets: readonly string[],
+  models: ReadonlyArray<{ name: string; modelType?: "auto" | "concrete"; disabled?: boolean }>,
+): string[] {
+  const health = targetHealth(targets, models);
+  return targets.filter((target) => health.get(target) === "missing");
+}
 
 export function numericInputValue(value: NumericInputValue): number | null {
   if (value === undefined || value === "") return null;

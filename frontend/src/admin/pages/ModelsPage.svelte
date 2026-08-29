@@ -6,7 +6,7 @@
   import { pageHeaderActions, toast } from "$frontend/lib/stores";
   import AutoModelTargetPicker from "$frontend/components/admin/AutoModelTargetPicker.svelte";
   import { getProvider, type CatalogModel } from "$frontend/lib/models/catalog";
-  import { effectiveModelName, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, type NumericInputValue } from "$frontend/admin/modelForm";
+  import { deadTargets, effectiveModelName, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, targetHealth, type NumericInputValue } from "$frontend/admin/modelForm";
   import type { ModelTestResult } from "$contracts/models";
 
   interface Pricing { input?: number; output?: number; cache_write?: number; cache_read?: number; }
@@ -283,7 +283,17 @@
       .sort((a, b) => naturalSort(a.id, b.id)),
   );
   const availableTargets = $derived(concreteCandidates.filter((model) => !fTargets.includes(model.id)));
+  const formTargetHealth = $derived(targetHealth(fTargets, models));
+  const formDeadTargets = $derived(fTargets.filter((t) => formTargetHealth.get(t) === "missing"));
+  const formDisabledTargets = $derived(fTargets.filter((t) => formTargetHealth.get(t) === "disabled"));
   const versionKeys = $derived(Object.keys(endpoints).sort((a, b) => (parseInt(a.slice(1), 10) || 0) - (parseInt(b.slice(1), 10) || 0)));
+
+  function dropDeadTargets() {
+    const removed = formDeadTargets.length;
+    if (removed === 0) return;
+    fTargets = fTargets.filter((t) => formTargetHealth.get(t) !== "missing");
+    toast.show(`Removed ${removed} missing target${removed === 1 ? "" : "s"}. Save to persist.`);
+  }
 
   function priceChip(v: number | undefined) {
     return v != null && Number.isFinite(Number(v)) ? Number(v).toFixed(2) : "0.00";
@@ -579,9 +589,18 @@
     try {
       const res = await fetch("/api/models", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: deletingModel }) });
       if (res.status === 401 || res.status === 403) { window.location.href = "/admin/login"; return; }
-      const data = await res.json().catch(() => ({})) as { error?: string; dependents?: string[]; blockers?: string[] };
+      const data = await res.json().catch(() => ({})) as { error?: string; dependents?: string[]; blockers?: string[]; updatedAutoModels?: string[]; emptiedAutoModels?: string[] };
       if (!res.ok) throw new Error(res.status === 409 ? depMessage(data, "Model has active dependencies") : (data.error || "Failed to delete model"));
-      toast.show("Model deleted successfully");
+      const updated = data.updatedAutoModels ?? [];
+      const emptied = data.emptiedAutoModels ?? [];
+      toast.show(
+        updated.length
+          ? `Model deleted and removed from ${updated.length} auto model${updated.length === 1 ? "" : "s"}: ${updated.join(", ")}`
+          : "Model deleted successfully",
+      );
+      if (emptied.length) {
+        toast.show(`${emptied.join(", ")} ${emptied.length === 1 ? "has" : "have"} no targets left and cannot serve requests`, "error");
+      }
       closeDeleteModal({ restoreFocus: false });
       await load();
     } catch (e) {
@@ -688,9 +707,13 @@
                           {#if model.disabled}<span class="model-badge model-badge-disabled">disabled</span>{/if}
                           {#if model.hidden}<span class="model-badge model-badge-hidden">hidden</span>{/if}
                           {#if group.auto}
+                            {@const dead = deadTargets(model.targets || [], models)}
                             <span class="model-badge model-badge-auto">auto</span>
                             <span class="model-badge model-badge-selection">{model.targetSelection === "roundrobin" ? "round-robin" : "sticky"}</span>
                             <span class="model-badge model-badge-targets">{(model.targets || []).length} targets</span>
+                            {#if dead.length}
+                              <span class="model-badge model-badge-dead" title={`Targets that no longer exist: ${dead.join(", ")}`}>{dead.length} missing</span>
+                            {/if}
                             {#if model.maxTargetAttempts != null}<span class="model-badge model-badge-attempts">max {model.maxTargetAttempts}</span>{/if}
                           {:else if model.backend && model.backend !== model.name}
                             <span class="model-badge model-badge-backend">{model.backend}</span>
@@ -800,7 +823,8 @@
               <p class="targets-empty">No targets selected.</p>
             {:else}
               {#each fTargets as t, i (t)}
-                <div class="selected-target-row" class:dragging={dragIndex === i} data-target-row>
+                {@const health = formTargetHealth.get(t) ?? "live"}
+                <div class="selected-target-row" class:dragging={dragIndex === i} class:target-missing={health === "missing"} class:target-disabled={health === "disabled"} data-target-row>
                   <button
                     class="target-handle"
                     type="button"
@@ -813,6 +837,11 @@
                   ><i class="fa-solid fa-grip-vertical"></i></button>
                   <span class="target-order">{i + 1}</span>
                   <span class="target-name">{t}</span>
+                  {#if health === "missing"}
+                    <span class="target-badge target-badge-missing" title="No concrete model with this name exists — routing skips it">missing</span>
+                  {:else if health === "disabled"}
+                    <span class="target-badge target-badge-off" title="Target is disabled — routing skips it until re-enabled">disabled</span>
+                  {/if}
                   <div class="target-actions">
                     <button class="target-action" type="button" onclick={() => moveTarget(i, -1)} disabled={i === 0} aria-label="Move up"><i class="fa-solid fa-chevron-up"></i></button>
                     <button class="target-action" type="button" onclick={() => moveTarget(i, 1)} disabled={i === fTargets.length - 1} aria-label="Move down"><i class="fa-solid fa-chevron-down"></i></button>
@@ -822,6 +851,22 @@
               {/each}
             {/if}
           </div>
+          {#if formDeadTargets.length || formDisabledTargets.length}
+            <div class="target-warning" role="status">
+              <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+              <div class="target-warning-text">
+                {#if formDeadTargets.length}
+                  <p><strong>{formDeadTargets.length} target{formDeadTargets.length === 1 ? "" : "s"} no longer exist{formDeadTargets.length === 1 ? "s" : ""}:</strong> {formDeadTargets.join(", ")}. Routing skips {formDeadTargets.length === 1 ? "it" : "them"}, so {formDeadTargets.length === 1 ? "it wastes" : "they waste"} no failover attempts, but clearing {formDeadTargets.length === 1 ? "it" : "them"} keeps the list honest.</p>
+                {/if}
+                {#if formDisabledTargets.length}
+                  <p>{formDisabledTargets.length} target{formDisabledTargets.length === 1 ? " is" : "s are"} disabled and skipped until re-enabled: {formDisabledTargets.join(", ")}.</p>
+                {/if}
+              </div>
+              {#if formDeadTargets.length}
+                <button class="btn btn-secondary btn-sm" type="button" onclick={dropDeadTargets}>Remove missing</button>
+              {/if}
+            </div>
+          {/if}
           <p class="sr-only" role="status" aria-live="polite">{dragAnnouncement}</p>
         </div>
         <div style="display:flex;gap:12px;">
@@ -944,6 +989,7 @@
   .model-badge-selection { background: var(--primary-alpha-015); color: var(--primary-dark); }
   .model-badge-targets { background: var(--success-alpha-01); color: var(--success-dark); }
   .model-badge-attempts { background: rgba(245,158,11,.12); color: #b45309; }
+  .model-badge-dead { background: var(--danger-alpha-01); color: var(--danger-dark); }
   .model-pricing { display: flex; flex-wrap: wrap; gap: 10px; margin-right: 10px; margin-left: auto; }
   .pricing-chip { display: inline-flex; align-items: baseline; gap: 3px; padding: 2px 8px; border-radius: 20px; background: var(--gray-100); color: var(--gray-600); font-size: 11px; }
   .chip-label { color: var(--gray-500); font-size: 10px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
@@ -985,6 +1031,18 @@
   .selected-target-row.dragging .target-handle { cursor: grabbing; }
   .target-order { display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 7px; background: var(--primary-alpha-015); color: var(--primary-dark); font-size: 11px; font-weight: 700; }
   .target-name { min-width: 0; flex: 1; overflow: hidden; color: var(--gray-700); font-family: "Courier New", monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .selected-target-row.target-missing { border-color: var(--danger-alpha-03); background: var(--danger-alpha-01); }
+  .selected-target-row.target-missing .target-name { color: var(--danger-dark); text-decoration: line-through; }
+  .selected-target-row.target-disabled .target-name { color: var(--text-tertiary); }
+  .target-badge { flex-shrink: 0; padding: 2px 7px; border-radius: 6px; font-family: "Courier New", monospace; font-size: 10.5px; font-weight: 600; }
+  .target-badge-missing { background: var(--danger-alpha-02); color: var(--danger-dark); }
+  .target-badge-off { background: var(--gray-200); color: var(--gray-600); }
+  .target-warning { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--danger-alpha-03); border-radius: 10px; background: var(--danger-alpha-01); color: var(--danger-dark); font-size: 12px; }
+  .target-warning > i { margin-top: 2px; flex-shrink: 0; }
+  .target-warning-text { min-width: 0; flex: 1; }
+  .target-warning-text p { margin: 0; }
+  .target-warning-text p + p { margin-top: 5px; }
+  .target-warning .btn { flex-shrink: 0; }
   .target-actions { display: flex; gap: 4px; }
   .target-action { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; border: 0; border-radius: 7px; background: var(--gray-200); color: var(--gray-600); cursor: pointer; }
   .target-action.remove { color: var(--danger); }

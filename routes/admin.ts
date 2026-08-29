@@ -16,6 +16,7 @@ import { calculateCost } from "../utils/logging.js";
 import crypto from "crypto";
 import { createSession, deleteSession } from "../services/sessionManager.js";
 import {
+  pruneAutoTargetReferences,
   rewriteAutoTargetReferences,
   validateModelDefinition,
 } from "../utils/autoRouting.js";
@@ -803,16 +804,29 @@ function effectiveModelName(name: unknown, config: DynamicRecord) {
   return typeof config.backend === "string" ? config.backend.trim() : "";
 }
 
-function modelValidationContext(models: any) {
+function modelValidationContext(
+  models: any,
+  options: { requireExistingTargets?: boolean; grandfatheredTargets?: readonly string[] } = {},
+) {
   return {
     models,
     endpoints: readEndpointsDocument(),
     globalCeiling: settingsManager.get("autoModelMaxTargetAttempts"),
+    requireExistingTargets: options.requireExistingTargets === true,
+    grandfatheredTargets: options.grandfatheredTargets,
   };
 }
 
-function validateAdminModel(name: any, config: any, models: any) {
-  const result = validateModelDefinition(name, config, modelValidationContext(models));
+// `requireExistingTargets` belongs to the routes that accept a submitted target
+// list. Toggling disabled/hidden must stay permissive, or one stale target left
+// by an earlier deletion would make an auto model impossible to re-enable.
+function validateAdminModel(
+  name: any,
+  config: any,
+  models: any,
+  options: { requireExistingTargets?: boolean; grandfatheredTargets?: readonly string[] } = {},
+) {
+  const result = validateModelDefinition(name, config, modelValidationContext(models, options));
   return result.valid ? null : result.errors.join("; ");
 }
 
@@ -901,7 +915,7 @@ router.post("/api/models", verifySession, async (req: any, res: any) => {
 
     const stored = buildStoredModel(req.body);
     const candidateModels = { ...data.models, [name]: stored };
-    const validationError = validateAdminModel(name, stored, candidateModels);
+    const validationError = validateAdminModel(name, stored, candidateModels, { requireExistingTargets: true });
     if (validationError) return res.status(400).json({ error: validationError });
 
     data.models[name] = stored;
@@ -952,7 +966,20 @@ router.put("/api/models", verifySession, async (req: any, res: any) => {
     if (nameChanged && existingIsConcrete && modelType(stored) === "concrete") {
       rewriteAutoTargetReferences(candidateModels, oldName, name);
     }
-    const validationError = validateAdminModel(name, stored, candidateModels);
+    // A concrete model converted to auto stops being routable under its own
+    // name, so auto models pointing at it must let go.
+    const orphanedNames = existingIsConcrete && modelType(stored) === "auto" ? [oldName] : [];
+    const prunedAutoModels = pruneAutoTargetReferences(candidateModels, orphanedNames);
+    // Only targets this request introduces are held to existing-model validation:
+    // an auto model that already carried a stale name must stay editable, or an
+    // unrelated pricing change would be impossible to save.
+    const previousTargets = modelType(existing) === "auto" && Array.isArray(existing.targets)
+      ? existing.targets
+      : [];
+    const validationError = validateAdminModel(name, stored, candidateModels, {
+      requireExistingTargets: true,
+      grandfatheredTargets: previousTargets,
+    });
     if (validationError) return res.status(400).json({ error: validationError });
 
     data.models = candidateModels;
@@ -965,7 +992,11 @@ router.put("/api/models", verifySession, async (req: any, res: any) => {
     }
 
     loadModelsFromFile();
-    return res.json({ message: "Model updated" });
+    return res.json({
+      message: "Model updated",
+      updatedAutoModels: prunedAutoModels.map((entry) => entry.name),
+      emptiedAutoModels: prunedAutoModels.filter((entry) => entry.remainingTargets === 0).map((entry) => entry.name),
+    });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }
@@ -983,9 +1014,16 @@ router.delete("/api/models", verifySession, async (req: any, res: any) => {
     const existing = data.models[name];
     if (!existing) return res.status(404).json({ error: "Model not found" });
     delete data.models[name];
+    // Deleting a concrete model must not leave auto models pointing at it: a
+    // stale name still consumes a failover slot at request time.
+    const pruned = pruneAutoTargetReferences(data.models, [name]);
     writeJsonAtomic(modelsPath, data);
     loadModelsFromFile();
-    return res.json({ message: "Model deleted" });
+    return res.json({
+      message: "Model deleted",
+      updatedAutoModels: pruned.map((entry) => entry.name),
+      emptiedAutoModels: pruned.filter((entry) => entry.remainingTargets === 0).map((entry) => entry.name),
+    });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }
@@ -1542,10 +1580,12 @@ router.delete("/api/endpoints", verifySession, async (req: any, res: any) => {
     for (const modelName of endpointConcreteModels) {
       delete modelsData.models[modelName];
     }
+    const prunedAutoModels = pruneAutoTargetReferences(modelsData.models, endpointConcreteModels);
+    const modelsChanged = endpointConcreteModels.length > 0 || prunedAutoModels.length > 0;
     delete data[endpointKey];
     writeJsonAtomic(endpointsPath, data);
     try {
-      if (modelsContent !== null && endpointConcreteModels.length > 0) {
+      if (modelsContent !== null && modelsChanged) {
         writeJsonAtomic(modelsPath, modelsData);
       }
     } catch (error: any) {
@@ -1554,12 +1594,14 @@ router.delete("/api/endpoints", verifySession, async (req: any, res: any) => {
     }
 
     Config.loadEndpoints();
-    if (modelsContent !== null && endpointConcreteModels.length > 0) {
+    if (modelsContent !== null && modelsChanged) {
       loadModelsFromFile();
     }
     return res.json({
       message: "Endpoint deleted",
       deletedModels: endpointConcreteModels.length,
+      updatedAutoModels: prunedAutoModels.map((entry) => entry.name),
+      emptiedAutoModels: prunedAutoModels.filter((entry) => entry.remainingTargets === 0).map((entry) => entry.name),
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
