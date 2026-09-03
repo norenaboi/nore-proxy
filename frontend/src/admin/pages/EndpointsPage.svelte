@@ -84,7 +84,7 @@
   // Advanced Settings disclosures. Only one is open at a time, so the column's
   // height stays predictable inside the fixed-height modal and expanding a
   // section never pushes the one you were reading off screen. null = all closed.
-  type AdvancedSection = "generation" | "caching" | "headers" | "bodyParams" | "keys";
+  type AdvancedSection = "proxy" | "generation" | "caching" | "headers" | "bodyParams" | "keys";
   let openSection = $state<AdvancedSection | null>(null);
 
   function toggleSection(section: AdvancedSection) {
@@ -93,7 +93,11 @@
 
   // Each collapsed section states what it currently holds, so an operator can
   // see that an endpoint overrides temperature or strips a param without
-  // expanding all five sections to look.
+  // expanding all six sections to look.
+  const proxySummary = $derived.by(() => {
+    if (!fProxyId) return "Direct";
+    return proxyLabel(fProxyId);
+  });
   const genSummary = $derived.by(() => {
     const parts: string[] = [];
     if (gTempEnabled) parts.push(gTemp !== "" ? `T=${gTemp}` : "T pass");
@@ -501,19 +505,6 @@
           <div class="form-group"><label for="epUrl">Endpoint URL</label><input id="epUrl" type="url" bind:value={fUrl} placeholder="e.g., https://api.example.com" /><label class="gen-toggle suffix-toggle"><input type="checkbox" bind:checked={fAppendSuffix} /><span class="gen-toggle-slider"></span><span>Append API version suffix (/v1)</span></label></div>
           <div class="form-group"><label for="epFmt">API Format</label><select id="epFmt" bind:value={fApiFormat} class="form-select"><option value="openai">OpenAI — /v1/chat/completions (default)</option><option value="anthropic">Anthropic — /v1/messages</option><option value="gemini">Gemini — /v1beta/generateContent</option><option value="openai-responses">OpenAI Responses — /v1/responses</option><option value="openai-codex">OpenAI Codex — /v1/responses</option></select></div>
           <div class="form-group">
-            <label for="epProxy">Outbound Proxy</label>
-            <select id="epProxy" bind:value={fProxyId} class="form-select">
-              <option value="">None — connect directly</option>
-              {#if editingIndex !== null && fProxyId && !proxies.some((p) => p.id === fProxyId)}
-                <option value={fProxyId}>Unknown proxy ({fProxyId})</option>
-              {/if}
-              {#each proxies as proxy (proxy.id)}
-                <option value={proxy.id}>{proxy.name || proxy.id} · {proxy.type} · {proxy.host}:{proxy.port}</option>
-              {/each}
-            </select>
-            <p class="form-hint">Routes this endpoint's upstream traffic through the selected proxy. Manage proxies on the Proxies page.</p>
-          </div>
-          <div class="form-group">
             <div class="section-label token-heading">API Tokens <span class="token-count">{pendingTokens.length ? `(${pendingTokens.length})` : ""}</span></div>
             <div class="tokens-scroll-list">
               {#if pendingTokens.length === 0}<span class="tokens-empty">No tokens added yet</span>{/if}
@@ -543,6 +534,31 @@
 
         <div class="modal-body-col">
           <div class="advanced-heading">Advanced Settings</div>
+
+          <div class="disclosure" class:open={openSection === "proxy"}>
+            <button class="disclosure-head" type="button" aria-expanded={openSection === "proxy"} aria-controls="epProxySection" onclick={() => toggleSection("proxy")}>
+              <i class="fa-solid fa-chevron-right disclosure-chevron" class:open={openSection === "proxy"}></i>
+              <span class="disclosure-title">Outbound Proxy</span>
+              <span class="disclosure-summary" class:hidden={openSection === "proxy"}>{proxySummary}</span>
+            </button>
+            {#if openSection === "proxy"}
+              <div class="disclosure-body" id="epProxySection" transition:slide={{ duration: motionDuration(220) }}>
+                <div class="form-group">
+                  <label for="epProxy">Outbound Proxy</label>
+                  <select id="epProxy" bind:value={fProxyId} class="form-select">
+                    <option value="">None — connect directly</option>
+                    {#if editingIndex !== null && fProxyId && !proxies.some((p) => p.id === fProxyId)}
+                      <option value={fProxyId}>Unknown proxy ({fProxyId})</option>
+                    {/if}
+                    {#each proxies as proxy (proxy.id)}
+                      <option value={proxy.id}>{proxy.name || proxy.id} · {proxy.type} · {proxy.host}:{proxy.port}</option>
+                    {/each}
+                  </select>
+                  <p class="form-hint">Routes this endpoint's upstream traffic — requests, model tests, and model fetches — through the selected proxy. Manage proxies on the Proxies page.</p>
+                </div>
+              </div>
+            {/if}
+          </div>
 
           <div class="disclosure" class:open={openSection === "generation"}>
             <button class="disclosure-head" type="button" aria-expanded={openSection === "generation"} aria-controls="epGeneration" onclick={() => toggleSection("generation")}>
