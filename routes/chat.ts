@@ -12,6 +12,7 @@ import keyStateManager, { ACTIONABLE_CODES } from "../services/keyStateManager.j
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import { buildUpstreamErrorContext, getUpstreamErrorMessage, readUpstreamErrorBody } from "../utils/upstreamErrors.js";
 import { attemptedKeyHashes, classifyUpstreamFailure, createRoutingState, markStreamOutputStarted, nextTarget, recordRoutingAttempt, routingMetadata, summarizeRoutingAttempts } from "../utils/autoRouting.js";
+import { proxyAgentsFor } from "../utils/proxyAgents.js";
 
 
 declare global {
@@ -332,8 +333,9 @@ async function streamFromBackend(req: Request, res: Response, requestId: string,
     }
     const prepared = prepareAttempt(baseRequest, endpoint, requestId, true);
     let response;
+    const proxy = proxyAgentsFor(endpoint.proxyId);
     try {
-      response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, responseType: "stream", timeout: 180000, validateStatus: () => true, signal: abortController.signal });
+      response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, responseType: "stream", timeout: 180000, validateStatus: () => true, signal: abortController.signal, ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}) });
       activeStream = response.data;
     } catch (error: any) {
       if (clientAborted) error.clientAbort = true;
@@ -450,8 +452,9 @@ async function logStreamSuccess(requestId: any, result: any, request: any, endpo
 async function makeBackendRequest(requestId: string, baseRequest: DynamicRecord, modelName: string, apiKey: string): Promise<any> {
   const result = await executeRouting(requestId, modelName, async (_state: any, endpoint: any) => {
     const prepared = prepareAttempt(baseRequest, endpoint, requestId, false);
+    const proxy = proxyAgentsFor(endpoint.proxyId);
     let response;
-    try { response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, timeout: 180000, validateStatus: () => true }); }
+    try { response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, timeout: 180000, validateStatus: () => true, ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}) }); }
     catch (error: any) { throw withContext(error, endpoint, prepared); }
     if (response.status < 200 || response.status >= 300) throw withContext(httpError(response.status, response.data), endpoint, prepared, response.data);
     await keyStateManager.recordSuccess(endpoint.endpointKey, endpoint.token);

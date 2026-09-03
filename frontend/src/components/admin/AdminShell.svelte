@@ -33,6 +33,7 @@
       { href: "/admin/logs", icon: "fa-solid fa-clock-rotate-left", label: "Logs" },
       { href: "/admin/errors", icon: "fa-solid fa-triangle-exclamation", label: "Errors" },
       { href: "/admin/console", icon: "fa-solid fa-terminal", label: "Console" },
+      { href: "/admin/proxies", icon: "fa-solid fa-network-wired", label: "Proxies" },
       { href: "/admin/settings", icon: "fa-solid fa-sliders", label: "Settings" },
     ],
   ];

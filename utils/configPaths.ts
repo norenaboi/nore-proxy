@@ -15,3 +15,7 @@ export function getEndpointsPath() {
 export function getSettingsPath() {
   return process.env.SETTINGS_PATH || path.join(ROOT_DIR, "settings.json");
 }
+
+export function getProxiesPath() {
+  return process.env.PROXIES_PATH || path.join(ROOT_DIR, "proxies.json");
+}

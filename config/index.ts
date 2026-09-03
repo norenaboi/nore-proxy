@@ -107,6 +107,10 @@ class Config {
           // network) before the request hops keys. null/absent => fall back to
           // defaultEndpointRetryAttempts at runtime.
           retryAttempts: endpoint.retryAttempts !== undefined ? endpoint.retryAttempts : null,
+          // Outbound proxy in proxies.json to route upstream traffic through.
+          // null/absent => connect directly. A stale id degrades to direct at
+          // request time rather than failing every request.
+          proxyId: typeof endpoint.proxyId === "string" && endpoint.proxyId !== "" ? endpoint.proxyId : null,
         };
       }
     } catch (e) {

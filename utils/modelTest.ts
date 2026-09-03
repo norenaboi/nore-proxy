@@ -4,6 +4,7 @@ import type { ModelTestResult } from "../shared/contracts/models.js";
 import type { ApiFormat, BodyParamPolicy } from "../types/endpoint.js";
 import { getAdapter, getExtraHeaders } from "./adapters/index.js";
 import { applyBodyParamPolicy, getFullUrl } from "./endpointPolicies.js";
+import { proxyAgentsFor } from "./proxyAgents.js";
 
 export interface UpstreamModelTestInput {
   url: string;
@@ -13,6 +14,7 @@ export interface UpstreamModelTestInput {
   apiFormat: ApiFormat;
   appendApiSuffix: boolean;
   bodyParams?: BodyParamPolicy | null;
+  proxyId?: string | null;
 }
 
 export type ModelTestRequester = (
@@ -41,7 +43,7 @@ export async function testUpstreamModel(
   input: UpstreamModelTestInput,
   requester: ModelTestRequester = axios,
 ): Promise<ModelTestResult> {
-  const { url, token, backend, customHeaders = {}, apiFormat, appendApiSuffix, bodyParams = null } = input;
+  const { url, token, backend, customHeaders = {}, apiFormat, appendApiSuffix, bodyParams = null, proxyId = null } = input;
   const fullUrl = getFullUrl(url, apiFormat, backend, false, appendApiSuffix);
   const start = Date.now();
   const isGemini = apiFormat === "gemini";
@@ -81,6 +83,11 @@ export async function testUpstreamModel(
   // same reason it would in production.
   applyBodyParamPolicy(data, bodyParams);
 
+  // The ping rides the endpoint's proxy as well, so a test reports the same
+  // path a real request takes: a proxy that cannot be reached fails here for
+  // the same reason it would in production.
+  const proxy = proxyAgentsFor(proxyId);
+
   try {
     const response = await requester({
       method: "post",
@@ -88,6 +95,7 @@ export async function testUpstreamModel(
       headers,
       data,
       timeout: 15000,
+      ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}),
     });
     const latency_ms = Date.now() - start;
     return response.status === 200

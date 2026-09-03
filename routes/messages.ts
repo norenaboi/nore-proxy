@@ -31,6 +31,7 @@ import {
   guardCarryBuffer,
 } from "../utils/streamLimits.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
+import { proxyAgentsFor } from "../utils/proxyAgents.js";
 import { openAIResponseToAnthropic } from "../utils/responseFormats.js";
 import {
   attemptedKeyHashes,
@@ -692,6 +693,7 @@ async function makeMessagesAttempt(
 
       requestUrl = apiFormat === "gemini" ? `${fullUrl}?key=${backendToken}` : fullUrl;
 
+      const proxy = proxyAgentsFor(endpointInfo.proxyId);
       const resp = await axios({
         method: "post",
         url: requestUrl,
@@ -699,6 +701,7 @@ async function makeMessagesAttempt(
         data,
         timeout: 180000,
         validateStatus: () => true,
+        ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}),
       });
 
       responseStatus = resp.status;
@@ -961,6 +964,7 @@ async function streamMessagesAttempt(
         ? `${fullUrl}?alt=sse&key=${backendToken}`
         : fullUrl;
 
+      const proxy = proxyAgentsFor(endpointInfo.proxyId);
       const resp = await axios({
         method: "post",
         url: requestUrl,
@@ -970,6 +974,7 @@ async function streamMessagesAttempt(
         timeout: 180000,
         validateStatus: () => true,
         signal: abortController.signal,
+        ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}),
       });
       setActiveStream(resp.data);
 

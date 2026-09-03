@@ -36,6 +36,7 @@ const adminPaths = [
   "/admin/keys",
   "/admin/models",
   "/admin/endpoints",
+  "/admin/proxies",
   "/admin/settings",
   "/admin/users",
   "/admin/model-stats",

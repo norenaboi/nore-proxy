@@ -20,9 +20,12 @@ import {
   rewriteAutoTargetReferences,
   validateModelDefinition,
 } from "../utils/autoRouting.js";
-import { getEndpointsPath, getModelsPath } from "../utils/configPaths.js";
+import { getEndpointsPath, getModelsPath, getProxiesPath } from "../utils/configPaths.js";
 import { writeFileAtomic, writeJsonAtomic } from "../utils/atomicJson.js";
 import { isReservedBodyParam } from "../shared/contracts/bodyParams.js";
+import { isMaskedProxyPassword, maskProxyPassword, validateProxyConfig } from "../shared/contracts/proxies.js";
+import proxyManager from "../services/proxyManager.js";
+import { clearProxyAgents, proxyAgentsFor } from "../utils/proxyAgents.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1121,6 +1124,7 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
       apiFormat: endpoint.apiFormat,
       appendApiSuffix: endpoint.appendApiSuffix,
       bodyParams: endpoint.bodyParams,
+      proxyId: endpoint.proxyId,
     });
     return res.json(result);
   }
@@ -1158,6 +1162,7 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
       apiFormat: endpointInfo.apiFormat,
       appendApiSuffix: endpointInfo.appendApiSuffix,
       bodyParams: endpointInfo.bodyParams,
+      proxyId: endpointInfo.proxyId,
     });
     return res.json(result);
   } catch (error: any) {
@@ -1208,6 +1213,7 @@ router.get("/api/endpoints", verifySession, async (req: any, res: any) => {
         keyHealth: endpoint.keyHealth ?? null,
         bodyParams: endpoint.bodyParams ?? null,
         retryAttempts: endpoint.retryAttempts ?? null,
+        proxyId: typeof endpoint.proxyId === "string" && endpoint.proxyId !== "" ? endpoint.proxyId : null,
       });
     }
 
@@ -1337,6 +1343,15 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
       bodyParams = validated.value;
     }
 
+    // Outbound proxy. Absent/null => direct connection; a given id must exist.
+    let proxyId: string | null = null;
+    if (req.body.proxyId !== undefined && req.body.proxyId !== null) {
+      if (typeof req.body.proxyId !== "string" || !proxyManager.has(req.body.proxyId)) {
+        return res.status(400).json({ error: "Unknown proxy — create it on the Proxies page first" });
+      }
+      proxyId = req.body.proxyId;
+    }
+
     data[endpointKey] = {
       name: name || `Endpoint ${newIndex}`,
       url: normalizedUrl,
@@ -1350,6 +1365,7 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
       keyHealth,
       bodyParams,
       retryAttempts,
+      proxyId,
     };
 
     writeJsonAtomic(endpointsPath, data);
@@ -1428,6 +1444,18 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
       const validated = validateBodyParams(req.body.bodyParams);
       if (!validated.ok) return res.status(400).json({ error: validated.error });
       bodyParams = validated.value;
+    }
+
+    // Validate optional outbound proxy (undefined = keep existing, null = clear)
+    let proxyId = undefined;
+    if (req.body.proxyId !== undefined) {
+      if (req.body.proxyId === null) {
+        proxyId = null;
+      } else if (typeof req.body.proxyId !== "string" || !proxyManager.has(req.body.proxyId)) {
+        return res.status(400).json({ error: "Unknown proxy — create it on the Proxies page first" });
+      } else {
+        proxyId = req.body.proxyId;
+      }
     }
 
     // Validate index is a plain positive integer to prevent RegExp injection
@@ -1554,6 +1582,9 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
     }
     if (retryAttempts !== undefined) {
       data[endpointKey].retryAttempts = retryAttempts;
+    }
+    if (proxyId !== undefined) {
+      data[endpointKey].proxyId = proxyId;
     }
 
     writeJsonAtomic(endpointsPath, data);
@@ -1703,11 +1734,13 @@ router.get("/api/endpoints/:version/models", verifySession, async (req: any, res
       };
     }
 
+    const proxy = proxyAgentsFor(endpoint.proxyId);
     const response = await axios({
       method: 'get',
       url: requestUrl,
       headers: requestHeaders,
       timeout: 15000,
+      ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}),
     });
 
     if (response.status !== 200) {
@@ -1853,6 +1886,86 @@ router.post("/api/endpoints/:version/keys/reset-stats", verifySession, async (re
 */
 
 /*
+    GET POST PUT DELETE for proxies.json
+*/
+
+// Get all proxies — passwords masked, never raw.
+router.get("/api/proxies", verifySession, (_req: any, res: any) => {
+  res.json({ proxies: proxyManager.maskedList() });
+});
+
+// Add a proxy
+router.post("/api/proxies", verifySession, async (req: any, res: any) => {
+  try {
+    const validated = validateProxyConfig(req.body);
+    if (!validated.ok) return res.status(400).json({ error: validated.error });
+    const id = proxyManager.create(validated.value);
+    res.json({ message: "Proxy added", id });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update a proxy. A password containing the mask placeholder means "keep the
+// stored secret"; any other value (including empty, which clears it) replaces it.
+router.put("/api/proxies", verifySession, async (req: any, res: any) => {
+  try {
+    const id = req.body?.id;
+    if (typeof id !== "string" || !/^p\d+$/.test(id)) {
+      return res.status(400).json({ error: "Invalid proxy id" });
+    }
+    const stored = proxyManager.get(id);
+    if (!stored) return res.status(404).json({ error: "Proxy not found" });
+
+    const password = typeof req.body.password === "string" && !isMaskedProxyPassword(req.body.password)
+      ? req.body.password
+      : stored.password;
+    const validated = validateProxyConfig({ ...req.body, password });
+    if (!validated.ok) return res.status(400).json({ error: validated.error });
+    if (!proxyManager.update(id, validated.value)) {
+      return res.status(404).json({ error: "Proxy not found" });
+    }
+    res.json({ message: "Proxy updated" });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a proxy. Refused while any endpoint still references it, so a delete
+// can never silently sever an endpoint's upstream path.
+router.delete("/api/proxies", verifySession, async (req: any, res: any) => {
+  try {
+    const id = req.body?.id;
+    if (typeof id !== "string" || !/^p\d+$/.test(id)) {
+      return res.status(400).json({ error: "Invalid proxy id" });
+    }
+    if (!proxyManager.has(id)) return res.status(404).json({ error: "Proxy not found" });
+
+    const endpointsPath = getEndpointsPath();
+    const content = fs.existsSync(endpointsPath)
+      ? fs.readFileSync(endpointsPath, "utf-8")
+      : null;
+    const data = content === null ? {} : JSON.parse(content);
+    const referencing: string[] = [];
+    for (const [key, endpoint] of Object.entries(data)) {
+      if ((endpoint as any)?.proxyId === id) {
+        referencing.push((endpoint as any).name || key);
+      }
+    }
+    if (referencing.length > 0) {
+      return res.status(409).json({
+        error: `Proxy is still used by: ${referencing.join(", ")}. Reassign those endpoints first.`,
+      });
+    }
+
+    proxyManager.remove(id);
+    res.json({ message: "Proxy deleted" });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/*
     GET / PUT for proxy settings
 */
 
@@ -1959,6 +2072,8 @@ router.put("/api/settings", verifySession, (req: any, res: any) => {
 router.post("/api/reload", verifySession, async (req: any, res: any) => {
   // Config and model validation consume runtime settings, so refresh those first.
   settingsManager.reload();
+  proxyManager.reload();
+  clearProxyAgents();
   Config.reload();
   await apiKeyManager.loadKeys();
   loadModelsFromFile();

@@ -26,6 +26,7 @@ Nore Proxy is a unified LLM API gateway with OpenAI-compatible and Anthropic-com
 - `models.json` is the persisted model, pricing, and automatic-routing definition source. `loadModelsFromFile()` validates it and rebuilds the in-memory model registry, aliases, pricing, and automatic-routing counters while excluding disabled models.
 - `endpoints.json` contains upstream endpoint definitions and raw credentials. Loaded endpoints can use sticky or round-robin key selection; round-robin starts each request at a random position in the key list and walks forward from there, holding that position across the request's key hops. Key health and cooldown state are persisted separately by non-secret key identity.
 - `settings.json` contains runtime settings overrides merged with defaults in `services/settingsManager.ts`.
+- `proxies.json` contains outbound proxy definitions (HTTP and SOCKS, optional credentials). `services/proxyManager.ts` owns CRUD and masks passwords on admin responses; endpoints reference a proxy by id, and `utils/proxyAgents.ts` builds the cached axios agents that route upstream traffic through it. A proxy referenced by any endpoint cannot be deleted until the reference is cleared.
 
 Treat these runtime JSON files as operational data, not examples or source fixtures. Do not inspect or reproduce secret values merely to document or test behavior.
 
@@ -35,7 +36,7 @@ Treat these runtime JSON files as operational data, not examples or source fixtu
 - `routes/messages.ts`: Anthropic-compatible `POST /v1/messages`, including protocol conversion and Anthropic event framing.
 - `routes/models.ts`: public model discovery.
 - `routes/stats.ts`: public summaries and authenticated client-key usage.
-- `routes/admin.ts`: admin authentication, endpoint/model/key/settings CRUD, diagnostics, and analytics APIs.
+- `routes/admin.ts`: admin authentication, endpoint/model/key/proxy/settings CRUD, diagnostics, and analytics APIs.
 - `routes/logs.ts`: authenticated live console logging and clearing.
 - `routes/pages.ts`: public, login, and authenticated admin document routes.
 
@@ -47,6 +48,7 @@ Treat these runtime JSON files as operational data, not examples or source fixtu
 - `services/logManager.ts`: request/error persistence, migrations, projections, and analytics rollups.
 - `services/sessionManager.ts`: persistent administrator sessions.
 - `services/settingsManager.ts`: runtime defaults and JSON overrides.
+- `services/proxyManager.ts`: persisted outbound proxy definitions and their masked admin views.
 - `services/realtimeStats.ts`: active-request state.
 - `services/logService.ts`: in-memory console ring and SSE broadcast.
 

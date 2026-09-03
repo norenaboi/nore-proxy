@@ -60,6 +60,11 @@ export interface Endpoint {
    * the global default.
    */
   retryAttempts?: number | null;
+  /**
+   * Id of the outbound proxy in proxies.json that upstream traffic is routed
+   * through. Null/absent connects directly.
+   */
+  proxyId?: string | null;
 }
 
 export type EndpointsDocument = Record<EndpointKey, Endpoint>;
@@ -77,6 +82,7 @@ export interface LoadedEndpoint extends Omit<Endpoint, "name" | "headers" | "api
   keyHealth: boolean | null;
   bodyParams: BodyParamPolicy | null;
   retryAttempts: number | null;
+  proxyId: string | null;
 }
 
 export interface EndpointMetadata {
@@ -94,6 +100,7 @@ export interface EndpointMetadata {
   keyHealth: boolean | null;
   bodyParams: BodyParamPolicy | null;
   retryAttempts: number | null;
+  proxyId: string | null;
 }
 
 /** A resolved endpoint with the selected upstream credential. */
@@ -119,4 +126,5 @@ export interface EndpointListItem {
   keyHealth: boolean | null;
   bodyParams: BodyParamPolicy | null;
   retryAttempts: number | null;
+  proxyId: string | null;
 }

@@ -347,6 +347,8 @@ export function getConcreteModelMeta(modelName: any) {
     // Extra same-key attempts on a transient failure. Absent => fall back to
     // the global default at the point of use.
     retryAttempts: endpoint.retryAttempts ?? null,
+    // Outbound proxy to route upstream traffic through. Absent => direct.
+    proxyId: endpoint.proxyId ?? null,
   };
 }
 

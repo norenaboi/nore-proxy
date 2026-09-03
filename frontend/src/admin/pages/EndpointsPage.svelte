@@ -28,9 +28,11 @@
     apiFormat?: string; appendApiSuffix?: boolean; keyRotation?: string; keyHealth?: boolean; retryAttempts?: number;
     headers?: Record<string, string>;
     bodyParams?: BodyParamPolicy | null;
+    proxyId?: string | null;
     generationDefaults?: { temperature?: GenDefault; top_p?: GenDefault; max_tokens?: GenDefault };
     promptCaching?: { enabled: boolean; depth: number; ttl?: "1h" };
   }
+  interface ProxyOption { id: string; name: string; type: string; host: string; port: number; }
   interface KeyState {
     tokenHash?: string; maskedKey?: string; status?: string; disabledUntil?: number;
     totalRequests?: number; failedRequests?: number; codeCounts?: Record<string, number>;
@@ -49,6 +51,7 @@
   };
 
   let endpoints = $state<Endpoint[]>([]);
+  let proxies = $state<ProxyOption[]>([]);
   let loading = $state(true);
   let errorMsg = $state("");
 
@@ -71,6 +74,7 @@
   let bulkOpen = $state(false);
   let pendingTokens = $state<string[]>([]);
   let pendingDeleteConfirm = $state<Set<number>>(new Set());
+  let fProxyId = $state("");
   // Generation defaults
   let gTempEnabled = $state(false); let gTemp = $state("");
   let gTopPEnabled = $state(false); let gTopP = $state("");
@@ -138,11 +142,25 @@
     try {
       const d = await requestAdminJson<{ endpoints: Endpoint[] }>("/api/endpoints");
       endpoints = d.endpoints ?? [];
+      // Proxy names feed the editor's select and the list badge; a failure
+      // here degrades to "None/unknown" rather than breaking the page.
+      try {
+        const p = await requestAdminJson<{ proxies: ProxyOption[] }>("/api/proxies");
+        proxies = p.proxies ?? [];
+      } catch {
+        proxies = [];
+      }
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : "Failed to load endpoints";
     } finally {
       loading = false;
     }
+  }
+
+  function proxyLabel(id: string): string {
+    const proxy = proxies.find((p) => p.id === id);
+    if (proxy) return proxy.name || `${proxy.type} ${proxy.host}:${proxy.port}`;
+    return `Unknown proxy (${id})`;
   }
 
   function displayToken(tok: string) {
@@ -203,7 +221,7 @@
   async function openAdd() {
     editingIndex = null;
     fName = ""; fUrl = ""; fAppendSuffix = true; fHeaders = ""; fHeaderPresets = emptyHeaderPresets();
-    fBodyParamsAdd = ""; fBodyParamsStrip = "";
+    fBodyParamsAdd = ""; fBodyParamsStrip = ""; fProxyId = "";
     tokenInput = ""; bulkInput = ""; bulkOpen = false; pendingTokens = []; pendingDeleteConfirm = new Set();
     openSection = null;
     let defaults: Settings | undefined;
@@ -245,6 +263,7 @@
     fKeyRotation = ep.keyRotation || "sticky";
     fKeyHealth = ep.keyHealth !== false;
     fRetryAttempts = ep.retryAttempts ?? 0;
+    fProxyId = ep.proxyId ?? "";
     setGenDefaults(ep.generationDefaults);
     setPromptCaching(ep.promptCaching);
     modalOpen = true;
@@ -301,6 +320,7 @@
       keyRotation: fKeyRotation, keyHealth: fKeyHealth, retryAttempts: fRetryAttempts,
       generationDefaults: collectGenDefaults(), promptCaching: collectPromptCaching(),
       bodyParams: { add: parsedBodyAdd.params, strip: parsedBodyStrip.names },
+      proxyId: fProxyId || null,
     };
     if (editingIndex !== null) payload.index = editingIndex;
 
@@ -450,6 +470,7 @@
                 {#if gd.top_p?.enabled && gd.top_p.value !== null}<span class="gen-badge"><i class="fa-solid fa-chart-pie"></i>P={gd.top_p.value}</span>{/if}
                 {#if gd.max_tokens?.enabled && gd.max_tokens.value !== null}<span class="gen-badge"><i class="fa-solid fa-stopwatch"></i>Max={gd.max_tokens.value}</span>{/if}
                 {#if ep.promptCaching?.enabled}<span class="gen-badge cache"><i class="fa-solid fa-bolt"></i>Cache={ep.promptCaching.depth}{ep.promptCaching.ttl === "1h" ? " · 1h" : ""}</span>{/if}
+                {#if ep.proxyId}<span class="gen-badge"><i class="fa-solid fa-network-wired"></i>{proxyLabel(ep.proxyId)}</span>{/if}
                 {#if ep.headers && Object.keys(ep.headers).length > 0}<span class="gen-badge"><i class="fa-solid fa-code"></i>{Object.keys(ep.headers).length} custom header{Object.keys(ep.headers).length !== 1 ? "s" : ""}</span>{/if}
                 {#if bodyParamCounts(ep.bodyParams).added > 0}<span class="gen-badge"><i class="fa-solid fa-plus"></i>{bodyParamCounts(ep.bodyParams).added} body param{bodyParamCounts(ep.bodyParams).added !== 1 ? "s" : ""}</span>{/if}
                 {#if bodyParamCounts(ep.bodyParams).stripped > 0}<span class="gen-badge"><i class="fa-solid fa-scissors"></i>{bodyParamCounts(ep.bodyParams).stripped} stripped</span>{/if}
@@ -479,6 +500,19 @@
           <div class="form-group"><label for="epName">Endpoint Name</label><input id="epName" type="text" bind:value={fName} placeholder="e.g., My API Server" /></div>
           <div class="form-group"><label for="epUrl">Endpoint URL</label><input id="epUrl" type="url" bind:value={fUrl} placeholder="e.g., https://api.example.com" /><label class="gen-toggle suffix-toggle"><input type="checkbox" bind:checked={fAppendSuffix} /><span class="gen-toggle-slider"></span><span>Append API version suffix (/v1)</span></label></div>
           <div class="form-group"><label for="epFmt">API Format</label><select id="epFmt" bind:value={fApiFormat} class="form-select"><option value="openai">OpenAI — /v1/chat/completions (default)</option><option value="anthropic">Anthropic — /v1/messages</option><option value="gemini">Gemini — /v1beta/generateContent</option><option value="openai-responses">OpenAI Responses — /v1/responses</option><option value="openai-codex">OpenAI Codex — /v1/responses</option></select></div>
+          <div class="form-group">
+            <label for="epProxy">Outbound Proxy</label>
+            <select id="epProxy" bind:value={fProxyId} class="form-select">
+              <option value="">None — connect directly</option>
+              {#if editingIndex !== null && fProxyId && !proxies.some((p) => p.id === fProxyId)}
+                <option value={fProxyId}>Unknown proxy ({fProxyId})</option>
+              {/if}
+              {#each proxies as proxy (proxy.id)}
+                <option value={proxy.id}>{proxy.name || proxy.id} · {proxy.type} · {proxy.host}:{proxy.port}</option>
+              {/each}
+            </select>
+            <p class="form-hint">Routes this endpoint's upstream traffic through the selected proxy. Manage proxies on the Proxies page.</p>
+          </div>
           <div class="form-group">
             <div class="section-label token-heading">API Tokens <span class="token-count">{pendingTokens.length ? `(${pendingTokens.length})` : ""}</span></div>
             <div class="tokens-scroll-list">
