@@ -7,6 +7,7 @@ import keyStateManager from "../services/keyStateManager.js";
 import { normalizeEndpointUrl } from "./endpointPolicies.js";
 import { addModelPricing } from "./pricing.js";
 import { getModelsPath } from "./configPaths.js";
+import { ensureJsonAtomic } from "./atomicJson.js";
 import {
   resetAutoRoutingCounters,
   resolveAutoTargets,
@@ -74,7 +75,10 @@ export function loadModelsFromFile() {
 
   try {
     if (!fs.existsSync(jsonPath)) {
-      console.warn("models.json not found");
+      // Self-materialize so a mounted-but-empty data/ directory starts with
+      // a working file rather than a missing model registry.
+      ensureJsonAtomic(jsonPath, { models: {} });
+      console.log(`models.json not found — created an empty one at ${jsonPath}`);
       return;
     }
 

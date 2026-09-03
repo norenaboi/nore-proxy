@@ -6,10 +6,6 @@ services:
     env_file:
       - path: .env
         required: false
-    environment:
-      ENDPOINTS_PATH: /app/data/endpoints.json
-      MODELS_PATH: /app/data/models.json
-      SETTINGS_PATH: /app/data/settings.json
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs

@@ -5,6 +5,7 @@ import fs from "fs";
 import crypto from "node:crypto";
 import settingsManager from "../services/settingsManager.js";
 import { getEndpointsPath } from "../utils/configPaths.js";
+import { ensureJsonAtomic } from "../utils/atomicJson.js";
 import type { EndpointsDocument, LoadedEndpoint } from "../types/endpoint.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -56,7 +57,15 @@ class Config {
     const endpointsPath = getEndpointsPath();
 
     if (!fs.existsSync(endpointsPath)) {
-      console.log("endpoints.json not found, no endpoints loaded");
+      // Self-materialize so a mounted-but-empty data/ directory starts with a
+      // working file the admin API can extend, instead of a warning.
+      try {
+        ensureJsonAtomic(endpointsPath, {});
+        console.log(`endpoints.json not found — created an empty one at ${endpointsPath}`);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error(`Error creating endpoints.json: ${message}`);
+      }
       return this.ENDPOINTS;
     }
 

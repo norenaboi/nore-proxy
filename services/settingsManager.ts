@@ -68,7 +68,13 @@ class SettingsManager {
   _loadFromFile(): SettingsUpdate {
     try {
       const settingsPath = getSettingsPath();
-      if (!fs.existsSync(settingsPath)) return {};
+      // Self-materialize so a mounted-but-empty data/ directory starts with a
+      // writable settings file; the admin panel persists overrides into it.
+      if (!fs.existsSync(settingsPath)) {
+        writeJsonAtomic(settingsPath, {});
+        console.log(`[SettingsManager] settings.json not found — created defaults at ${settingsPath}`);
+        return {};
+      }
       const content = fs.readFileSync(settingsPath, "utf-8");
       const parsed = JSON.parse(content);
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {

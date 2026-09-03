@@ -47,3 +47,15 @@ export function writeFileAtomic(
 export function writeJsonAtomic(filePath: string, value: unknown): void {
   writeFileAtomic(filePath, JSON.stringify(value, null, 2));
 }
+
+/**
+ * Creates the file with `initial` when it does not exist yet, so runtime JSON
+ * configuration self-materializes at startup: a deployment that mounts an
+ * empty data/ directory comes up with working defaults instead of warnings.
+ * Never overwrites. Returns true when the file was created.
+ */
+export function ensureJsonAtomic(filePath: string, initial: unknown): boolean {
+  if (fs.existsSync(filePath)) return false;
+  writeJsonAtomic(filePath, initial);
+  return true;
+}
