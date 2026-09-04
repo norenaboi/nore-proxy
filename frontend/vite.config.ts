@@ -16,6 +16,8 @@ export default defineConfig({
   build: {
     outDir: fileURLToPath(new URL("../dist/frontend", import.meta.url)),
     emptyOutDir: true,
+    // frontendHost reads .vite/manifest.json to preload each admin page chunk.
+    manifest: true,
     rollupOptions: {
       input: {
         public: fileURLToPath(new URL("./public.html", import.meta.url)),

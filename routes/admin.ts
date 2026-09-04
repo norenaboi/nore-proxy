@@ -9,7 +9,7 @@ import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
 import keyStateManager from "../services/keyStateManager.js";
 import Config from "../config/index.js";
-import { loadModelsFromFile, normalizeEndpointUrl, getModelsUrl, getEndpointForModel, maskKey } from "../utils/helpers.js";
+import { loadModelsFromFile, normalizeEndpointUrl, getModelsUrl, getEndpointForModel } from "../utils/helpers.js";
 import axios from "axios";
 import { testUpstreamModel } from "../utils/modelTest.js";
 import { calculateCost } from "../utils/logging.js";
@@ -165,246 +165,88 @@ const DASHBOARD_RANGES = {
   total: null,
 };
 
-function emptyDashboardAggregate() {
+// Groups are logManager.getBulkApiKeyAggregates rows: one per key, model,
+// accounting version, and recorded-cost mask, so getCostForGroups resolves
+// recorded-versus-calculated cost per group exactly as it would per request.
+function aggregateDashboardGroups(groups: any[]) {
+  const sum = (field: string) =>
+    groups.reduce((total: number, group: any) => total + (Number(group[field]) || 0), 0);
+  const costs = logManager.getCostForGroups(groups);
+  const requests = sum("total");
+  const successes = sum("successful");
   return {
-    requests: 0,
-    successes: 0,
-    failures: 0,
-    success_rate: 0,
-    input_tokens: 0,
-    output_tokens: 0,
-    cache_write_tokens: 0,
-    cache_read_tokens: 0,
-    input_cost: 0,
-    output_cost: 0,
-    cache_write_cost: 0,
-    cache_read_cost: 0,
-    estimated_cost: 0,
+    requests,
+    successes,
+    failures: sum("failed"),
+    success_rate: requests ? (successes / requests) * 100 : 0,
+    input_tokens: sum("inputTokens"),
+    output_tokens: sum("outputTokens"),
+    cache_write_tokens: sum("cacheWriteTokens"),
+    cache_read_tokens: sum("cacheReadTokens"),
+    input_cost: costs.input,
+    output_cost: costs.output,
+    cache_write_cost: costs.cacheWrite,
+    cache_read_cost: costs.cacheRead,
+    estimated_cost: costs.total,
   };
 }
 
-function addRequestToAggregate(aggregate: any, request: any) {
-  aggregate.requests += 1;
-  if (request.status === "success") aggregate.successes += 1;
-  if (request.status === "failed") aggregate.failures += 1;
-  aggregate.input_tokens += request.inputTokens;
-  aggregate.output_tokens += request.outputTokens;
-  aggregate.cache_write_tokens += request.cacheWriteTokens;
-  aggregate.cache_read_tokens += request.cacheReadTokens;
-  if (request.status === "success") {
-    const calculated = calculateCost(
-      request.model,
-      request.inputTokens,
-      request.outputTokens,
-      request.cacheWriteTokens,
-      request.cacheReadTokens,
-      request.tokenAccountingVersion,
-    );
-    const costs = request.recordedCosts;
-    aggregate.input_cost += costs?.input ?? calculated.inputCost;
-    aggregate.output_cost += costs?.output ?? calculated.outputCost;
-    aggregate.cache_write_cost += costs?.cacheWrite ?? calculated.cacheWriteCost;
-    aggregate.cache_read_cost += costs?.cacheRead ?? calculated.cacheReadCost;
-    aggregate.estimated_cost += costs?.total ?? calculated.totalCost;
-  }
-}
-
-function finalizeDashboardAggregate(aggregate: any) {
-  return {
-    ...aggregate,
-    success_rate: aggregate.requests
-      ? (aggregate.successes / aggregate.requests) * 100
-      : 0,
-  };
-}
-
-function buildDashboardRanges(
-  requests: any[],
+async function buildDashboardRanges(
   configuredKeys: Array<{ id: string; mask: string; name: string }>,
 ) {
   const now = Date.now() / 1000;
-  const keyDefinitions = configuredKeys;
-  const masks = new Map();
-  for (const key of keyDefinitions) {
+  const masks = new Map<string, number>();
+  for (const key of configuredKeys) {
     masks.set(key.mask, (masks.get(key.mask) || 0) + 1);
   }
 
-  return Object.fromEntries(
-    Object.entries(DASHBOARD_RANGES).map(([range, seconds]) => {
-      const from = seconds === null ? null : now - seconds;
-      const matching = requests.filter(
-        (request: any) =>
-          request.timestamp !== null && (from === null || request.timestamp >= from),
+  const entries = await Promise.all(
+    Object.entries(DASHBOARD_RANGES).map(async ([range, seconds]) => {
+      const groups: any[] = await logManager.getBulkApiKeyAggregates(
+        seconds === null ? {} : { from: now - seconds },
       );
-      const summary = emptyDashboardAggregate();
-      const byKey = new Map(
-        keyDefinitions.map((key: any) => [key.id, emptyDashboardAggregate()]),
-      );
+      const byKey = new Map<string, any[]>(configuredKeys.map((key) => [key.id, []]));
 
-      for (const request of matching) {
-        addRequestToAggregate(summary, request);
-        let keyId = request.apiKeyId;
-        if (!keyId && masks.get(request.apiKey) === 1) {
-          keyId = keyDefinitions.find((key: any) => key.mask === request.apiKey)?.id;
+      for (const group of groups) {
+        // Legacy rows carry only a mask; attribute them when it is unambiguous.
+        let keyId = group.apiKeyId;
+        if (!keyId && masks.get(group.apiKeyMask) === 1) {
+          keyId = configuredKeys.find((key) => key.mask === group.apiKeyMask)?.id;
         }
-        if (keyId && byKey.has(keyId)) {
-          addRequestToAggregate(byKey.get(keyId), request);
-        }
+        if (keyId) byKey.get(keyId)?.push(group);
       }
 
-      const apiKeys = keyDefinitions
-        .map((key: any) => ({
+      const apiKeys = configuredKeys
+        .map((key) => ({
           id: key.id,
           name: key.name,
           api_key: key.mask,
-          ...finalizeDashboardAggregate(byKey.get(key.id)),
+          ...aggregateDashboardGroups(byKey.get(key.id) ?? []),
         }))
-        .sort((a: any, b: any) => b.requests - a.requests || a.name.localeCompare(b.name));
+        .sort((a, b) => b.requests - a.requests || a.name.localeCompare(b.name));
 
-      return [range, { summary: finalizeDashboardAggregate(summary), api_keys: apiKeys }];
+      return [range, { summary: aggregateDashboardGroups(groups), api_keys: apiKeys }] as const;
     }),
   );
+
+  return Object.fromEntries(entries);
 }
 
-router.get("/api/logs", verifySession, async (req: any, res: any) => {
-  const allApiKeys = await apiKeyManager.getKeyMap();
-  const dashboardData = [];
-  const keyDefinitions: Array<{ id: string; mask: string; name: string }> = [];
+router.get("/api/logs", verifySession, async (_req: any, res: any) => {
+  try {
+    const allApiKeys = await apiKeyManager.getKeyMap();
+    const keyDefinitions: Array<{ id: string; mask: string; name: string }> = [];
+    for (const keyHash of Object.keys(allApiKeys)) {
+      const storedKey = await apiKeyManager.getStoredKey(keyHash);
+      if (!storedKey) continue;
+      keyDefinitions.push({ id: storedKey.id, mask: storedKey.mask, name: storedKey.name || "Unnamed" });
+    }
 
-  const allLogs = await logManager.readRequestLogs(10000);
-  const currentTime = Date.now() / 1000;
-  const dayAgo = currentTime - 86400;
-
-  for (const keyHash of Object.keys(allApiKeys)) {
-    const storedKey = await apiKeyManager.getStoredKey(keyHash);
-    if (!storedKey) continue;
-    const stats = await apiKeyManager.getUsageStats(keyHash, null, true);
-    keyDefinitions.push({ id: storedKey.id, mask: storedKey.mask, name: storedKey.name || "Unnamed" });
-
-    const keyLogs = allLogs.filter((l: any) => l.api_key === storedKey.mask);
-    const { total_cost, daily_cost } = computeCostsFromLogs(keyLogs);
-
-    dashboardData.push({
-      name: storedKey.name,
-      total_requests: stats.total_requests,
-      daily_requests: stats.daily_requests || 0,
-      total_input_tokens: stats.total_input_tokens || 0,
-      total_output_tokens: stats.total_output_tokens || 0,
-      total_cache_write_tokens: stats.total_cache_write_tokens || 0,
-      total_cache_read_tokens: stats.total_cache_read_tokens || 0,
-      daily_input_tokens: stats.daily_input_tokens || 0,
-      daily_output_tokens: stats.daily_output_tokens || 0,
-      daily_cache_write_tokens: stats.daily_cache_write_tokens || 0,
-      daily_cache_read_tokens: stats.daily_cache_read_tokens || 0,
-      total_cost,
-      daily_cost,
-    });
+    res.json({ ranges: await buildDashboardRanges(keyDefinitions) });
+  } catch (error: any) {
+    console.error("Error loading dashboard:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
-
-  // Sort by daily requests
-  dashboardData.sort((a: any, b: any) => b.daily_requests - a.daily_requests);
-
-  // Get recent logs
-  const logs = await logManager.readRequestLogs(100);
-
-  const formattedLogs = (await Promise.all(logs
-    .filter((log: any) => log.type === "request_end" && log.status === "success")
-    .map(async (log: any) => {
-      const apiKey = log.api_key || "Unknown";
-      const model = log.model || "Unknown";
-      const costs = calculateCost(
-        model,
-        log.input_tokens,
-        log.output_tokens,
-        log.cache_write_tokens,
-        log.cache_read_tokens,
-        log.token_accounting_version ?? null,
-      );
-      return {
-        timestamp: log.timestamp || 0,
-        request_id: log.request_id || "",
-        name:
-          log.key_name ||
-          (apiKey !== "Unknown" ? await apiKeyManager.getKeyName(apiKey) : "Unknown"),
-        // Stored log keys are already masked; maskKey is idempotent over that
-        // form and, unlike a bare substring, never returns a short key whole.
-        api_key: maskKey(apiKey),
-        model,
-        input_tokens: log.input_tokens || 0,
-        output_tokens: log.output_tokens || 0,
-        cache_write_tokens: log.cache_write_tokens || 0,
-        cache_read_tokens: log.cache_read_tokens || 0,
-        token_accounting_version:
-          log.token_accounting_version ?? null,
-        total_tokens: (log.input_tokens || 0) + (log.output_tokens || 0),
-        duration: log.duration || 0,
-        cost: costs.totalCost,
-      };
-    })))
-    .sort((a: any, b: any) => b.timestamp - a.timestamp)
-    .slice(0, 50);
-
-  const summaryCosts = computeCostsFromLogs(allLogs);
-
-  const totals = {
-    total_api_keys: Object.keys(allApiKeys).length,
-    total_requests: dashboardData.reduce((sum: any, d: any) => sum + d.total_requests, 0),
-    daily_requests: dashboardData.reduce((sum: any, d: any) => sum + d.daily_requests, 0),
-    total_input_tokens: dashboardData.reduce(
-      (sum: any, d: any) => sum + d.total_input_tokens,
-      0,
-    ),
-    total_output_tokens: dashboardData.reduce(
-      (sum: any, d: any) => sum + d.total_output_tokens,
-      0,
-    ),
-    total_cache_write_tokens: dashboardData.reduce(
-      (sum: any, d: any) => sum + d.total_cache_write_tokens,
-      0,
-    ),
-    total_cache_read_tokens: dashboardData.reduce(
-      (sum: any, d: any) => sum + d.total_cache_read_tokens,
-      0,
-    ),
-    daily_input_tokens: dashboardData.reduce(
-      (sum: any, d: any) => sum + d.daily_input_tokens,
-      0,
-    ),
-    daily_output_tokens: dashboardData.reduce(
-      (sum: any, d: any) => sum + d.daily_output_tokens,
-      0,
-    ),
-    daily_cache_write_tokens: dashboardData.reduce(
-      (sum: any, d: any) => sum + d.daily_cache_write_tokens,
-      0,
-    ),
-    daily_cache_read_tokens: dashboardData.reduce(
-      (sum: any, d: any) => sum + d.daily_cache_read_tokens,
-      0,
-    ),
-    total_cost: summaryCosts.total_cost,
-    total_input_cost: summaryCosts.total_input_cost,
-    total_output_cost: summaryCosts.total_output_cost,
-    total_cache_write_cost: summaryCosts.total_cache_write_cost,
-    total_cache_read_cost: summaryCosts.total_cache_read_cost,
-    daily_cost: summaryCosts.daily_cost,
-    daily_input_cost: summaryCosts.daily_input_cost,
-    daily_output_cost: summaryCosts.daily_output_cost,
-    daily_cache_write_cost: summaryCosts.daily_cache_write_cost,
-    daily_cache_read_cost: summaryCosts.daily_cache_read_cost,
-  };
-
-  const ranges = buildDashboardRanges(
-    await logManager.getDashboardRequestLogs(),
-    keyDefinitions,
-  );
-
-  res.json({
-    summary: totals,
-    api_keys: dashboardData,
-    recent_logs: formattedLogs,
-    ranges,
-  });
 });
 
 function parseRequestInteger(value: any, fallback: any, minimum: any, maximum: any) {

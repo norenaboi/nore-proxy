@@ -45,16 +45,14 @@
   });
 
   async function load() {
+    // Usage is advisory; an endpoints failure must not take the page down.
+    const endpointsRequest = requestAdminJson<{ endpoints: EndpointRef[] }>("/api/endpoints")
+      .then((e) => e.endpoints ?? [])
+      .catch(() => [] as EndpointRef[]);
     try {
       const d = await requestAdminJson<{ proxies: ProxyItem[] }>("/api/proxies");
       proxies = d.proxies ?? [];
-      // Usage is advisory; an endpoints failure must not take the page down.
-      try {
-        const e = await requestAdminJson<{ endpoints: EndpointRef[] }>("/api/endpoints");
-        endpoints = e.endpoints ?? [];
-      } catch {
-        endpoints = [];
-      }
+      endpoints = await endpointsRequest;
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : "Failed to load proxies";
     } finally {

@@ -143,17 +143,15 @@
   let bulkDeleteOpen = $state(false);
 
   async function load() {
+    // Proxy names feed the editor's select and the list badge; a failure
+    // there degrades to "None/unknown" rather than breaking the page.
+    const proxiesRequest = requestAdminJson<{ proxies: ProxyOption[] }>("/api/proxies")
+      .then((p) => p.proxies ?? [])
+      .catch(() => [] as ProxyOption[]);
     try {
       const d = await requestAdminJson<{ endpoints: Endpoint[] }>("/api/endpoints");
       endpoints = d.endpoints ?? [];
-      // Proxy names feed the editor's select and the list badge; a failure
-      // here degrades to "None/unknown" rather than breaking the page.
-      try {
-        const p = await requestAdminJson<{ proxies: ProxyOption[] }>("/api/proxies");
-        proxies = p.proxies ?? [];
-      } catch {
-        proxies = [];
-      }
+      proxies = await proxiesRequest;
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : "Failed to load endpoints";
     } finally {
