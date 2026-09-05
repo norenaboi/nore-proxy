@@ -1,5 +1,6 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 @import url("https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css");
+@import url("./themePill.css");
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -104,11 +105,12 @@ a { color: inherit; }
   --pill-active-surface: var(--primary-light);
   --pill-active-ink: var(--primary-dark);
   --pill-shadow: 0 1px 2px rgba(63, 40, 100, .1);
-  /* Approximate width of the pinned pill. Used only to keep the collapsed
-     sidebar's absolutely-positioned logout button clear of it. */
-  --pill-reserve: 172px;
+  /* Approximate width of the pinned pill (two 30px icon targets plus its
+     padding and border). Used only to keep the collapsed sidebar's
+     absolutely-positioned logout button clear of it. The pill is the same size
+     at every viewport width, so this needs no breakpoint override. */
+  --pill-reserve: 76px;
 }
-@media (max-width: 700px) { :root { --pill-reserve: 84px; } }
 
 /* Cards / Tables */
 .card, .table-card, .settings-card, .form-card, .content-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; }

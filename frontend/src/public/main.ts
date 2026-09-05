@@ -12,3 +12,9 @@ if (!target) {
 }
 
 mount(PublicApp, { target });
+// The document paints a static copy of the theme toggle so it is on screen
+// before this bundle runs. Removing it here, in the same task as the mount,
+// swaps in the real control before the browser paints — the two are identical,
+// so the exchange is invisible.
+document.getElementById("theme-pill-placeholder")?.remove();
+

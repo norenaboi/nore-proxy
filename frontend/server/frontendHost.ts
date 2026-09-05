@@ -10,6 +10,25 @@ const frontendDir = path.join(rootDir, "frontend");
 const outputDir = path.join(rootDir, "dist", "frontend");
 const assetBase = "/assets/app/";
 
+/*
+ * The brand mark is an <img src="/favicon.ico"> the shells render on every page.
+ * Warming it from the document keeps it from arriving after first paint and
+ * popping in on each navigation — there is no client router, so every visit is a
+ * full document load.
+ *
+ * This is injected rather than written into the entry documents because Vite
+ * rewrites absolute asset URLs in HTML onto the build base: a link authored as
+ * /favicon.ico is emitted as /assets/app/favicon.ico, which would preload a
+ * different URL than the one the components actually request.
+ */
+const faviconPreloadTag = '<link rel="preload" as="image" href="/favicon.ico">';
+
+export function withFaviconPreload(html: string): string {
+  return html.includes(faviconPreloadTag)
+    ? html
+    : html.replace("</head>", `  ${faviconPreloadTag}\n  </head>`);
+}
+
 interface ManifestChunk {
   file: string;
   css?: string[];
@@ -47,8 +66,12 @@ export async function initializeFrontend(app: Express): Promise<void> {
       maxAge: "1y",
     }),
   );
+  // The brand mark is this same file rendered as an <img>, on every page. Without
+  // a lifetime it is revalidated on each navigation, so the mark can arrive after
+  // first paint and visibly pop in. It is not content-hashed, so it cannot be
+  // immutable; a day is short enough for a replacement to land on its own.
   app.get("/favicon.ico", (_req, res) => {
-    res.sendFile(path.join(outputDir, "favicon.ico"));
+    res.sendFile(path.join(outputDir, "favicon.ico"), { maxAge: "1d" });
   });
 }
 
@@ -112,7 +135,7 @@ export async function renderFrontend(
   try {
     if (vite) {
       const source = await fs.readFile(path.join(frontendDir, documentName), "utf8");
-      const html = await vite.transformIndexHtml(req.originalUrl, source);
+      const html = withFaviconPreload(await vite.transformIndexHtml(req.originalUrl, source));
       res.set("Cache-Control", "no-cache").type("html").send(html);
       return;
     }
@@ -121,7 +144,7 @@ export async function renderFrontend(
     const cacheKey = documentName === "admin.html" ? `${documentName}:${req.path}` : documentName;
     let html = productionDocuments.get(cacheKey);
     if (!html) {
-      html = await fs.readFile(path.join(outputDir, documentName), "utf8");
+      html = withFaviconPreload(await fs.readFile(path.join(outputDir, documentName), "utf8"));
       if (documentName === "admin.html") {
         const chunks = await loadManifest();
         const built = html;

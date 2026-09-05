@@ -9,6 +9,18 @@
     <title>Admin — Nore Proxy</title>
   </head>
   <body>
+    <!--
+      Painted before the bundle runs so the toggle does not appear a frame late
+      on every navigation. src/admin/main.ts removes it as it mounts the real
+      control; themePill.css derives its state from the data-theme set above.
+    -->
+    <div class="admin-utility theme-pill-placeholder" id="theme-pill-placeholder" aria-hidden="true">
+      <div class="theme-pill">
+        <span class="thumb"></span>
+        <button type="button" tabindex="-1"><span class="glyph">&#9728;</span></button>
+        <button type="button" tabindex="-1"><span class="glyph">&#9782;</span></button>
+      </div>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/admin/main.ts"></script>
   </body>

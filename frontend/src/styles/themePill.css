@@ -1,0 +1,119 @@
+/*
+ * Theme toggle, as a global stylesheet rather than styles scoped inside
+ * ThemeTogglePill.svelte.
+ *
+ * The control is chrome that must be on screen before the Svelte bundle runs,
+ * or it pops into existence on every navigation — there is no client router, so
+ * each page visit is a full document load. Each HTML entry document therefore
+ * carries a static, inert copy of the pill that the app removes the moment it
+ * mounts its real one. That copy can only be styled by rules the document
+ * already has, which is what these selectors are for: in a production build
+ * Vite emits this as a render-blocking <link>, so the placeholder is painted
+ * correctly on first paint. (In development Vite injects CSS through JS, so the
+ * placeholder is briefly unstyled there.)
+ *
+ * The two apps use different token names, so each stylesheet maps its own
+ * palette onto the --pill-* variables; the fallbacks below only apply if a
+ * stylesheet forgets to.
+ *
+ * The control is two icon targets at every viewport width — the sun and moon
+ * carry the meaning, and each button keeps its accessible name from its
+ * aria-label. The admin stylesheet's --pill-reserve tracks the width below.
+ */
+
+.theme-pill {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: repeat(2, 1fr);
+  align-items: center;
+  padding: 3px;
+  border: 1px solid var(--pill-line, #ddd4e7);
+  border-radius: 999px;
+  background: var(--pill-surface, #fff);
+  box-shadow: var(--pill-shadow, 0 1px 2px rgba(0, 0, 0, 0.06));
+}
+
+/*
+ * The active background is a single thumb that slides between the two segments
+ * rather than a background on the pressed button. The grid has no column gap so
+ * the thumb steps by exactly one segment width; a gap would leave it misaligned
+ * in the second position.
+ */
+.theme-pill .thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / 2);
+  border-radius: 999px;
+  background: var(--pill-active-surface, #f3eefc);
+  transform: translateX(calc(var(--theme-index, 0) * 100%));
+  transition: transform 0.28s cubic-bezier(0.34, 1.32, 0.5, 1);
+}
+
+.theme-pill button {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  width: 30px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--pill-muted, #70657c);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.18s ease;
+}
+
+.theme-pill button:hover { color: var(--pill-ink, #241b2d); }
+.theme-pill button[aria-pressed="true"] { color: var(--pill-active-ink, #563d7c); }
+
+.theme-pill button:focus-visible {
+  outline: 2px solid var(--pill-active-ink, #563d7c);
+  outline-offset: 1px;
+}
+
+.theme-pill .glyph {
+  font-size: 13px;
+  transition: transform 0.28s cubic-bezier(0.34, 1.32, 0.5, 1);
+}
+
+.theme-pill button[aria-pressed="true"] .glyph { transform: scale(1.12); }
+
+/*
+ * The pre-hydration copy. Its markup is static, so which segment reads as
+ * active cannot be baked into the HTML; it is derived instead from the
+ * data-theme attribute that each document's inline script sets before first
+ * paint. It never animates — there is no state change to animate from — and it
+ * takes no clicks or focus, because the real control replaces it within the
+ * same frame and a control that silently does nothing is worse than none.
+ */
+.theme-pill-placeholder { pointer-events: none; }
+.theme-pill-placeholder .thumb,
+.theme-pill-placeholder .glyph { transition: none; }
+
+html[data-theme="dark"] .theme-pill-placeholder .thumb { transform: translateX(100%); }
+
+html:not([data-theme="dark"]) .theme-pill-placeholder button:first-of-type,
+html[data-theme="dark"] .theme-pill-placeholder button:last-of-type {
+  color: var(--pill-active-ink, #563d7c);
+}
+
+html:not([data-theme="dark"]) .theme-pill-placeholder button:first-of-type .glyph,
+html[data-theme="dark"] .theme-pill-placeholder button:last-of-type .glyph {
+  transform: scale(1.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-pill .thumb,
+  .theme-pill .glyph,
+  .theme-pill button { transition: none; }
+  .theme-pill button[aria-pressed="true"] .glyph { transform: none; }
+  html:not([data-theme="dark"]) .theme-pill-placeholder button:first-of-type .glyph,
+  html[data-theme="dark"] .theme-pill-placeholder button:last-of-type .glyph { transform: none; }
+}
