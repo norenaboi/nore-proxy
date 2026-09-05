@@ -46,6 +46,47 @@ export function getFullUrl(
   }
 }
 
+/**
+ * Upstream formats that expose an embeddings API.
+ *
+ * Anthropic has no embeddings endpoint at all, so an endpoint in that format
+ * can never serve an embedding model and the route refuses it up front rather
+ * than posting a chat body at a URL that does not exist. The three OpenAI
+ * formats all share `/v1/embeddings`: the Responses and Codex formats differ
+ * from plain OpenAI only in how *completions* are shaped.
+ */
+const EMBEDDING_CAPABLE_FORMATS = new Set([
+  "openai",
+  "openai-responses",
+  "openai-codex",
+  "gemini",
+]);
+
+export function supportsEmbeddings(apiFormat: string | null | undefined): boolean {
+  return EMBEDDING_CAPABLE_FORMATS.has(apiFormat || "openai");
+}
+
+/**
+ * The upstream embeddings URL for an endpoint. Returns null for formats with no
+ * embeddings API, which the caller turns into a configuration error naming the
+ * endpoint rather than an opaque upstream 404.
+ */
+export function getEmbeddingsUrl(
+  baseUrl: string,
+  apiFormat: string,
+  modelName: string,
+  appendApiSuffix = true,
+) {
+  if (!supportsEmbeddings(apiFormat)) return null;
+
+  if (apiFormat === "gemini") {
+    const geminiPrefix = appendApiSuffix ? "/v1beta" : "";
+    return `${baseUrl}${geminiPrefix}/models/${modelName}:batchEmbedContents`;
+  }
+
+  return `${baseUrl}${appendApiSuffix ? "/v1" : ""}/embeddings`;
+}
+
 export function applyGenerationPolicy(requestBody: any, policy: Record<string, any> = {}) {
   for (const param of ["temperature", "top_p", "max_tokens"]) {
     const config = policy[param] || { enabled: false, value: null };

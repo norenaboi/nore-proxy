@@ -3,41 +3,25 @@ import axios from "axios";
 import { randomUUID } from "node:crypto";
 import { verifyApiKey } from "../middleware/auth.js";
 import apiKeyManager from "../services/apiKeyManager.js";
-import settingsManager from "../services/settingsManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
 import { logRequestStart, logRequestEnd, logError, markFirstToken, normalizeBillingTokens } from "../utils/logging.js";
-import { MODEL_REGISTRY, getEndpointForConcreteModel, getFullUrl, estimateTokens, estimateTokensFromLength, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, applyBodyParamPolicy, resolveKeyHealth, resolveRetryAttempts, getClientIp } from "../utils/helpers.js";
+import { MODEL_REGISTRY, getFullUrl, estimateTokens, estimateTokensFromLength, isClaudeModel, applyClaudePromptCaching, applyGenerationPolicy, applyBodyParamPolicy, getClientIp } from "../utils/helpers.js";
 import { createBoundedText, guardCarryBuffer, type BoundedText } from "../utils/streamLimits.js";
-import keyStateManager, { ACTIONABLE_CODES } from "../services/keyStateManager.js";
+import keyStateManager from "../services/keyStateManager.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
-import { buildUpstreamErrorContext, getUpstreamErrorMessage, readUpstreamErrorBody } from "../utils/upstreamErrors.js";
-import { attemptedKeyHashes, classifyUpstreamFailure, createRoutingState, markStreamOutputStarted, nextTarget, recordRoutingAttempt, routingMetadata, summarizeRoutingAttempts } from "../utils/autoRouting.js";
+import { buildUpstreamErrorContext, readUpstreamErrorBody } from "../utils/upstreamErrors.js";
+import { executeRouting, httpError, statusOf, withContext } from "../utils/requestRouting.js";
+import { markStreamOutputStarted, routingMetadata, summarizeRoutingAttempts } from "../utils/autoRouting.js";
 import { proxyAgentsFor } from "../utils/proxyAgents.js";
 
 
-declare global {
-  interface Error {
-    statusCode?: number; code?: string | number | null; responseBody?: any;
-    attemptContext?: any; routingState?: any; clientAbort?: boolean;
-  }
-}
-
 type DynamicRecord = Record<string, any>;
 type StreamWithDestroy = NodeJS.ReadableStream & { destroy?: (error?: Error) => void };
-type PreparedAttempt = {
-  adapter: any;
-  data: DynamicRecord;
-  headers: Record<string, string>;
-  fullUrl: string;
-  requestUrl: string;
-};
-type RoutingAttemptRunner = (state: any, endpoint: any) => Promise<any>;
 type StreamResult = { content: BoundedText; reasoning: BoundedText; usage: any };
 
 
 const router = express.Router();
 const clone = (value: any): any => structuredClone(value);
-const statusOf = (error: any): any => error?.response?.status ?? error?.statusCode ?? null;
 
 function persistUpstreamError({ requestId, modelName, endpointInfo, requestHeaders, upstreamUrl, error, statusCode, responseBody, autoModel, targetModel, routingAttempts }: any) {
   return logError(requestId, error?.name || "Error", error?.message || "Unknown error", error?.stack || "", (buildUpstreamErrorContext as any)({ modelName, endpointInfo, requestHeaders, upstreamUrl, error, statusCode, responseBody, autoModel, targetModel, routingAttempts }));
@@ -49,46 +33,6 @@ function sendStreamError(res: any, requestId: any, modelName: any, error: any, s
   res.write(`data: ${JSON.stringify({ id: `chatcmpl-${requestId}`, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: modelName, choices: [{ index: 0, delta: {}, finish_reason: "error" }], error: { message: error?.message || "Unknown error", type: "server_error", code: error?.code || statusCode } })}\n\n`);
   res.write("data: [DONE]\n\n");
   res.end();
-}
-
-function httpError(status: any, body: any) {
-  const error = new Error(`Error ${status}: ${getUpstreamErrorMessage(body)}`);
-  error.name = "UpstreamHttpError";
-  error.statusCode = status;
-  error.responseBody = body;
-  return error;
-}
-
-function withContext(error: Error, endpointInfo: any, prepared: Partial<PreparedAttempt> = {}, responseBody?: any): Error {
-  Object.defineProperty(error, "attemptContext", {
-    value: {
-      endpointInfo,
-      requestHeaders: prepared.headers,
-      upstreamUrl: prepared.fullUrl,
-      responseBody: error.responseBody ?? responseBody ?? null,
-      upstreamStatus: statusOf(error),
-    },
-    configurable: true,
-  });
-  return error;
-}
-
-function autoExhausted(lastError: any, state: any) {
-  const unavailable = state.attempts.length === 0 || state.attempts.every(
-    (attempt: any) => attempt.outcome === "target_unavailable" || attempt.outcome === "key_exhausted",
-  );
-  const error = new Error(
-    unavailable
-      ? `Automatic model '${state.requestedModel}' has no available targets.`
-      : lastError?.message || "All automatic routing targets failed.",
-  );
-  error.name = unavailable ? "AutoTargetsUnavailableError" : "AutoTargetsExhaustedError";
-  error.code = unavailable ? "auto_targets_unavailable" : "auto_targets_exhausted";
-  error.statusCode = unavailable ? 503 : statusOf(lastError) || 502;
-  error.responseBody = lastError?.responseBody;
-  error.attemptContext = lastError?.attemptContext;
-  error.routingState = state;
-  return error;
 }
 
 function prepareAttempt(baseRequest: any, endpoint: any, requestId: any, isStreaming: any) {
@@ -119,15 +63,6 @@ function prepareAttempt(baseRequest: any, endpoint: any, requestId: any, isStrea
   const fullUrl = getFullUrl(endpoint.url, endpoint.apiFormat, endpoint.actualModel, isStreaming, endpoint.appendApiSuffix);
   const requestUrl = endpoint.apiFormat === "gemini" ? `${fullUrl}?${isStreaming ? "alt=sse&" : ""}key=${endpoint.token}` : fullUrl;
   return { adapter, data, headers, fullUrl, requestUrl };
-}
-
-async function recordKeyFailure(endpoint: any, status: any) {
-  if (!endpoint?.token || !ACTIONABLE_CODES.has(Number(status))) return;
-  await keyStateManager.recordFailure(endpoint.endpointKey, endpoint.token, Number(status), { sideline: resolveKeyHealth(endpoint.keyHealth) });
-}
-
-function noteAttempt(state: any, endpoint: any, keyAttempt: any, outcome: any, decision: any, statusCode: any, retryAttempt: any = 0) {
-  recordRoutingAttempt(state, { targetModel: endpoint?.targetModel, endpointKey: endpoint?.endpointKey, endpointName: endpoint?.endpointName, tokenHash: endpoint?.tokenHash, keyAttempt, retryAttempt, outcome, retryReason: decision?.reason, statusCode });
 }
 
 function mergeUsage(current: any, incoming: any) {
@@ -164,89 +99,6 @@ function inBandStreamError(raw: any) {
   return error;
 }
 
-async function executeRouting(requestId: string, requestedModel: string, runAttempt: RoutingAttemptRunner): Promise<any> {
-  const state = createRoutingState({ requestId, requestedModel, registry: MODEL_REGISTRY, globalCeiling: settingsManager.get("autoModelMaxTargetAttempts") });
-  const maxKeyAttempts = 1 + Math.max(0, parseInt(String(settingsManager.get("keyHopAttempts")), 10) || 0);
-  let lastError = null;
-
-  for (let target = nextTarget(state); target; target = nextTarget(state)) {
-    let fallback = false;
-    let endpointKey = null;
-    // One rotation start per target: the hops below continue round-robin from it
-    // instead of drawing a new random position each time.
-    let rotationOffset: number | undefined;
-    for (let keyAttempt = 1; keyAttempt <= maxKeyAttempts; keyAttempt++) {
-      const excluded: Set<string> = endpointKey ? attemptedKeyHashes(state, endpointKey) ?? new Set<string>() : new Set<string>();
-      const endpoint = await getEndpointForConcreteModel(target, { excludeHashes: excluded, rotationOffset });
-      if (!endpoint) {
-        const error = new Error("Can't find the model you're looking for.");
-        error.name = "EndpointResolutionError";
-        error.statusCode = state.autoModel ? 503 : 404;
-        if (!state.autoModel) throw error;
-        lastError = error;
-        recordRoutingAttempt(state, {
-          targetModel: target,
-          keyAttempt,
-          outcome: "target_unavailable",
-          retryReason: "http_5xx",
-          statusCode: 503,
-        });
-        fallback = true;
-        break;
-      }
-      endpointKey = endpoint.endpointKey;
-      rotationOffset = endpoint.rotationOffset ?? rotationOffset;
-      const tried = attemptedKeyHashes(state, endpointKey) ?? new Set<string>();
-      if (endpoint.tokenExhausted || !endpoint.token) {
-        lastError = withContext(await keyStateManager.buildExhaustionError(String(endpointKey)), endpoint);
-        const decision = classifyUpstreamFailure({ keyExhausted: true });
-        noteAttempt(state, endpoint, keyAttempt, "key_exhausted", decision, 404);
-        fallback = true;
-        break;
-      }
-      // Same-key retries for transient failures (5xx, timeout, network), before
-      // this key is written off and the request hops or falls back.
-      const maxRetries = resolveRetryAttempts(endpoint.retryAttempts);
-      let decision: any = null;
-      for (let retryAttempt = 0; retryAttempt <= maxRetries; retryAttempt++) {
-        try {
-          const result = await runAttempt(state, endpoint);
-          noteAttempt(state, endpoint, keyAttempt, "success", null, null, retryAttempt);
-          if (result && typeof result === "object") {
-            Object.defineProperty(result, "routingState", {
-              value: state,
-              enumerable: false,
-            });
-          }
-          return result;
-        } catch (error: any) {
-          if (error.clientAbort) throw error;
-          lastError = error;
-          const status = statusOf(error);
-          decision = classifyUpstreamFailure({ statusCode: status, error, streamOutputStarted: state.streamOutputStarted });
-          const retrying = decision.retrySame && retryAttempt < maxRetries;
-          noteAttempt(state, endpoint, keyAttempt, retrying ? "retry" : "failure", decision, status, retryAttempt);
-          await recordKeyFailure(endpoint, status);
-          if (!retrying) break;
-        }
-      }
-      if (endpoint.tokenHash) tried.add(endpoint.tokenHash);
-      if (decision.retryKey && keyAttempt < maxKeyAttempts) continue;
-      fallback = decision.fallbackTarget;
-      break;
-    }
-    if (!fallback) throw lastError;
-  }
-  if (state.autoModel) throw autoExhausted(lastError, state);
-  if (lastError) {
-    lastError.routingState = state;
-    throw lastError;
-  }
-  const error = new Error(`Model '${requestedModel}' not found.`);
-  error.statusCode = 404;
-  throw error;
-}
-
 router.post("/v1/chat/completions", verifyApiKey, async (req: any, res: any) => {
   const apiKey = req.apiKey;
   const baseRequest = clone(req.body);
@@ -256,7 +108,14 @@ router.post("/v1/chat/completions", verifyApiKey, async (req: any, res: any) => 
   const requestId = randomUUID();
   const modelName = baseRequest.model;
   const streaming = baseRequest.stream === true;
-  if (!MODEL_REGISTRY[modelName]) return res.status(404).json({ error: `Model '${modelName}' not found.` });
+  const registered = MODEL_REGISTRY[modelName];
+  if (!registered) return res.status(404).json({ error: `Model '${modelName}' not found.` });
+  // Embedding models answer on /v1/embeddings only: their endpoints expose no
+  // completions surface, so serving one here would post a chat body at a URL
+  // that cannot answer it.
+  if (registered.modality === "embedding") {
+    return res.status(400).json({ error: { message: `Model '${modelName}' is an embedding model. Use POST /v1/embeddings instead.`, code: "embedding_model_not_chat" } });
+  }
   await logRequestStart(
     requestId,
     modelName,

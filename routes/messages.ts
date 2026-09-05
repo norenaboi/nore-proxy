@@ -483,6 +483,18 @@ router.post("/v1/messages", verifyApiKey, async (req: any, res: any) => {
       error: { type: "not_found_error", message: `Model '${modelName}' not found.` },
     });
   }
+  // Embedding models answer on /v1/embeddings only: their endpoints expose no
+  // completions surface, so serving one here would post a messages body at a
+  // URL that cannot answer it.
+  if (modelInfo.modality === "embedding") {
+    return res.status(400).json({
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: `Model '${modelName}' is an embedding model. Use POST /v1/embeddings instead.`,
+      },
+    });
+  }
 
   // Log request start
   const requestParams = {

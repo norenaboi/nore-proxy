@@ -23,6 +23,7 @@ import {
 import { getEndpointsPath, getModelsPath, getProxiesPath } from "../utils/configPaths.js";
 import { writeFileAtomic, writeJsonAtomic } from "../utils/atomicJson.js";
 import { isReservedBodyParam } from "../shared/contracts/bodyParams.js";
+import { normalizeModality } from "../shared/contracts/models.js";
 import { isMaskedProxyPassword, maskProxyPassword, validateProxyConfig } from "../shared/contracts/proxies.js";
 import proxyManager from "../services/proxyManager.js";
 import { clearProxyAgents, proxyAgentsFor } from "../utils/proxyAgents.js";
@@ -680,6 +681,7 @@ function normalizedModelRecord(name: any, config: any) {
   const common = {
     name,
     modelType: modelType(config),
+    modality: normalizeModality(config.modality),
     disabled: config.disabled === true,
     hidden: config.hidden === true,
     pricing: config.pricing || { ...DEFAULT_MODEL_PRICING },
@@ -715,6 +717,10 @@ function buildStoredModel(definition: DynamicRecord, existing: DynamicRecord = {
     hidden: incoming.hidden !== undefined
       ? incoming.hidden === true
       : existing.hidden === true,
+    // Coerced rather than validated: an unknown value from a hand-edited
+    // models.json reads as "text", which is how every model behaved before
+    // modalities existed.
+    modality: normalizeModality(incoming.modality ?? existing.modality),
   };
   const type = modelType(stored);
   if (type === "auto") {
@@ -967,6 +973,7 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
       appendApiSuffix: endpoint.appendApiSuffix,
       bodyParams: endpoint.bodyParams,
       proxyId: endpoint.proxyId,
+      modality: normalizeModality(req.body?.modality),
     });
     return res.json(result);
   }
@@ -1005,6 +1012,7 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
       appendApiSuffix: endpointInfo.appendApiSuffix,
       bodyParams: endpointInfo.bodyParams,
       proxyId: endpointInfo.proxyId,
+      modality: normalizeModality(modelConfig.modality),
     });
     return res.json(result);
   } catch (error: any) {

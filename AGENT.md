@@ -23,7 +23,7 @@ Nore Proxy is a unified LLM API gateway with OpenAI-compatible and Anthropic-com
 
 - `config/index.ts` loads process-level configuration and `endpoints.json`, validates required server settings, owns the in-memory endpoint map, and provides the key-rotation ordering helpers.
 - `utils/configPaths.ts` resolves the runtime JSON paths. Defaults point into the `data/` directory, with a read fallback to legacy repository-root files; `MODELS_PATH`, `ENDPOINTS_PATH`, `SETTINGS_PATH`, and `PROXIES_PATH` override outright. The four files self-materialize empty at their resolved path when missing, so a deployment mounting an empty `data/` directory comes up with working defaults.
-- `models.json` is the persisted model, pricing, and automatic-routing definition source. `loadModelsFromFile()` validates it and rebuilds the in-memory model registry, aliases, pricing, and automatic-routing counters while excluding disabled models.
+- `models.json` is the persisted model, pricing, and automatic-routing definition source. `loadModelsFromFile()` validates it and rebuilds the in-memory model registry, aliases, pricing, and automatic-routing counters while excluding disabled models. Each model may carry a `modality` of `text`, `vision`, or `embedding`; absent and unrecognized values normalize to `text`, so a file written before the field existed keeps its previous behavior.
 - `endpoints.json` contains upstream endpoint definitions and raw credentials. Loaded endpoints can use sticky or round-robin key selection; round-robin starts each request at a random position in the key list and walks forward from there, holding that position across the request's key hops. Key health and cooldown state are persisted separately by non-secret key identity.
 - `settings.json` contains runtime settings overrides merged with defaults in `services/settingsManager.ts`.
 - `proxies.json` contains outbound proxy definitions (HTTP and SOCKS, optional credentials). `services/proxyManager.ts` owns CRUD and masks passwords on admin responses; endpoints reference a proxy by id, and `utils/proxyAgents.ts` builds the cached axios agents that route upstream traffic through it. A proxy referenced by any endpoint cannot be deleted until the reference is cleared.
@@ -34,6 +34,7 @@ Treat these runtime JSON files as operational data, not examples or source fixtu
 
 - `routes/chat.ts`: OpenAI-compatible `POST /v1/chat/completions`.
 - `routes/messages.ts`: Anthropic-compatible `POST /v1/messages`, including protocol conversion and Anthropic event framing.
+- `routes/embeddings.ts`: OpenAI-compatible `POST /v1/embeddings`, the general embeddings syntax. Never streams.
 - `routes/models.ts`: public model discovery.
 - `routes/stats.ts`: public summaries and authenticated client-key usage.
 - `routes/admin.ts`: admin authentication, endpoint/model/key/proxy/settings CRUD, diagnostics, and analytics APIs.
@@ -58,7 +59,8 @@ Treat these runtime JSON files as operational data, not examples or source fixtu
 - `utils/autoRouting.ts` validates automatic models and controls target fallback.
 - `utils/endpointPolicies.ts` owns endpoint URL/path and generation policies.
 - `utils/pricing.ts`, `utils/logging.ts`, `utils/errorLogging.ts`, and `utils/upstreamErrors.ts` own accounting and sanitized diagnostics.
-- `utils/adapters/` transforms provider-specific requests and normalizes responses/streams.
+- `utils/adapters/` transforms provider-specific requests and normalizes responses/streams. `utils/adapters/embeddings.ts` is the separate embeddings dispatch, keyed by the same `apiFormat`.
+- `utils/requestRouting.ts` owns the shared target/key/retry loop (`executeRouting`) used by `routes/chat.ts` and `routes/embeddings.ts`.
 
 Adapters own wire-protocol transformation. Route handlers own network calls, authentication dispatch, retries, logging, client response framing, and stream lifecycle.
 
@@ -92,6 +94,9 @@ Public pages are eagerly imported. Admin pages are lazy imported and form build 
 - Endpoint generation settings are enforced policies: disabled parameters are removed, and enabled configured values override the client request. Preserve this behavior consistently across protocols.
 - Endpoint custom body params are applied after the adapter builds the outbound body and after the generation policy, so they are the endpoint's final say on the wire body. Stripping runs before adding. `model` and `stream` are reserved: the admin API rejects them and `applyBodyParamPolicy` ignores them, because they carry the resolved routing target and the response framing both routes depend on.
 - Prompt caching remains endpoint-specific and opt-in for older endpoints; absent/null legacy values must not silently inherit new-endpoint defaults.
+- A model's modality decides which client route may serve it. `embedding` models are served only by `POST /v1/embeddings`; both chat routes refuse them, and the embeddings route refuses everything else. `text` and `vision` route identically — the distinction exists for the catalogs, not for routing.
+- Embeddings never apply the endpoint's generation policy: `temperature`, `top_p`, and `max_tokens` are completions parameters that no embeddings API accepts. The body-param policy still runs last and remains the endpoint's final say on the wire body.
+- The OpenAI-format embedding adapter forwards unknown top-level params untouched. That passthrough is what makes an arbitrary OpenAI-compatible embeddings provider work without new code; do not replace it with an allow-list. Anthropic has no embeddings API, so an endpoint in that format is refused up front rather than posted to.
 - The supported upstream formats are `openai`, `anthropic`, `gemini`, `openai-responses`, and `openai-codex`. Each has distinct URL, authentication, request, response, and streaming requirements; `appendApiSuffix` also controls whether the proxy adds `/v1` or `/v1beta`. Do not implement a format as a URL-only switch.
 - Logging failures must not crash request/stream finalization. Client-aborted streams are not upstream failures.
 - Preserve nullable HTTP status semantics; a network error must not become status `0` through numeric coercion.
@@ -170,7 +175,7 @@ Update Express document paths, the appropriate Svelte pathname map, page titles,
 
 ### Endpoint or model CRUD
 
-Update types, input validation, JSON persistence, token masking, dependency handling, registry reloads, admin API responses, and the Svelte editor/list. Preserve automatic-model references during rename/delete operations.
+Update types, input validation, JSON persistence, token masking, dependency handling, registry reloads, admin API responses, modality handling, and the Svelte editor/list. Preserve automatic-model references during rename/delete operations.
 
 ### Provider/protocol behavior
 

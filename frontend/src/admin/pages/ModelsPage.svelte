@@ -7,7 +7,8 @@
   import AutoModelTargetPicker from "$frontend/components/admin/AutoModelTargetPicker.svelte";
   import { getProvider, type CatalogModel } from "$frontend/lib/models/catalog";
   import { deadTargets, effectiveModelName, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, targetHealth, type NumericInputValue } from "$frontend/admin/modelForm";
-  import type { ModelTestResult } from "$contracts/models";
+  import ModalityToggle from "$frontend/components/ModalityToggle.svelte";
+  import type { ModelModality, ModelTestResult } from "$contracts/models";
 
   interface Pricing { input?: number; output?: number; cache_write?: number; cache_read?: number; }
   interface PricingForm {
@@ -18,7 +19,7 @@
   }
   interface Model {
     name: string; modelType?: "auto" | "concrete"; version?: string; backend?: string;
-    pricing?: Pricing; disabled?: boolean; hidden?: boolean;
+    pricing?: Pricing; disabled?: boolean; hidden?: boolean; modality?: ModelModality;
     targets?: string[]; targetSelection?: "sticky" | "roundrobin"; maxTargetAttempts?: number | null;
   }
   interface Endpoint { index: number; name?: string; }
@@ -46,6 +47,7 @@
   let typeFilter = $state<ModelTypeFilter>("all");
   let stateFilter = $state<ModelStateFilter>("all");
   let visibilityFilter = $state<VisibilityFilter>("all");
+  let modalityFilter = $state<ModelModality | null>(null);
   let sortField = $state<SortField>("name");
   let sortDirection = $state<"asc" | "desc">("asc");
   let expandedGroups = $state<Record<string, boolean>>({});
@@ -68,6 +70,7 @@
   let fType = $state<"concrete" | "auto">("concrete");
   let fDisabled = $state(false);
   let fHidden = $state(false);
+  let fModality = $state<ModelModality>("text");
   let fVersion = $state("");
   let fBackend = $state("");
   let fPricing = $state<PricingForm>({ input: "", output: "", cache_write: "", cache_read: "" });
@@ -109,7 +112,11 @@
     }
   }
 
-  const activeCriteria = $derived(Boolean(query.trim()) || endpointFilter !== "all" || typeFilter !== "all" || stateFilter !== "all" || visibilityFilter !== "all");
+  // modalityFilter counts toward activeCriteria (it affects which models show and
+  // whether the "no models match" empty state applies) but not activeFilterCount,
+  // which only tallies filters tucked inside the collapsible Filters panel — the
+  // modality toggle already shows its own selection state visually.
+  const activeCriteria = $derived(Boolean(query.trim()) || endpointFilter !== "all" || typeFilter !== "all" || stateFilter !== "all" || visibilityFilter !== "all" || modalityFilter !== null);
   const activeFilterCount = $derived([endpointFilter !== "all", typeFilter !== "all", stateFilter !== "all", visibilityFilter !== "all"].filter(Boolean).length);
 
   function groupKey(m: Model) {
@@ -138,6 +145,7 @@
     if (stateFilter === "disabled" && !m.disabled) return false;
     if (visibilityFilter === "public" && m.hidden) return false;
     if (visibilityFilter === "hidden" && !m.hidden) return false;
+    if (modalityFilter !== null && (m.modality ?? "text") !== modalityFilter) return false;
     return true;
   }
 
@@ -184,6 +192,11 @@
   });
 
   const visibleCount = $derived(grouped.reduce((total, group) => total + group.items.length, 0));
+  const modalityCounts = $derived.by(() => {
+    const counts: Record<ModelModality, number> = { text: 0, vision: 0, embedding: 0 };
+    for (const m of models) counts[m.modality ?? "text"]++;
+    return counts;
+  });
   const endpointFilterOptions = $derived.by(() => {
     const keys = [...new Set(models.map(groupKey))];
     return keys.sort((a, b) => naturalSort(groupLabel(a), groupLabel(b)));
@@ -195,6 +208,7 @@
     typeFilter = "all";
     stateFilter = "all";
     visibilityFilter = "all";
+    modalityFilter = null;
   }
 
   function isGroupExpanded(group: { key: string; kind: GroupKind }) {
@@ -307,7 +321,7 @@
 
   function resetForm() {
     resetDraftTest();
-    editingModel = null; modalMode = "add"; fName = ""; fType = "concrete"; fDisabled = false; fHidden = false;
+    editingModel = null; modalMode = "add"; fName = ""; fType = "concrete"; fDisabled = false; fHidden = false; fModality = "text";
     fVersion = ""; fBackend = ""; fPricing = { input: "", output: "", cache_write: "", cache_read: "" };
     fTargets = []; fTargetSelection = "sticky"; fMaxAttempts = "";
     dragIndex = null; dragOrigin = null; dragAnnouncement = "";
@@ -321,6 +335,7 @@
     fType = isAuto(m) ? "auto" : "concrete";
     fDisabled = m.disabled === true;
     fHidden = m.hidden === true;
+    fModality = m.modality ?? "text";
     if (isAuto(m)) {
       fTargets = [...new Set(Array.isArray(m.targets) ? m.targets : [])];
       fTargetSelection = m.targetSelection === "roundrobin" ? "roundrobin" : "sticky";
@@ -428,7 +443,7 @@
       const data = await requestAdminJson<ModelTestResult>("/api/models/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version, backend }),
+        body: JSON.stringify({ version, backend, modality: fModality }),
       });
       if (!modalOpen || fType !== "concrete" || fVersion.trim() !== version || fBackend.trim() !== backend || draftTestGeneration !== generation) return;
       draftTestResult = data;
@@ -488,7 +503,7 @@
     if (isDuplicateModelName(name, models, modalMode === "edit" ? editingModel : null)) {
       return toast.show("A model with that name already exists", "error");
     }
-    const payload: Record<string, unknown> = { name, modelType: fType, disabled: fDisabled, hidden: fHidden, pricing: pricingPayload() };
+    const payload: Record<string, unknown> = { name, modelType: fType, disabled: fDisabled, hidden: fHidden, modality: fModality, pricing: pricingPayload() };
 
     if (fType === "auto") {
       const unique = [...new Set(fTargets)];
@@ -657,12 +672,15 @@
         <input type="search" bind:value={query} placeholder="Search models, backends, endpoints, or targets…" />
         {#if query}<button type="button" aria-label="Clear search" onclick={() => query = ""}><i class="fa-solid fa-xmark"></i></button>{/if}
       </label>
-      <span class="search-count">{visibleCount} of {models.length}</span>
-      <button class="btn btn-secondary filters-toggle" class:active={filtersOpen || activeFilterCount > 0} type="button" aria-expanded={filtersOpen} aria-controls="model-filters" onclick={() => filtersOpen = !filtersOpen}>
-        <i class="fa-solid fa-sliders"></i> Filters
-        {#if activeFilterCount}<span class="filter-count">{activeFilterCount}</span>{/if}
-        <i class="fa-solid fa-chevron-{filtersOpen ? 'up' : 'down'}"></i>
-      </button>
+      <ModalityToggle value={modalityFilter} onChange={(next) => modalityFilter = next} counts={modalityCounts} idPrefix="admin-modality" />
+      <div class="toolbar-right">
+        <span class="search-count">{visibleCount} of {models.length}</span>
+        <button class="btn btn-secondary filters-toggle" class:active={filtersOpen || activeFilterCount > 0} type="button" aria-expanded={filtersOpen} aria-controls="model-filters" onclick={() => filtersOpen = !filtersOpen}>
+          <i class="fa-solid fa-sliders"></i> Filters
+          {#if activeFilterCount}<span class="filter-count">{activeFilterCount}</span>{/if}
+          <i class="fa-solid fa-chevron-{filtersOpen ? 'up' : 'down'}"></i>
+        </button>
+      </div>
     </div>
     {#if filtersOpen}
       <div id="model-filters" class="model-filters">
@@ -772,6 +790,15 @@
         <select id="mType" bind:value={fType} onchange={invalidateDraftTest} class="form-select" style="width:100%;" disabled={testingDraft}>
           <option value="concrete">Concrete (single backend)</option>
           <option value="auto">Automatic (routes across targets)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="mModality">Modality</label>
+        <select id="mModality" bind:value={fModality} onchange={invalidateDraftTest} class="form-select" style="width:100%;" disabled={testingDraft}>
+          <option value="text">Text</option>
+          <option value="vision">Vision</option>
+          <option value="embedding">Embedding</option>
         </select>
       </div>
 
@@ -942,6 +969,7 @@
   .model-search:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-alpha-012); }
   .model-search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; box-shadow: none; color: var(--text-primary); }
   .model-search button { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; flex-shrink: 0; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
+  .toolbar-right { display: flex; flex-shrink: 0; align-items: center; gap: 12px; margin-left: auto; }
   .search-count { flex-shrink: 0; color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
   .filters-toggle { min-width: 118px; justify-content: center; }
   .filters-toggle.active { border-color: var(--primary-alpha-035); background: var(--primary-alpha-012); color: var(--primary-dark); }
@@ -986,6 +1014,7 @@
   .model-badge-disabled { background: var(--warning); color: white; opacity: .8; }
   .model-badge-hidden { background: var(--gray-200); color: var(--gray-700); }
   .model-badge-auto { background: var(--primary); color: white; }
+  .model-badge-modality { background: var(--primary-alpha-015); color: var(--primary-dark); }
   .model-badge-selection { background: var(--primary-alpha-015); color: var(--primary-dark); }
   .model-badge-targets { background: var(--success-alpha-01); color: var(--success-dark); }
   .model-badge-attempts { background: rgba(245,158,11,.12); color: #b45309; }
@@ -1055,7 +1084,6 @@
     .models-toolbar { align-items: stretch; flex-wrap: wrap; padding: 14px 16px; }
     .model-search { max-width: none; flex-basis: 100%; }
     .search-count { align-self: center; }
-    .filters-toggle { margin-left: auto; }
     .model-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 14px 16px; }
     .card-body { padding: 14px 16px 18px; }
     .endpoint-group-header { align-items: center; flex-wrap: wrap; }

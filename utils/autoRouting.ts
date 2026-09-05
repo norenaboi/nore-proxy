@@ -345,6 +345,15 @@ export function classifyUpstreamFailure({
   if (streamOutputStarted) return { reason: "output_started", retrySame: false, retryKey: false, fallbackTarget: false };
   if (keyExhausted) return { reason: "key_exhausted", retrySame: false, retryKey: false, fallbackTarget: true };
 
+  // A target whose endpoint cannot serve the requested protocol at all — an
+  // embeddings request routed to an Anthropic endpoint, say — is neither a
+  // client error nor a transient one. Retrying it or hopping its keys is
+  // pointless, but another automatic target may be perfectly capable, so this
+  // falls through rather than failing the whole request over one bad target.
+  if (String((error as { code?: unknown } | null)?.code || "") === "endpoint_protocol_unsupported") {
+    return { reason: "endpoint_unsupported", retrySame: false, retryKey: false, fallbackTarget: true };
+  }
+
   const status = Number(statusCode);
   // Actionable codes belong to the key, not the moment: another attempt on the
   // same credential would fail identically, so hop instead of retrying.

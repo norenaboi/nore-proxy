@@ -17,6 +17,7 @@ import uptimeService from "./services/uptime/index.js";
 import rateLimiter from "./middleware/rateLimiter.js";
 import chatRoutes from "./routes/chat.js";
 import messagesRoutes from "./routes/messages.js";
+import embeddingsRoutes from "./routes/embeddings.js";
 import modelsRoutes from "./routes/models.js";
 import statsRoutes, { setStartupTime } from "./routes/stats.js";
 import adminRoutes from "./routes/admin.js";
@@ -181,6 +182,7 @@ await initializeFrontend(app);
 // Routes
 app.use(chatRoutes);
 app.use(messagesRoutes);
+app.use(embeddingsRoutes);
 app.use(modelsRoutes);
 app.use(statsRoutes);
 app.use(adminRoutes);

@@ -1,4 +1,7 @@
 import type { EndpointKey } from "./endpoint.js";
+import type { ModelModality } from "../shared/contracts/models.js";
+
+export type { ModelModality };
 
 export type ModelType = "concrete" | "auto";
 export type TargetSelection = "sticky" | "roundrobin";
@@ -15,6 +18,8 @@ interface StoredModelBase {
   pricing?: ModelPricing;
   disabled?: boolean;
   hidden?: boolean;
+  /** Absent on models stored before modalities existed; read as "text". */
+  modality?: ModelModality;
   [key: string]: unknown;
 }
 
@@ -41,8 +46,15 @@ export interface ModelCapabilities {
   outputCapabilities: Record<string, unknown>;
 }
 
+/**
+ * The `type` a registered model reports to clients. Derived from the modality:
+ * text and vision models are both "chat"; embedding models are "embedding".
+ */
+export type RegisteredModelType = "chat" | "embedding";
+
 export interface RegisteredConcreteModel {
-  type: "chat";
+  type: RegisteredModelType;
+  modality: ModelModality;
   routingType: "concrete";
   capabilities: ModelCapabilities;
   backend: string;
@@ -51,7 +63,8 @@ export interface RegisteredConcreteModel {
 }
 
 export interface RegisteredAutoModel {
-  type: "chat";
+  type: RegisteredModelType;
+  modality: ModelModality;
   routingType: "auto";
   capabilities: ModelCapabilities;
   targets: string[];
@@ -70,6 +83,7 @@ export type AdminModelRecord =
   | {
       name: string;
       modelType: "concrete";
+      modality: ModelModality;
       backend: string;
       version: EndpointKey | "";
       disabled: boolean;
@@ -79,6 +93,7 @@ export type AdminModelRecord =
   | {
       name: string;
       modelType: "auto";
+      modality: ModelModality;
       targets: string[];
       targetSelection: TargetSelection;
       maxTargetAttempts: number | null;
@@ -92,6 +107,7 @@ export interface PublicModel {
   object: "model";
   created: number;
   owned_by: "nore-proxy";
-  type: "chat";
+  type: RegisteredModelType;
+  modality: ModelModality;
   pricing: Required<ModelPricing> | null;
 }

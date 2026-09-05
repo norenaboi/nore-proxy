@@ -14,6 +14,7 @@ import {
   validateModelDefinition,
 } from "./autoRouting.js";
 import type { ModelDefinition, ModelPricingRegistry, ModelRegistry, RegisteredModel } from "../types/models.js";
+import { normalizeModality } from "../shared/contracts/models.js";
 
 type ModelLoadOptions = {
   excludeHashes?: Set<string>;
@@ -105,9 +106,11 @@ export function loadModelsFromFile() {
       if (!definition || definition.type !== "concrete") continue;
       const { backend, version } = definition;
       const actualBackend = `${backend}-${version}`;
+      const modality = normalizeModality(modelConfig.modality);
       MODEL_ALIASES[displayName] = actualBackend;
       MODEL_REGISTRY[displayName] = {
-        type: "chat",
+        type: modality === "embedding" ? "embedding" : "chat",
+        modality,
         routingType: "concrete",
         capabilities: { outputCapabilities: {} },
         backend: actualBackend,
@@ -135,8 +138,10 @@ export function loadModelsFromFile() {
           `Auto model '${displayName}' has ${dropped.length} unroutable target(s) that will be skipped: ${dropped.join(", ")}`,
         );
       }
+      const autoModality = normalizeModality(modelConfig.modality);
       MODEL_REGISTRY[displayName] = {
-        type: "chat",
+        type: autoModality === "embedding" ? "embedding" : "chat",
+        modality: autoModality,
         routingType: "auto",
         capabilities: { outputCapabilities: {} },
         targets: definition.targets as string[],

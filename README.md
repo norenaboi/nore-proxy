@@ -5,6 +5,7 @@ A unified OpenAI API proxy server
 ## Features
 
 - **Unified API gateway**: use OpenAI-compatible `/v1/chat/completions` or Anthropic-compatible `/v1/messages`, including Claude Code support.
+- **Embedding passthrough**: OpenAI-compatible `/v1/embeddings` for any provider that speaks the general embeddings syntax (OpenRouter, DashScope compatible-mode, Voyage, Jina, Together, Mistral, Ollama), with Gemini's `batchEmbedContents` translated to and from the same shape.
 - **Multi-provider support**: route requests to OpenAI, Anthropic, Gemini, OpenAI Responses, and OpenAI Codex backends.
 - **Flexible model routing**: map public model names to specific backends or automatic target groups with fallback across models and providers.
 - **Reliable key rotation**: distribute requests across API keys and automatically skip unhealthy or rate-limited keys.
@@ -149,6 +150,7 @@ All admin endpoints require authentication.
 | `/v1/models` | GET | View models |
 | `/v1/chat/completions` | POST | OpenAI-format chat completions |
 | `/v1/messages` | POST | Anthropic-format messages, Claude Code compatible |
+| `/v1/embeddings` | POST | OpenAI-format embeddings; serves models whose modality is `embedding` |
 | `/api/summary` | GET | Summary of statistics |
 | `/api/usage` | POST | View usage statistics |
 

@@ -1,11 +1,15 @@
 import type {
+  ModelModality,
   PublicModelDto,
   PublicModelPricing,
   PublicModelsResponse,
 } from "$contracts/models";
+import { normalizeModality } from "$contracts/models";
 
 export const MODEL_CACHE_KEY = "nore-proxy:model-catalog:v1";
-const MODEL_CACHE_VERSION = 1;
+// Bumped when a cached entry gains a field: a v1 cache carries no modality,
+// and reading it back would file every model under "text".
+const MODEL_CACHE_VERSION = 2;
 const MODEL_NAME_ABBREVIATIONS = new Set(["gpt", "glm"]);
 const MODEL_VERSION_SEGMENT = /^\d+(?:\.\d+)*$/;
 
@@ -23,12 +27,13 @@ export type Provider =
 export interface CatalogModel {
   id: string;
   provider: Provider;
+  modality: ModelModality;
   pricing: Required<PublicModelPricing>;
 }
 
 interface CachedCatalog {
   version: number;
-  models: Array<Pick<CatalogModel, "id" | "pricing">>;
+  models: Array<Pick<CatalogModel, "id" | "modality" | "pricing">>;
 }
 
 /**
@@ -133,6 +138,7 @@ function normalizeModel(model: PublicModelDto | string): CatalogModel | null {
   return {
     id,
     provider: getProvider(id),
+    modality: normalizeModality(typeof model === "string" ? null : model.modality),
     pricing: normalizePricing(typeof model === "string" ? null : model.pricing),
   };
 }
@@ -165,7 +171,7 @@ export function readModelCache(storage: Storage): CatalogModel[] | null {
 export function writeModelCache(storage: Storage, models: CatalogModel[]): void {
   const cached: CachedCatalog = {
     version: MODEL_CACHE_VERSION,
-    models: models.map(({ id, pricing }) => ({ id, pricing })),
+    models: models.map(({ id, modality, pricing }) => ({ id, modality, pricing })),
   };
   storage.setItem(MODEL_CACHE_KEY, JSON.stringify(cached));
 }

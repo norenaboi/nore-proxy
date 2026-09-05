@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { PublicModelsResponse } from "$contracts/models";
+  import type { ModelModality, PublicModelsResponse } from "$contracts/models";
+  import ModalityToggle from "$frontend/components/ModalityToggle.svelte";
   import { requestPublicJson } from "$frontend/lib/api/public";
   import {
     clearModelCache,
@@ -17,6 +18,7 @@
   let models: CatalogModel[] = [];
   let searchQuery = "";
   let activeFilters = new Set<Provider>();
+  let modalityFilter: ModelModality | null = null;
   let loading = true;
   let errorMessage = "";
   let copied = false;
@@ -28,10 +30,18 @@
     new Map<Provider, number>(),
   );
   $: providers = [...providerCounts.keys()].sort();
+  $: modalityCounts = models.reduce(
+    (counts, model) => {
+      counts[model.modality] = (counts[model.modality] ?? 0) + 1;
+      return counts;
+    },
+    { text: 0, vision: 0, embedding: 0 } as Record<ModelModality, number>,
+  );
   $: normalizedQuery = searchQuery.trim().toLowerCase();
   $: filteredModels = models.filter(
     (model) =>
       (activeFilters.size === 0 || activeFilters.has(model.provider)) &&
+      (modalityFilter === null || model.modality === modalityFilter) &&
       (!normalizedQuery ||
         model.id.toLowerCase().includes(normalizedQuery) ||
         model.provider.toLowerCase().includes(normalizedQuery)),
@@ -160,23 +170,32 @@
     />
     <button class="search-clear" type="button" onclick={clearSearch}>Clear</button>
   </div>
-  <div class="chips" aria-label="Filter by provider">
-    {#each providers as provider}
-      <button
-        class:active={activeFilters.has(provider)}
-        class="chip"
-        type="button"
-        aria-pressed={activeFilters.has(provider)}
-        onclick={() => toggleFilter(provider)}
-      >
-        <img src={getProviderIcon(provider)} class="chip-icon" alt="" loading="lazy" onerror={hideBrokenImage} />
-        {provider} <span class="count">{providerCounts.get(provider)}</span>
-      </button>
-    {/each}
+  <div class="chips-row">
+    <div class="chips" aria-label="Filter by provider">
+      {#each providers as provider}
+        <button
+          class:active={activeFilters.has(provider)}
+          class="chip"
+          type="button"
+          aria-pressed={activeFilters.has(provider)}
+          onclick={() => toggleFilter(provider)}
+        >
+          <img src={getProviderIcon(provider)} class="chip-icon" alt="" loading="lazy" onerror={hideBrokenImage} />
+          {provider} <span class="count">{providerCounts.get(provider)}</span>
+        </button>
+      {/each}
+    </div>
+    <div class="chips-end">
+      <ModalityToggle
+        value={modalityFilter}
+        onChange={(next) => (modalityFilter = next)}
+        counts={modalityCounts}
+        idPrefix="models-page-modality"
+      />
+      <p class="result-meta" aria-live="polite">{filteredModels.length} of {models.length} models</p>
+    </div>
   </div>
 </div>
-
-<p class="result-meta" aria-live="polite">{filteredModels.length} of {models.length} models</p>
 
 <div class="model-grid">
   {#if loading}
@@ -270,7 +289,9 @@
   }
 
   .search-wrap.has-value .search-clear { display: block; }
+  .chips-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chips-end { display: flex; align-items: center; gap: 12px; margin-left: auto; flex-shrink: 0; }
   .chip {
     display: inline-flex;
     align-items: center;
@@ -289,7 +310,7 @@
   .chip.active { border-color: var(--accent-ink); background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
   .chip .count { font-size: 11px; opacity: 0.75; }
   .chip-icon { width: 16px; height: 16px; border-radius: 4px; object-fit: contain; }
-  .result-meta { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+  .result-meta { margin: 0; color: var(--muted); font-size: 12px; white-space: nowrap; }
 
   .model-grid {
     display: grid;
@@ -345,5 +366,6 @@
   @media (max-width: 700px) {
     .model-grid { grid-template-columns: 1fr; }
     .model-card .card-copy { opacity: 1; }
+    .chips-end { margin-left: 0; width: 100%; justify-content: space-between; }
   }
 </style>

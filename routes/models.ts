@@ -15,6 +15,7 @@ router.get("/v1/models", async (_req: Request, res: Response) => {
         created: Math.floor(Date.now() / 1000),
         owned_by: "nore-proxy",
         type: modelInfo.type || "chat",
+        modality: modelInfo.modality || "text",
         pricing: MODEL_PRICING[modelName] || null,
       });
     }

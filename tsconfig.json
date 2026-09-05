@@ -9,7 +9,19 @@
     "strict": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    /*
+     * The frontend's own aliases, repeated here so the Node test runner can
+     * resolve them: tests import frontend modules by relative path, which makes
+     * this the tsconfig tsx consults, and a frontend module that value-imports
+     * a shared contract would otherwise fail to resolve at run time even though
+     * both tsc projects and the Vite build accept it. frontend/tsconfig.json
+     * overrides `paths` wholesale, so its own resolution is unaffected.
+     */
+    "paths": {
+      "$frontend/*": ["./frontend/src/*"],
+      "$contracts/*": ["./shared/contracts/*"]
+    }
   },
   "include": [
     "server.ts",

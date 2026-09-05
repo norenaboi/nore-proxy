@@ -1,9 +1,11 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
 import crypto from "crypto";
-import type { ModelTestResult } from "../shared/contracts/models.js";
+import type { ModelModality, ModelTestResult } from "../shared/contracts/models.js";
+import { normalizeModality } from "../shared/contracts/models.js";
+import { getEmbeddingAdapter } from "./adapters/embeddings.js";
 import type { ApiFormat, BodyParamPolicy } from "../types/endpoint.js";
 import { getAdapter, getExtraHeaders } from "./adapters/index.js";
-import { applyBodyParamPolicy, getFullUrl } from "./endpointPolicies.js";
+import { applyBodyParamPolicy, getEmbeddingsUrl, getFullUrl } from "./endpointPolicies.js";
 import { proxyAgentsFor } from "./proxyAgents.js";
 
 export interface UpstreamModelTestInput {
@@ -15,6 +17,12 @@ export interface UpstreamModelTestInput {
   appendApiSuffix: boolean;
   bodyParams?: BodyParamPolicy | null;
   proxyId?: string | null;
+  /**
+   * Which upstream surface to ping. Embedding models have no completions
+   * endpoint, so a chat-shaped ping would report a configuration failure that
+   * says nothing about whether the model actually works.
+   */
+  modality?: ModelModality;
 }
 
 export type ModelTestRequester = (
@@ -44,7 +52,17 @@ export async function testUpstreamModel(
   requester: ModelTestRequester = axios,
 ): Promise<ModelTestResult> {
   const { url, token, backend, customHeaders = {}, apiFormat, appendApiSuffix, bodyParams = null, proxyId = null } = input;
-  const fullUrl = getFullUrl(url, apiFormat, backend, false, appendApiSuffix);
+  const modality = normalizeModality(input.modality);
+  const isEmbedding = modality === "embedding";
+  const embeddingAdapter = isEmbedding ? getEmbeddingAdapter(apiFormat) : null;
+  const embeddingUrl = isEmbedding ? getEmbeddingsUrl(url, apiFormat, backend, appendApiSuffix) : null;
+  if (isEmbedding && (!embeddingAdapter || !embeddingUrl)) {
+    return {
+      ok: false,
+      error: `The '${apiFormat}' format has no embeddings API, so this model cannot be served.`,
+    };
+  }
+  const fullUrl = embeddingUrl ?? getFullUrl(url, apiFormat, backend, false, appendApiSuffix);
   const start = Date.now();
   const isGemini = apiFormat === "gemini";
   const testRequestId = `models-test-${crypto.randomUUID()}`;
@@ -60,7 +78,9 @@ export async function testUpstreamModel(
   const requestUrl = isGemini ? `${fullUrl}?key=${encodeURIComponent(token)}` : fullUrl;
 
   let data: Record<string, unknown>;
-  if (isGemini) {
+  if (embeddingAdapter) {
+    data = embeddingAdapter.transformEmbeddingRequest({ input: "ping" }, backend);
+  } else if (isGemini) {
     data = { contents: [{ parts: [{ text: "ping" }] }] };
   } else if (apiFormat === "anthropic") {
     data = { model: backend, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false };
