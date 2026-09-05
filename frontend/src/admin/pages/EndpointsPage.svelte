@@ -760,9 +760,11 @@
   :global(.endpoint-modal-backdrop) { padding: 24px; background: rgba(24, 17, 31, .58); backdrop-filter: blur(3px); }
   /* A fixed height rather than a content-driven one: expanding a section changes
      only the scroll extent inside the body, so the dialog no longer resizes and
-     jump the footer around under the cursor. The viewport clamp keeps it usable
-     on short screens. */
-  :global(.modal-backdrop .endpoint-modal) { display: flex; width: 100%; max-width: 1200px; height: 760px; max-height: calc(100vh - 48px); flex-direction: column; padding: 0; overflow: hidden; border: 1px solid var(--border-color); border-radius: 11px; background: var(--card-bg); box-shadow: 0 24px 70px rgba(25, 15, 35, .24); }
+     jump the footer around under the cursor. 860px clears the tallest pairing
+     (Bulk import open on the left plus Custom Body Params open on the right)
+     without an inner scrollbar; the viewport clamp keeps it usable on short
+     screens, where it still scrolls. */
+  :global(.modal-backdrop .endpoint-modal) { display: flex; width: 100%; max-width: 1200px; height: 860px; max-height: calc(100vh - 48px); flex-direction: column; padding: 0; overflow: hidden; border: 1px solid var(--border-color); border-radius: 11px; background: var(--card-bg); box-shadow: 0 24px 70px rgba(25, 15, 35, .24); }
   :global(.endpoint-modal .modal-header) { flex-shrink: 0; margin: 0; padding: 20px 24px; border-bottom: 1px solid var(--border-color); }
   :global(.endpoint-modal .modal-header h2) { color: var(--text-primary); font: 500 18px/1.2 Georgia, "Times New Roman", serif; }
   :global(.endpoint-modal .modal-close) { display: flex; width: 32px; height: 32px; align-items: center; justify-content: center; padding: 0; border-radius: 8px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 14px; transition: background .2s ease, color .2s ease; }
