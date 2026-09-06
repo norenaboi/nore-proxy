@@ -45,11 +45,15 @@ interface CachedCatalog {
  * `o\d` covers the OpenAI o-series (o1, o3, o4-mini). Its boundary excludes a
  * preceding digit as well, so the `4o` in `gpt-4o` is not read as an o-series
  * marker.
+ *
+ * `text-embedding` covers the OpenAI embedding models, whose ids carry no brand
+ * token at all (`text-embedding-3-large`). Google's `gemini-embedding-001` is
+ * claimed by the Google entry above before this one is reached.
  */
 const PROVIDER_FAMILIES: ReadonlyArray<readonly [Provider, RegExp]> = [
   ["Google", /(?:^|[^a-z])(?:gemini|gemma|veo|imagen|nano-?banana)/],
   ["Anthropic", /(?:^|[^a-z])(?:claude|sonnet|opus|haiku|fable|mythos)/],
-  ["OpenAI", /(?:^|[^a-z])(?:chatgpt|gpt|codex|dall-?e)|(?:^|[^a-z0-9])o\d/],
+  ["OpenAI", /(?:^|[^a-z])(?:chatgpt|gpt|codex|dall-?e|text-embedding)|(?:^|[^a-z0-9])o\d/],
   ["DeepSeek", /(?:^|[^a-z])deepseek/],
   ["ZhipuAI", /(?:^|[^a-z])glm/],
   ["xAI", /(?:^|[^a-z])grok/],

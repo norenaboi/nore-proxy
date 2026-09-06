@@ -51,7 +51,7 @@
   let errorMessage = $state("");
   let searchQuery = $state("");
   let statusFilter = $state<StatusFilter>("all");
-  let activeProviders = $state<Provider[]>([]);
+  let activeProvider = $state<Provider | null>(null);
 
   const models = $derived(data?.models ?? []);
   const totals = $derived(statusTotals(models));
@@ -61,15 +61,22 @@
     groupStatusModels(models, {
       query: searchQuery,
       filter: statusFilter,
-      providers: new Set(activeProviders),
+      // An empty set means "every provider", which is what a cleared chip row is.
+      providers: new Set(activeProvider ? [activeProvider] : []),
     }),
   );
   const shownCount = $derived(groups.reduce((sum, group) => sum + group.models.length, 0));
 
+  // Both segmented controls carry a thumb that slides to the active segment, so
+  // each needs the index of that segment. They always have a selection, so the
+  // index never falls back for want of one.
+  const statusIndex = $derived(Math.max(STATUS_FILTERS.findIndex((option) => option.value === statusFilter), 0));
+  const windowIndex = $derived(Math.max(WINDOWS.findIndex((option) => option.hours === windowHours), 0));
+
+  // Single-select, matching the model catalog and the playground: picking a
+  // provider replaces the active one, and picking it again clears back to all.
   function toggleProvider(provider: Provider): void {
-    activeProviders = activeProviders.includes(provider)
-      ? activeProviders.filter((value) => value !== provider)
-      : [...activeProviders, provider];
+    activeProvider = activeProvider === provider ? null : provider;
   }
 
   function hideBrokenImage(event: Event): void {
@@ -207,10 +214,10 @@
         <div class="chips" role="group" aria-label="Filter by provider">
           {#each [...counts] as [provider, count] (provider)}
             <button
-              class:active={activeProviders.includes(provider)}
+              class:active={activeProvider === provider}
               class="chip"
               type="button"
-              aria-pressed={activeProviders.includes(provider)}
+              aria-pressed={activeProvider === provider}
               onclick={() => toggleProvider(provider)}
             >
               <img src={getProviderIcon(provider)} class="chip-icon" alt="" loading="lazy" onerror={hideBrokenImage} />
@@ -220,7 +227,8 @@
         </div>
       {/if}
 
-      <div class="segmented" role="group" aria-label="Filter by status">
+      <div class="segmented" style={`--segment-count: ${STATUS_FILTERS.length}`} role="group" aria-label="Filter by status">
+        <span class="thumb" style={`--segment-index: ${statusIndex}`} aria-hidden="true"></span>
         {#each STATUS_FILTERS as option (option.value)}
           <button
             type="button"
@@ -230,7 +238,8 @@
         {/each}
       </div>
 
-      <div class="segmented" role="group" aria-label="History window">
+      <div class="segmented" style={`--segment-count: ${WINDOWS.length}`} role="group" aria-label="History window">
+        <span class="thumb" style={`--segment-index: ${windowIndex}`} aria-hidden="true"></span>
         {#each WINDOWS as option (option.hours)}
           <button
             type="button"
@@ -356,13 +365,39 @@
   .toolbar-row { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
   .chips { flex: 1 1 380px; }
   .chip { min-height: 34px; }
-  .segmented { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+  /*
+   * Both segmented controls carry the theme pill's sliding thumb, so the columns
+   * are equal-width with no column gap: the thumb steps by exactly one segment,
+   * and a gap would leave it short of the later positions. The segment count
+   * arrives as --segment-count from the markup because the two controls hold a
+   * different number of options.
+   */
+  .segmented {
+    position: relative;
+    display: inline-grid;
+    grid-template-columns: repeat(var(--segment-count, 3), 1fr);
+    padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface);
+  }
+  .segmented .thumb {
+    position: absolute; top: 3px; bottom: 3px; left: 3px;
+    width: calc((100% - 6px) / var(--segment-count, 3));
+    border-radius: 6px; background: var(--accent-soft);
+    transform: translateX(calc(var(--segment-index, 0) * 100%));
+    transition: transform .28s cubic-bezier(.34, 1.32, .5, 1);
+  }
   .segmented button {
+    position: relative; z-index: 1;
     min-height: 28px; padding: 4px 9px; border: 0; border-radius: 6px; background: transparent;
     color: var(--muted); font-size: 11.5px; white-space: nowrap; cursor: pointer;
+    transition: color .18s ease;
   }
   .segmented button:hover { color: var(--accent-ink); }
-  .segmented button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; }
+  /*
+   * Colour alone marks the active segment — the thumb now paints its background,
+   * and bolding it would widen its column, so the equal-width tracks would
+   * resize under the thumb mid-slide.
+   */
+  .segmented button[aria-pressed="true"] { color: var(--accent-ink); }
   .result-meta { margin: 0 0 18px; }
 
   .provider-group { margin-bottom: 30px; }
@@ -412,7 +447,9 @@
     .banner-time { grid-column: 2; }
     .toolbar-row { display: grid; }
     .chips { flex-basis: auto; }
-    .segmented { max-width: 100%; overflow-x: auto; }
+    /* Full width rather than scrollable: the thumb sizes itself as a percentage
+       of the visible box, so a horizontally scrolling control would misplace it. */
+    .segmented { display: grid; max-width: 100%; }
     .model-card { grid-template-columns: 1fr; }
     .card-metrics { justify-content: flex-start; padding-top: 10px; border-top: 1px solid var(--line); }
     .metric { text-align: left; }
@@ -423,5 +460,8 @@
     .summary-card { padding: 13px; }
     .provider-status { display: none; }
   }
-  @media (prefers-reduced-motion: reduce) { .live-dot { box-shadow: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .live-dot { box-shadow: none; }
+    .segmented .thumb, .segmented button { transition: none; }
+  }
 </style>

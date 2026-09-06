@@ -24,7 +24,7 @@
 
   let open = $state(false);
   let searchQuery = $state("");
-  let activeFilters = $state(new Set<Provider>());
+  let activeProvider = $state<Provider | null>(null);
   let wrapper: HTMLDivElement | undefined = $state();
   let trigger: HTMLButtonElement | undefined = $state();
   let searchBox: HTMLInputElement | undefined = $state();
@@ -57,7 +57,7 @@
   const visibleModels = $derived(
     models.filter(
       (model) =>
-        (activeFilters.size === 0 || activeFilters.has(model.provider)) &&
+        (activeProvider === null || model.provider === activeProvider) &&
         (!normalizedQuery ||
           model.id.toLowerCase().includes(normalizedQuery) ||
           model.provider.toLowerCase().includes(normalizedQuery)),
@@ -70,7 +70,7 @@
     if (!open) return;
     // Filters are transient: every opening starts from the full catalog.
     searchQuery = "";
-    activeFilters = new Set();
+    activeProvider = null;
     positionPanel();
     void tick().then(() => searchBox?.focus());
   }
@@ -86,11 +86,10 @@
     close();
   }
 
+  // Single-select, matching the public catalog: picking a provider replaces
+  // whatever was active, and picking the active one again clears back to all.
   function toggleFilter(provider: Provider): void {
-    const next = new Set(activeFilters);
-    if (next.has(provider)) next.delete(provider);
-    else next.add(provider);
-    activeFilters = next;
+    activeProvider = activeProvider === provider ? null : provider;
   }
 
   function hideBrokenImage(event: Event): void {
@@ -165,10 +164,10 @@
         <div class="chips" aria-label="Filter by provider">
           {#each providers as provider}
             <button
-              class:active={activeFilters.has(provider)}
+              class:active={activeProvider === provider}
               class="chip"
               type="button"
-              aria-pressed={activeFilters.has(provider)}
+              aria-pressed={activeProvider === provider}
               onclick={() => toggleFilter(provider)}
             >
               <img src={getProviderIcon(provider)} class="icon" alt="" loading="lazy" onerror={hideBrokenImage} />

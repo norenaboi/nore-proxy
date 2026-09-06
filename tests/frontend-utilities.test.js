@@ -86,6 +86,12 @@ test("model catalog classifies, normalizes, caches, and formats models", () => {
   assert.equal(getProvider("omni-router"), "Others");
   assert.equal(getProvider("gpt-4o"), "OpenAI");
 
+  // OpenAI embedding ids carry no brand token, and the Google entry still wins
+  // for the embedding models that do.
+  assert.equal(getProvider("text-embedding-3-large"), "OpenAI");
+  assert.equal(getProvider("openai/text-embedding-ada-002"), "OpenAI");
+  assert.equal(getProvider("gemini-embedding-001"), "Google");
+
   // A routing prefix never outranks the model family that follows it.
   assert.equal(getProvider("kiro-glm-5"), "ZhipuAI");
   assert.equal(getProvider("kiro-claude-opus-5"), "Anthropic");
