@@ -201,7 +201,7 @@ function writeAnthropicEvent(res: any, event: any, data: any) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-// --- Error persistence (shared with chat.js pattern) ---
+// --- Error persistence ---
 
 function persistUpstreamError({
   requestId,
@@ -1240,7 +1240,7 @@ function streamOpenAIToAnthropic(
   }
 
   // Open a text content block on demand. Only used for text deltas so a
-  // tool_use block is never masked by an empty text block (issue 6).
+  // tool_use block is never masked by an empty text block.
   function ensureTextBlockStart() {
     if (textBlockOpen) return;
     closeThinkingBlock();
@@ -1304,7 +1304,7 @@ function streamOpenAIToAnthropic(
     flushToolBlocks();
   }
 
-  // Emit the terminal message_delta + message_stop exactly once (issue 5).
+  // Emit the terminal message_delta + message_stop exactly once.
   function emitTerminal(finishReason: any) {
     if (terminated) return;
     terminated = true;
@@ -1359,7 +1359,7 @@ function streamOpenAIToAnthropic(
 
       if (adapter.isStreamEnd(payload)) {
         // [DONE] — terminal events are guarded so they fire only once
-        // even if a finish_reason chunk already emitted them (issue 5).
+        // even if a finish_reason chunk already emitted them.
         emitTerminal("stop");
         return;
       }

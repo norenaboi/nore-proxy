@@ -1,6 +1,6 @@
 # Nore Proxy
 
-A unified OpenAI API proxy server
+A unified LLM API gateway with OpenAI- and Anthropic-compatible client APIs, multi-provider upstream routing, and an admin interface.
 
 ## Features
 
@@ -8,11 +8,14 @@ A unified OpenAI API proxy server
 - **Embedding passthrough**: OpenAI-compatible `/v1/embeddings` for any provider that speaks the general embeddings syntax (OpenRouter, DashScope compatible-mode, Voyage, Jina, Together, Mistral, Ollama), with Gemini's `batchEmbedContents` translated to and from the same shape.
 - **Multi-provider support**: route requests to OpenAI, Anthropic, Gemini, OpenAI Responses, and OpenAI Codex backends.
 - **Flexible model routing**: map public model names to specific backends or automatic target groups with fallback across models and providers.
-- **Reliable key rotation**: distribute requests across API keys and automatically skip unhealthy or rate-limited keys.
-- **Normalized responses**: preserve streaming, reasoning, and thinking content across supported formats.
-- **Live management**: configure endpoints, models, headers, API formats, and runtime settings without restarting the server.
+- **Reliable key rotation**: distribute requests across API keys with sticky or round-robin selection, retry transient failures, and automatically skip unhealthy or rate-limited keys.
+- **Outbound proxies**: route an endpoint's upstream traffic through an HTTP, SOCKS4, or SOCKS5 proxy, with credentials stored masked and applied to requests, model tests, and model fetches alike.
+- **Normalized responses**: preserve streaming, reasoning, thinking, and generated-image content across supported formats.
+- **Live management**: configure endpoints, models, proxies, headers, API formats, and runtime settings without restarting the server.
 - **Request controls**: set per-endpoint generation policies and per-key request, token, and context limits.
 - **Usage and cost tracking**: monitor requests, tokens, cache usage, and costs by user and model.
+- **Model uptime**: a public status page and admin dashboard scoring availability and time-to-first-token from real relay traffic.
+- **Chat playground**: a public page for trying models directly, with saved conversations, file and image attachments, and generated images.
 - **Admin dashboard**: manage configuration, test model connectivity, inspect request history and upstream errors, and view live logs.
 
 ## Quick Start
@@ -48,6 +51,7 @@ Once the server is running, open:
 - Public UI: `http://localhost:8741`
 - Admin login: `http://localhost:8741/admin/login`
 - Models: `http://localhost:8741/models`
+- Status: `http://localhost:8741/status`
 - Usage: `http://localhost:8741/usage`
 - Playground: `http://localhost:8741/playground`
 
@@ -91,10 +95,8 @@ Environment variables configure server-level behavior that cannot be changed at 
 | `API_KEY_DB_PATH` | SQLite client API-key database | `./logs/api_keys.db` |
 | `KEY_STATE_DB_PATH` | SQLite upstream key-state database | `./logs/key_states.db` |
 | `SESSION_DB_PATH` | SQLite admin-session database | `./logs/sessions.db` |
-
-### Runtime settings
-
-Rate-limit defaults, prompt caching, endpoint creation defaults, key-hop limits, log retention, and the global automatic-model target-attempt ceiling are managed through the admin Settings UI and persisted in `settings.json`. They can be changed without restarting the server. A log-retention value of `0` keeps details indefinitely. SQLite and PostgreSQL retain all-time daily totals, per-key/model usage, and cost aggregates after detail pruning; bounded, status-filtered, and endpoint-specific history remains limited to the retained detail window. The automatic-model ceiling bounds each request; model-specific limits may lower it but cannot exceed it.
+| `UPTIME_DB_PATH` | SQLite model-uptime database | `./logs/uptime.db` |
+| `ANALYTICS_SECRET` | Salt for the non-secret per-key analytics identity. Changing it splits existing per-key history. | `MASTER_KEY` |
 
 The server will not start if `MASTER_KEY` is missing or shorter than 16 characters.
 
@@ -119,10 +121,19 @@ All admin endpoints require authentication.
 | `/api/models/toggle` | PATCH | Enable/disable a model |
 | `/api/models/test` | POST | Silent model connectivity test |
 | `/api/model-usage` | GET | Get model usage statistics |
+| `/api/model-stats` | GET | Cached per-model request and cost stats |
 | `/api/endpoints` | GET | Get all endpoints |
 | `/api/endpoints` | POST | Add new endpoint |
 | `/api/endpoints` | PUT | Update existing endpoint |
 | `/api/endpoints` | DELETE | Delete endpoint |
+| `/api/endpoint-stats` | GET | Cached per-endpoint request and cost stats |
+| `/api/endpoints/:version/models` | GET | Fetch an endpoint's upstream model list |
+| `/api/proxies` | GET | Get all outbound proxies, passwords masked |
+| `/api/proxies` | POST | Add new proxy |
+| `/api/proxies` | PUT | Update existing proxy |
+| `/api/proxies` | DELETE | Delete a proxy no endpoint references |
+| `/api/uptime` | GET | Model availability and latency buckets |
+| `/api/uptime/status` | GET | Uptime layer diagnostics |
 | `/api/settings` | GET | Get all settings |
 | `/api/settings` | PUT | Update settings |
 | `/api/reload` | POST | Reload/Update configuration |
@@ -153,12 +164,13 @@ All admin endpoints require authentication.
 | `/v1/embeddings` | POST | OpenAI-format embeddings; serves models whose modality is `embedding` |
 | `/api/summary` | GET | Summary of statistics |
 | `/api/usage` | POST | View usage statistics |
+| `/api/public-uptime` | GET | Status-page availability for publicly listed models |
 
 ## Architecture
 
 ### Tech Stack
 
-- **Frontend:** Svelte 5 + TypeScript, bundled with Vite
+- **Frontend:** Svelte 5 + TypeScript, bundled with Vite as three multi-page documents (public, admin, login)
 - **Backend:** Node.js + Express + TypeScript (ESM, executed with `tsx`)
 - **Storage:** Better-SQLite3 by default, with optional PostgreSQL
 - **Testing:** A global `npm test` health check built on the Node.js Test Runner

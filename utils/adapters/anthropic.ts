@@ -77,15 +77,10 @@ function buildAnthropicBody(openaiReq: any, actualModel: any, isStream: any) {
 
     const role = msg.role === "assistant" ? "assistant" : "user";
 
-    // Content can be a string or an array of content blocks
+    // Anthropic accepts a string as-is. Content blocks share the text shape,
+    // but an OpenAI image_url block becomes an Anthropic image source block.
     let content = msg.content;
-    if (typeof content === "string") {
-      content = content; // Anthropic accepts string content directly
-    } else if (Array.isArray(content)) {
-      // OpenAI content blocks → Anthropic content blocks
-      // OpenAI: { type: "text", text: "..." }
-      // Anthropic: { type: "text", text: "..." }
-      // Image: OpenAI { type: "image_url", image_url: { url } } → Anthropic { type: "image", source: {...} }
+    if (Array.isArray(content)) {
       content = content.map((block: any) => {
         if (block.type === "text") {
           return { type: "text", text: block.text };
@@ -158,7 +153,6 @@ function buildAnthropicBody(openaiReq: any, actualModel: any, isStream: any) {
     body.top_p = openaiReq.top_p;
   }
 
-  // Tool support
   if (openaiReq.tools && openaiReq.tools.length > 0) {
     body.tools = openaiReq.tools
       .filter((t: any) => t.type === "function" && t.function)
@@ -241,7 +235,6 @@ export function parseResponseData(rawData: any) {
     .map((b: any) => b.thinking || "")
     .join("");
 
-  // Extract tool calls
   const toolUseBlocks = contentBlocks.filter((b: any) => b.type === "tool_use");
   const toolCalls = toolUseBlocks.length > 0
     ? toolUseBlocks.map((b: any, i: number) => ({
@@ -301,18 +294,9 @@ export function parseResponseData(rawData: any) {
  *   event: message_stop
  *   data: { type: "message_stop" }
  *
- * The caller passes us the parsed JSON data object (without the event: line).
- * We return an OpenAI-compatible delta or null.
- */
-
-// State for tracking tool use blocks across deltas
-// Each content_block_start for a tool_use sets up the block; we emit
-// the tool call delta when we see it.
-
-/**
- * Parse an Anthropic SSE data payload into OpenAI delta content.
- * The caller must handle the "event:" line to know what type of event it is,
- * but we also inspect the data payload's `type` field as the source of truth.
+ * The caller supplies the parsed JSON data object, without the event: line. The
+ * payload's own `type` field is the source of truth, so that line is not needed
+ * to classify the event.
  *
  * Returns { deltaContent, finishReason, usage, toolCalls } or null.
  */
@@ -515,8 +499,8 @@ function anthropicUsageToOpenAI(usage: any) {
 // ---------------------------------------------------------------------------
 
 /**
- * Anthropic sends a "message_stop" event, not a "[DONE]" string.
- * We rely on the event type, so this is false for the payload check.
+ * Anthropic sends a "message_stop" event, not a "[DONE]" string, so the event
+ * type ends the stream and this payload check is always false.
  */
 export function isStreamEnd(payload: any) {
   return false;

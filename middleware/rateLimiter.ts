@@ -105,12 +105,10 @@ class RateLimiter {
   ): void {
     const currentTime = Date.now() / 1000;
 
-    // Get or initialize timestamps for this API key
     if (!this.apiKeyUsage.has(apiKey)) {
       this.apiKeyUsage.set(apiKey, []);
     }
 
-    // Clean up old timestamps (older than 60 seconds)
     const timestamps = this.apiKeyUsage
       .get(apiKey)!
       .filter((t: any) => currentTime - t < 60);

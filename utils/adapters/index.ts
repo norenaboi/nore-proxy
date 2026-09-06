@@ -16,11 +16,6 @@
  * Codex-style adapters accept an optional per-request ctx as a third argument
  * to transformRequest/transformStreamRequest ({ requestId, isStreaming }).
  * Adapters that ignore the extra argument continue to work unchanged.
- *
- * Usage in chat.js:
- *   import { getAdapter, ADAPTERS } from "../utils/adapters/index.js";
- *   const adapter = getAdapter(endpointInfo.apiFormat);
- *   const body = adapter.transformStreamRequest(openaiReq, actualModel);
  */
 
 import * as openaiAdapter from "./openai.js";

@@ -128,7 +128,6 @@ function startBackgroundTasks(): void {
   const dailyResetTask = setInterval(() => {
     if (SHUTTING_DOWN) return;
 
-    // Check if we need to reset (new day)
     void apiKeyManager.resetDaily().catch((error) => console.error("Error resetting API key usage:", error));
   }, 3600000); // Check every hour
 

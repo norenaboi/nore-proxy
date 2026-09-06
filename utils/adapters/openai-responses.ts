@@ -277,7 +277,7 @@ export function parseResponseData(rawData: any) {
  *   event: response.completed
  *   data: { type: "response.completed", response: { status, usage, output } }
  *
- * The caller passes us the parsed JSON data object; the `type` field is the
+ * The caller supplies the parsed JSON data object; the `type` field is the
  * source of truth. Returns { deltaContent, deltaReasoning, finishReason,
  * usage, toolCalls } or null.
  */

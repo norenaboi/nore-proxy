@@ -31,11 +31,9 @@ import { clearProxyAgents, proxyAgentsFor } from "../utils/proxyAgents.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-
 type DynamicRecord = Record<string, any>;
 type JsonDocument = Record<string, DynamicRecord>;
 type QueryValue = string | undefined;
-
 
 const router = express.Router();
 
@@ -77,11 +75,6 @@ router.post("/admin/logout", async (req: any, res: any) => {
   res.json({ success: true });
 });
 
-/*
-    GET for logs in database
-*/
-
-// Get logs
 /**
  * Sum costs from an array of log entries, calculating per-model to respect different pricing.
  * Returns { total_cost, daily_cost } where daily = entries from the last 24 h.
@@ -509,11 +502,6 @@ router.delete("/api/errors", verifySession, async (_req: any, res: any) => {
   }
 });
 
-/*
-    GET PUT POST DELETE for API keys in database
-*/
-
-// Get all API keys
 router.get("/api/keys", verifySession, async (req: any, res: any) => {
   try {
     const keys = await apiKeyManager.getKeys();
@@ -524,7 +512,6 @@ router.get("/api/keys", verifySession, async (req: any, res: any) => {
   }
 });
 
-// Add new API key
 router.post("/api/keys", verifySession, async (req: any, res: any) => {
   try {
     const apiKey = (req.body.api_key || "").trim();
@@ -615,10 +602,6 @@ router.delete("/api/keys", verifySession, async (req: any, res: any) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
-
-/*
-    GET PUT POST DELETE for models.json
-*/
 
 const DEFAULT_MODEL_PRICING = {
   input: 1,
@@ -1020,11 +1003,6 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
   }
 });
 
-/*
-    GET PUT POST DELETE for endpoints.json
-*/
-
-// Get all endpoints
 router.get("/api/endpoints", verifySession, async (req: any, res: any) => {
   try {
     const endpointsPath = getEndpointsPath();
@@ -1067,7 +1045,6 @@ router.get("/api/endpoints", verifySession, async (req: any, res: any) => {
       });
     }
 
-    // Sort by index
     endpoints.sort((a: any, b: any) => a.index - b.index);
 
     res.json({ endpoints });
@@ -1076,7 +1053,6 @@ router.get("/api/endpoints", verifySession, async (req: any, res: any) => {
   }
 });
 
-// Add endpoint
 router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
   try {
     const name = (req.body.name || "").trim();
@@ -1104,7 +1080,6 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
       return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${VALID_FORMATS.join(', ')}` });
     }
 
-    // Validate optional headers if provided
     let headersObj = {};
     if (req.body.headers !== undefined) {
       if (
@@ -1137,7 +1112,6 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
       data = JSON.parse(content);
     }
 
-    // Find the next available index
     let maxIndex = 0;
     for (const key of Object.keys(data)) {
       const match = key.match(/^v(\d+)$/);
@@ -1226,7 +1200,6 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
   }
 });
 
-// Update endpoint
 router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
   try {
     const index = req.body.index;
@@ -1254,13 +1227,11 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
       appendApiSuffix = req.body.appendApiSuffix;
     }
 
-    // Validate optional generation defaults if provided
     let generationDefaults = undefined;
     if (req.body.generationDefaults !== undefined) {
       generationDefaults = validateGenerationDefaults(req.body.generationDefaults);
     }
 
-    // Validate optional prompt caching if provided
     let promptCaching = undefined;
     if (req.body.promptCaching !== undefined) {
       promptCaching = validatePromptCaching(req.body.promptCaching);
@@ -1322,7 +1293,6 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
     const content = fs.readFileSync(endpointsPath, "utf-8");
     const data = JSON.parse(content);
 
-    // Check the endpoint exists
     if (!data[endpointKey]) {
       return res.status(404).json({ error: "Endpoint not found" });
     }
@@ -1349,7 +1319,6 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
         const hasMasked = incomingTokens.some((t: any) => t.includes("****"));
 
         if (hasMasked) {
-          // Read the real stored tokens so we can de-mask
           const storedTokens = data[endpointKey].tokens || [];
 
           // Build masked→real lookup (same masking logic as GET handler)
@@ -1371,7 +1340,6 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
       }
     }
 
-    // Validate optional headers if provided
     let headersProvided = req.body.headers !== undefined;
     let headersObj = null;
     if (headersProvided) {
@@ -1397,7 +1365,6 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
       return res.status(400).json({ error: "Invalid URL" });
     }
 
-    // Update the endpoint object
     if (name !== undefined) {
       data[endpointKey].name = name || `Endpoint ${index}`;
     }
@@ -1446,7 +1413,6 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
   }
 });
 
-// Delete endpoint
 router.delete("/api/endpoints", verifySession, async (req: any, res: any) => {
   try {
     const index = req.body.index;
@@ -1731,20 +1697,11 @@ router.post("/api/endpoints/:version/keys/reset-stats", verifySession, async (re
   }
 });
 
-/*
-    POST for reloading and refreshing everything
-*/
-
-/*
-    GET POST PUT DELETE for proxies.json
-*/
-
 // Get all proxies — passwords masked, never raw.
 router.get("/api/proxies", verifySession, (_req: any, res: any) => {
   res.json({ proxies: proxyManager.maskedList() });
 });
 
-// Add a proxy
 router.post("/api/proxies", verifySession, async (req: any, res: any) => {
   try {
     const validated = validateProxyConfig(req.body);
@@ -1815,11 +1772,6 @@ router.delete("/api/proxies", verifySession, async (req: any, res: any) => {
   }
 });
 
-/*
-    GET / PUT for proxy settings
-*/
-
-// Get all settings
 router.get("/api/settings", verifySession, (req: any, res: any) => {
   try {
     res.json({ settings: settingsManager.getAll() });
@@ -1829,7 +1781,6 @@ router.get("/api/settings", verifySession, (req: any, res: any) => {
   }
 });
 
-// Update settings
 router.put("/api/settings", verifySession, (req: any, res: any) => {
   try {
     const updates = req.body;
@@ -1839,7 +1790,6 @@ router.put("/api/settings", verifySession, (req: any, res: any) => {
         .json({ error: "Request body must be a JSON object of settings." });
     }
 
-    // Validate key defaults if present
     if (updates.rpdDefault !== undefined && (!Number.isInteger(updates.rpdDefault) || updates.rpdDefault < 1)) {
       return res.status(400).json({ error: "RPD default must be an integer >= 1" });
     }
@@ -1918,7 +1868,6 @@ router.put("/api/settings", verifySession, (req: any, res: any) => {
   }
 });
 
-// Reload configuration
 router.post("/api/reload", verifySession, async (req: any, res: any) => {
   // Config and model validation consume runtime settings, so refresh those first.
   settingsManager.reload();
@@ -1935,11 +1884,6 @@ router.post("/api/reload", verifySession, async (req: any, res: any) => {
   });
 });
 
-/*
-    GET for users list and individual user details
-*/
-
-// Get all users (API keys with usage stats)
 router.get("/api/users", verifySession, async (req: any, res: any) => {
   try {
     const allApiKeys = await apiKeyManager.getKeyMap();
@@ -1967,7 +1911,6 @@ router.get("/api/users", verifySession, async (req: any, res: any) => {
       });
     }
 
-    // Sort by total requests descending
     users.sort((a: any, b: any) => b.total_requests - a.total_requests);
 
     res.json({ users });
@@ -1993,7 +1936,6 @@ router.get("/api/users/:keyId", verifySession, async (req: any, res: any) => {
     const stats = await apiKeyManager.getUsageStats(keyHash, null, true);
     const logs = await logManager.readRequestLogs(10000);
 
-    // Filter logs for this user
     const allUserLogs = logs.filter((log: any) => log.api_key === storedKey.mask);
     const userCosts = computeCostsFromLogs(allUserLogs);
 

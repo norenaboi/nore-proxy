@@ -1,7 +1,6 @@
 #!/bin/bash
 echo "Setting up Nore Proxy..."
 
-# Check if Node.js is installed
 if ! command -v node &> /dev/null; then
     echo "Node.js is not installed. Installing..."
 
@@ -29,11 +28,9 @@ else
     echo "Node.js is already installed: $(node -v)"
 fi
 
-# Check if npm is installed
 if ! command -v npm &> /dev/null; then
     echo "npm is not installed. Installing..."
 
-    # Determine the package manager again
     if command -v apt &> /dev/null; then
         sudo apt install -y npm
     elif command -v dnf &> /dev/null; then
@@ -50,7 +47,6 @@ else
     echo "npm is already installed: $(npm -v)"
 fi
 
-# Install dependencies if node_modules doesn't exist
 if [ ! -d "node_modules" ]; then
     echo "Installing dependencies..."
     npm install
@@ -60,7 +56,6 @@ fi
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-# Start the application
 echo "Starting Nore Proxy..."
 npm run start
 

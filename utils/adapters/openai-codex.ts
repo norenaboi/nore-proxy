@@ -47,7 +47,7 @@ function resolveRequestId(ctx: any) {
   const explicit = ctx && typeof ctx.requestId === "string" ? ctx.requestId.trim() : "";
   if (explicit) return explicit;
 
-  // No explicit id. If we can memoize on the shared ctx object, do so.
+  // No explicit id: memoize onto the shared ctx object when there is one.
   if (ctx && typeof ctx === "object") {
     if (typeof ctx.requestId !== "string" || ctx.requestId.trim() === "") {
       ctx.requestId = crypto.randomUUID();

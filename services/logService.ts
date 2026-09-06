@@ -72,12 +72,10 @@ class LogService extends EventEmitter {
 
     this.logs.push(logEntry);
 
-    // Keep only the last maxLogs entries
     if (this.logs.length > this.maxLogs) {
       this.logs.shift();
     }
 
-    // Emit the log to all SSE clients
     this.emit("log", logEntry);
   }
 

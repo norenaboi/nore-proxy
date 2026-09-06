@@ -234,7 +234,7 @@ function addCacheControlToMessage(message: any, ttl?: "1h") {
     : { type: "ephemeral" };
 
   if (typeof message.content === "string") {
-    // Convert string content to a content block array so we can attach cache_control
+    // cache_control rides on a content block, so string content becomes an array
     return {
       ...message,
       content: [

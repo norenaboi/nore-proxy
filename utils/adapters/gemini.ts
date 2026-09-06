@@ -12,7 +12,7 @@
  *   - Messages use role "user" / "model" (not "assistant")
  *   - Content is an array of { text: "..." } parts, not a string
  *   - Generation params go in generationConfig: { temperature, topP, maxOutputTokens }
- *   - Auth is via ?key= query parameter, not Bearer token (handled in chat.js)
+ *   - Auth is via ?key= query parameter, not a Bearer token (applied by the route)
  *   - Streaming uses SSE with data: lines containing Gemini-format chunks
  */
 
@@ -80,8 +80,9 @@ export function transformRequest(openaiReq: any) {
 }
 
 /**
- * Transform for streaming — same body, streaming is controlled by the URL
- * (streamGenerateContent endpoint) not a body flag, but we keep the same interface.
+ * Transform for streaming — same body. Streaming is controlled by the URL
+ * (the streamGenerateContent endpoint), not a body flag, but the adapter
+ * contract requires this export.
  */
 export function transformStreamRequest(openaiReq: any) {
   return buildGeminiBody(openaiReq);
@@ -114,7 +115,6 @@ function buildGeminiBody(openaiReq: any) {
     contents.push({ role, parts });
   }
 
-  // Build generationConfig — only include fields that are set
   const generationConfig: Record<string, unknown> = {};
   if (openaiReq.max_tokens !== undefined && openaiReq.max_tokens > 0)
     generationConfig.maxOutputTokens = openaiReq.max_tokens;
@@ -264,9 +264,9 @@ function mapFinishReason(reason: any) {
  * Parse a single Gemini SSE chunk into OpenAI delta content.
  * Returns { deltaContent, deltaReasoning, finishReason, usage, toolCalls } or null.
  *
- * Gemini thinking models tag reasoning parts with `thought: true`.
- * We separate those from regular content so downstream clients that
- * recognise `reasoning_content` (OpenAI o1/o3-style) can display thinking.
+ * Gemini thinking models tag reasoning parts with `thought: true`. Those are
+ * separated from regular content so downstream clients that recognise
+ * `reasoning_content` (OpenAI o1/o3-style) can display thinking.
  */
 export function parseStreamChunk(rawChunk: any, ctx: any) {
   if (!rawChunk || !rawChunk.candidates || rawChunk.candidates.length === 0) {
