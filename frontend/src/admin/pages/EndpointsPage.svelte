@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { fade, scale, slide } from "svelte/transition";
   import { requestAdminJson } from "$frontend/lib/api/admin";
   import { motionDuration } from "$frontend/lib/motion";
@@ -50,6 +50,16 @@
     "openai-responses": "OpenAI Responses", "openai-codex": "OpenAI Codex",
   };
 
+  // API Format menu options. Names come from fmtLabels so the menu and the
+  // endpoint-list badge stay in sync.
+  const apiFormats: { value: string; path: string; note?: string }[] = [
+    { value: "openai", path: "/v1/chat/completions", note: "default" },
+    { value: "anthropic", path: "/v1/messages" },
+    { value: "gemini", path: "/v1beta/generateContent" },
+    { value: "openai-responses", path: "/v1/responses" },
+    { value: "openai-codex", path: "/v1/responses" },
+  ];
+
   let endpoints = $state<Endpoint[]>([]);
   let proxies = $state<ProxyOption[]>([]);
   let loading = $state(true);
@@ -71,7 +81,6 @@
   let fBodyParamsStrip = $state("");
   let tokenInput = $state("");
   let bulkInput = $state("");
-  let bulkOpen = $state(false);
   let pendingTokens = $state<string[]>([]);
   let pendingDeleteConfirm = $state<Set<number>>(new Set());
   let fProxyId = $state("");
@@ -84,7 +93,7 @@
   // Advanced Settings disclosures. Only one is open at a time, so the column's
   // height stays predictable inside the fixed-height modal and expanding a
   // section never pushes the one you were reading off screen. null = all closed.
-  type AdvancedSection = "proxy" | "generation" | "caching" | "headers" | "bodyParams" | "keys";
+  type AdvancedSection = "generation" | "caching" | "headers" | "bodyParams" | "keys" | "bulk" | "proxy";
   let openSection = $state<AdvancedSection | null>(null);
 
   function toggleSection(section: AdvancedSection) {
@@ -93,7 +102,7 @@
 
   // Each collapsed section states what it currently holds, so an operator can
   // see that an endpoint overrides temperature or strips a param without
-  // expanding all six sections to look.
+  // expanding every section to look.
   const proxySummary = $derived.by(() => {
     if (!fProxyId) return "Direct";
     return proxyLabel(fProxyId);
@@ -129,6 +138,61 @@
   const keySummary = $derived(
     `${fKeyRotation === "roundrobin" ? "Round-robin" : "Sticky"} · health ${fKeyHealth ? "on" : "off"} · ${fRetryAttempts} retr${fRetryAttempts === 1 ? "y" : "ies"}`,
   );
+  const bulkSummary = $derived(bulkInput.trim() ? "Unimported lines" : "Paste many keys");
+
+  // API Format listbox. A <select> cannot render the name/path pair, so the
+  // keyboard contract is implemented here: arrows wrap, Home/End jump to the
+  // ends, Escape and Tab close, focus opens on the current choice.
+  let fmtOpen = $state(false);
+  let fmtTrigger: HTMLButtonElement | undefined = $state();
+  const fmtOptionButtons: (HTMLButtonElement | undefined)[] = [];
+  const selectedFormat = $derived(apiFormats.find((option) => option.value === fApiFormat));
+
+  function openFmt(focusIndex: number) {
+    fmtOpen = true;
+    void tick().then(() => fmtOptionButtons[focusIndex]?.focus());
+  }
+
+  function closeFmt({ restoreFocus = false } = {}) {
+    if (!fmtOpen) return;
+    fmtOpen = false;
+    if (restoreFocus) fmtTrigger?.focus();
+  }
+
+  function toggleFmt() {
+    if (fmtOpen) closeFmt({ restoreFocus: true });
+    else openFmt(Math.max(apiFormats.findIndex((option) => option.value === fApiFormat), 0));
+  }
+
+  function chooseFmt(value: string) {
+    fApiFormat = value;
+    closeFmt({ restoreFocus: true });
+  }
+
+  function handleFmtTriggerKeydown(event: KeyboardEvent) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    openFmt(event.key === "ArrowDown" ? 0 : apiFormats.length - 1);
+  }
+
+  function handleFmtOptionKeydown(event: KeyboardEvent, index: number) {
+    const last = apiFormats.length - 1;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      fmtOptionButtons[index === last ? 0 : index + 1]?.focus();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      fmtOptionButtons[index === 0 ? last : index - 1]?.focus();
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      fmtOptionButtons[0]?.focus();
+    } else if (event.key === "End") {
+      event.preventDefault();
+      fmtOptionButtons[last]?.focus();
+    } else if (event.key === "Tab") {
+      closeFmt();
+    }
+  }
 
   // Delete modal
   let deletingIndex = $state<number | null>(null);
@@ -224,8 +288,8 @@
     editingIndex = null;
     fName = ""; fUrl = ""; fAppendSuffix = true; fHeaders = ""; fHeaderPresets = emptyHeaderPresets();
     fBodyParamsAdd = ""; fBodyParamsStrip = ""; fProxyId = "";
-    tokenInput = ""; bulkInput = ""; bulkOpen = false; pendingTokens = []; pendingDeleteConfirm = new Set();
-    openSection = null;
+    tokenInput = ""; bulkInput = ""; pendingTokens = []; pendingDeleteConfirm = new Set();
+    openSection = null; fmtOpen = false;
     let defaults: Settings | undefined;
     try {
       defaults = (await requestAdminJson<{ settings: Settings }>("/api/settings")).settings;
@@ -252,8 +316,8 @@
     if (!ep) return;
     editingIndex = index;
     fName = ep.name || ""; fUrl = ep.url; fAppendSuffix = ep.appendApiSuffix !== false;
-    tokenInput = ""; bulkInput = ""; bulkOpen = false;
-    openSection = null;
+    tokenInput = ""; bulkInput = "";
+    openSection = null; fmtOpen = false;
     pendingTokens = [...(ep.tokens || (ep.token ? [ep.token] : []))];
     pendingDeleteConfirm = new Set();
     const extracted = extractHeaderPresets(ep.headers);
@@ -274,7 +338,7 @@
   function closeModal() {
     modalOpen = false; editingIndex = null; pendingTokens = []; pendingDeleteConfirm = new Set();
     fHeaderPresets = emptyHeaderPresets();
-    openSection = null; bulkOpen = false;
+    openSection = null; fmtOpen = false;
   }
 
   function collectGenDefaults() {
@@ -404,6 +468,8 @@
 
   onMount(() => {
     const onDocumentClick = (event: MouseEvent) => {
+      const clicked = event.target;
+      if (fmtOpen && !(clicked instanceof Element && clicked.closest(".fmt-select"))) closeFmt();
       if (pendingDeleteConfirm.size === 0) return;
       const target = event.target;
       if (target instanceof Element && target.closest("[data-token-confirm]")) return;
@@ -411,7 +477,8 @@
     };
     const onKeydown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (bulkDeleteOpen) bulkDeleteOpen = false;
+      if (fmtOpen) closeFmt({ restoreFocus: true });
+      else if (bulkDeleteOpen) bulkDeleteOpen = false;
       else if (deletingIndex !== null) deletingIndex = null;
       else if (keysModalIndex !== null) keysModalIndex = null;
       else if (modalOpen) closeModal();
@@ -501,7 +568,46 @@
         <div class="modal-body-col">
           <div class="form-group"><label for="epName">Endpoint Name</label><input id="epName" type="text" bind:value={fName} placeholder="e.g., My API Server" /></div>
           <div class="form-group"><label for="epUrl">Endpoint URL</label><input id="epUrl" type="url" bind:value={fUrl} placeholder="e.g., https://api.example.com" /><label class="gen-toggle suffix-toggle"><input type="checkbox" bind:checked={fAppendSuffix} /><span class="gen-toggle-slider"></span><span>Append API version suffix (/v1)</span></label></div>
-          <div class="form-group"><label for="epFmt">API Format</label><select id="epFmt" bind:value={fApiFormat} class="form-select"><option value="openai">OpenAI — /v1/chat/completions (default)</option><option value="anthropic">Anthropic — /v1/messages</option><option value="gemini">Gemini — /v1beta/generateContent</option><option value="openai-responses">OpenAI Responses — /v1/responses</option><option value="openai-codex">OpenAI Codex — /v1/responses</option></select></div>
+          <div class="form-group">
+            <span class="section-label" id="epFmtLabel">API Format</span>
+            <div class="fmt-select">
+              <button
+                bind:this={fmtTrigger}
+                class:open={fmtOpen}
+                class="fmt-trigger"
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={fmtOpen}
+                aria-labelledby="epFmtLabel epFmtValue"
+                onclick={toggleFmt}
+                onkeydown={handleFmtTriggerKeydown}
+              >
+                <span class="fmt-value" id="epFmtValue">{fmtLabels[fApiFormat] || fApiFormat}</span>
+                <span class="fmt-path">{selectedFormat?.path ?? ""}</span>
+                <i class="fa-solid fa-chevron-down fmt-caret" aria-hidden="true"></i>
+              </button>
+              {#if fmtOpen}
+                <div class="fmt-menu" role="listbox" aria-label="API format" tabindex="-1">
+                  {#each apiFormats as option, index (option.value)}
+                    <button
+                      bind:this={fmtOptionButtons[index]}
+                      class:selected={fApiFormat === option.value}
+                      class="fmt-option"
+                      type="button"
+                      role="option"
+                      aria-selected={fApiFormat === option.value}
+                      onclick={() => chooseFmt(option.value)}
+                      onkeydown={(event) => handleFmtOptionKeydown(event, index)}
+                    >
+                      <span class="fmt-option-label">{fmtLabels[option.value]}{#if option.note} <span class="fmt-option-note">({option.note})</span>{/if}</span>
+                      <span class="fmt-option-path">{option.path}</span>
+                      <i class="fa-solid fa-check fmt-check" aria-hidden="true"></i>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
           <div class="form-group">
             <div class="section-label token-heading">API Tokens <span class="token-count">{pendingTokens.length ? `(${pendingTokens.length})` : ""}</span></div>
             <div class="tokens-scroll-list">
@@ -511,52 +617,11 @@
               {/each}
             </div>
             <div class="input-row"><input type="password" bind:value={tokenInput} placeholder={editingIndex !== null ? "Add a new token (optional)" : "Paste a token and press Add"} onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTokenFromInput(); } }} /><button class="btn btn-secondary" type="button" onclick={addTokenFromInput} disabled={!tokenInput.trim()}>Add</button></div>
-            <div class="disclosure bulk-disclosure" class:open={bulkOpen}>
-              <button class="disclosure-head" type="button" aria-expanded={bulkOpen} aria-controls="epBulkTokens" onclick={() => bulkOpen = !bulkOpen}>
-                <i class="fa-solid fa-chevron-right disclosure-chevron" class:open={bulkOpen}></i>
-                <span class="disclosure-title">Bulk import</span>
-                <span class="disclosure-summary" class:hidden={bulkOpen}>{bulkInput.trim() ? "Unimported lines" : "Paste many keys"}</span>
-              </button>
-              {#if bulkOpen}
-                <div class="disclosure-body" id="epBulkTokens" transition:slide={{ duration: motionDuration(220) }}>
-                  <textarea class="bulk-input" bind:value={bulkInput} rows="3" placeholder="Paste many tokens, one per line, then click Import"></textarea>
-                  <div class="bulk-actions">
-                    <button class="btn btn-danger btn-sm" type="button" onclick={() => bulkDeleteOpen = true} disabled={pendingTokens.length === 0}><i class="fa-solid fa-trash"></i> Delete all keys</button>
-                    <button class="btn btn-secondary btn-sm" type="button" onclick={importBulk} disabled={!bulkInput.trim()}><i class="fa-solid fa-file-import"></i> Import lines</button>
-                  </div>
-                </div>
-              {/if}
-            </div>
           </div>
         </div>
 
         <div class="modal-body-col">
           <div class="advanced-heading">Advanced Settings</div>
-
-          <div class="disclosure" class:open={openSection === "proxy"}>
-            <button class="disclosure-head" type="button" aria-expanded={openSection === "proxy"} aria-controls="epProxySection" onclick={() => toggleSection("proxy")}>
-              <i class="fa-solid fa-chevron-right disclosure-chevron" class:open={openSection === "proxy"}></i>
-              <span class="disclosure-title">Outbound Proxy</span>
-              <span class="disclosure-summary" class:hidden={openSection === "proxy"}>{proxySummary}</span>
-            </button>
-            {#if openSection === "proxy"}
-              <div class="disclosure-body" id="epProxySection" transition:slide={{ duration: motionDuration(220) }}>
-                <div class="form-group">
-                  <label for="epProxy">Outbound Proxy</label>
-                  <select id="epProxy" bind:value={fProxyId} class="form-select">
-                    <option value="">None — connect directly</option>
-                    {#if editingIndex !== null && fProxyId && !proxies.some((p) => p.id === fProxyId)}
-                      <option value={fProxyId}>Unknown proxy ({fProxyId})</option>
-                    {/if}
-                    {#each proxies as proxy (proxy.id)}
-                      <option value={proxy.id}>{proxy.name || proxy.id} · {proxy.type} · {proxy.host}:{proxy.port}</option>
-                    {/each}
-                  </select>
-                  <p class="form-hint">Routes this endpoint's upstream traffic — requests, model tests, and model fetches — through the selected proxy. Manage proxies on the Proxies page.</p>
-                </div>
-              </div>
-            {/if}
-          </div>
 
           <div class="disclosure" class:open={openSection === "generation"}>
             <button class="disclosure-head" type="button" aria-expanded={openSection === "generation"} aria-controls="epGeneration" onclick={() => toggleSection("generation")}>
@@ -655,6 +720,48 @@
                   <p class="form-hint"><strong>Round-robin</strong> off keeps using the first healthy key until it fails. On starts at a random healthy key, then cycles.</p>
                   <p class="form-hint"><strong>Key health</strong> on benches a failing key: 401/402 marks it invalid, 429 times it out for a while. Off leaves every key in play, which suits short-lived RPM limits.</p>
                   <p class="form-hint"><strong>Retries</strong> are extra attempts on the same key after a 5xx, timeout, or network error; 0 disables them. A 400/401/402/403/429 hops to the next healthy key either way.</p>
+                </div>
+              </div>
+            {/if}
+          </div>
+
+          <div class="disclosure" class:open={openSection === "bulk"}>
+            <button class="disclosure-head" type="button" aria-expanded={openSection === "bulk"} aria-controls="epBulkTokens" onclick={() => toggleSection("bulk")}>
+              <i class="fa-solid fa-chevron-right disclosure-chevron" class:open={openSection === "bulk"}></i>
+              <span class="disclosure-title">Bulk Token Import</span>
+              <span class="disclosure-summary" class:hidden={openSection === "bulk"}>{bulkSummary}</span>
+            </button>
+            {#if openSection === "bulk"}
+              <div class="disclosure-body" id="epBulkTokens" transition:slide={{ duration: motionDuration(220) }}>
+                <textarea class="bulk-input" bind:value={bulkInput} rows="3" placeholder="Paste many tokens, one per line, then click Import"></textarea>
+                <div class="bulk-actions">
+                  <button class="btn btn-danger btn-sm" type="button" onclick={() => bulkDeleteOpen = true} disabled={pendingTokens.length === 0}><i class="fa-solid fa-trash"></i> Delete all keys</button>
+                  <button class="btn btn-secondary btn-sm" type="button" onclick={importBulk} disabled={!bulkInput.trim()}><i class="fa-solid fa-file-import"></i> Import lines</button>
+                </div>
+              </div>
+            {/if}
+          </div>
+
+          <div class="disclosure" class:open={openSection === "proxy"}>
+            <button class="disclosure-head" type="button" aria-expanded={openSection === "proxy"} aria-controls="epProxySection" onclick={() => toggleSection("proxy")}>
+              <i class="fa-solid fa-chevron-right disclosure-chevron" class:open={openSection === "proxy"}></i>
+              <span class="disclosure-title">Outbound Proxy</span>
+              <span class="disclosure-summary" class:hidden={openSection === "proxy"}>{proxySummary}</span>
+            </button>
+            {#if openSection === "proxy"}
+              <div class="disclosure-body" id="epProxySection" transition:slide={{ duration: motionDuration(220) }}>
+                <div class="form-group">
+                  <label for="epProxy">Outbound Proxy</label>
+                  <select id="epProxy" bind:value={fProxyId} class="form-select">
+                    <option value="">None — connect directly</option>
+                    {#if editingIndex !== null && fProxyId && !proxies.some((p) => p.id === fProxyId)}
+                      <option value={fProxyId}>Unknown proxy ({fProxyId})</option>
+                    {/if}
+                    {#each proxies as proxy (proxy.id)}
+                      <option value={proxy.id}>{proxy.name || proxy.id} · {proxy.type} · {proxy.host}:{proxy.port}</option>
+                    {/each}
+                  </select>
+                  <p class="form-hint">Routes this endpoint's upstream traffic — requests, model tests, and model fetches — through the selected proxy. Manage proxies on the Proxies page.</p>
                 </div>
               </div>
             {/if}
@@ -760,10 +867,10 @@
   :global(.endpoint-modal-backdrop) { padding: 24px; background: rgba(24, 17, 31, .58); backdrop-filter: blur(3px); }
   /* A fixed height rather than a content-driven one: expanding a section changes
      only the scroll extent inside the body, so the dialog no longer resizes and
-     jump the footer around under the cursor. 860px clears the tallest pairing
-     (Bulk import open on the left plus Custom Body Params open on the right)
-     without an inner scrollbar; the viewport clamp keeps it usable on short
-     screens, where it still scrolls. */
+     jump the footer around under the cursor. 860px clears the tallest column —
+     the seven Advanced Settings headers with Custom Body Params open — without
+     an inner scrollbar; the viewport clamp keeps it usable on short screens,
+     where it still scrolls. */
   :global(.modal-backdrop .endpoint-modal) { display: flex; width: 100%; max-width: 1200px; height: 860px; max-height: calc(100vh - 48px); flex-direction: column; padding: 0; overflow: hidden; border: 1px solid var(--border-color); border-radius: 11px; background: var(--card-bg); box-shadow: 0 24px 70px rgba(25, 15, 35, .24); }
   :global(.endpoint-modal .modal-header) { flex-shrink: 0; margin: 0; padding: 20px 24px; border-bottom: 1px solid var(--border-color); }
   :global(.endpoint-modal .modal-header h2) { color: var(--text-primary); font: 500 18px/1.2 Georgia, "Times New Roman", serif; }
@@ -778,6 +885,33 @@
   :global(.endpoint-modal .form-group > input), :global(.endpoint-modal .form-group > select), :global(.endpoint-modal .form-group > textarea), :global(.endpoint-modal .input-row input), :global(.endpoint-modal .gen-input) { padding: 12px 16px; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); font: 14px/normal Inter, ui-sans-serif, system-ui, sans-serif; transition: border-color .2s ease, box-shadow .2s ease, background .2s ease; }
   :global(.endpoint-modal .form-group input:focus), :global(.endpoint-modal .form-group select:focus), :global(.endpoint-modal .form-group textarea:focus) { outline: none; border-color: var(--primary); background-color: var(--card-bg); box-shadow: 0 0 0 3px var(--primary-alpha-01); }
   :global(.endpoint-modal .form-select) { min-width: 0; padding-right: 36px; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; }
+  /* API Format listbox, styled like the app's other dropdowns: bordered trigger
+     with a caret, floating panel, check on the current row. The panel is
+     absolute inside the scrolling body; the field sits near the top of the
+     column, so it opens downward. */
+  .fmt-select { position: relative; }
+  .fmt-trigger { display: flex; width: 100%; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); font: 14px/normal Inter, ui-sans-serif, system-ui, sans-serif; text-align: left; cursor: pointer; transition: border-color .2s ease, box-shadow .2s ease, background .2s ease; }
+  .fmt-trigger:hover { border-color: var(--primary-dark); }
+  .fmt-trigger.open { border-color: var(--primary); background: var(--card-bg); box-shadow: 0 0 0 3px var(--primary-alpha-01); }
+  .fmt-value { min-width: 0; flex-shrink: 0; font-weight: 500; }
+  .fmt-path { min-width: 0; flex: 1; overflow: hidden; color: var(--text-secondary); font: 400 12px monospace; text-overflow: ellipsis; white-space: nowrap; }
+  .fmt-caret { flex-shrink: 0; color: var(--text-secondary); font-size: 11px; transition: transform .18s ease, color .2s ease; }
+  .fmt-trigger.open .fmt-caret { color: var(--primary-dark); transform: rotate(180deg); }
+  .fmt-menu { position: absolute; top: calc(100% + 6px); right: 0; left: 0; z-index: 30; display: grid; gap: 2px; padding: 6px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); box-shadow: 0 14px 36px rgba(36, 27, 45, .2); animation: fmt-menu-in .16s ease; }
+  @keyframes fmt-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  /* Fixed-width check column: selecting a different format must not reflow the
+     menu. */
+  .fmt-option { display: grid; align-items: center; grid-template-columns: auto minmax(0, 1fr) 13px; gap: 10px; padding: 8px 10px; border: 0; border-radius: 7px; background: none; color: var(--text-primary); font: inherit; text-align: left; cursor: pointer; transition: background .12s ease, color .12s ease; }
+  .fmt-option:hover { background: var(--primary-alpha-01); }
+  .fmt-option:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .fmt-option.selected { background: var(--primary-alpha-012); color: var(--primary-dark); }
+  .fmt-option-label { font-size: 13px; font-weight: 600; }
+  .fmt-option-note { color: var(--text-secondary); font-size: 11px; font-weight: 400; }
+  .fmt-option.selected .fmt-option-note { color: inherit; opacity: .75; }
+  .fmt-option-path { overflow: hidden; color: var(--text-secondary); font: 400 11px monospace; text-overflow: ellipsis; white-space: nowrap; }
+  .fmt-option:hover .fmt-option-path, .fmt-option.selected .fmt-option-path { color: inherit; opacity: .75; }
+  .fmt-check { color: var(--primary-dark); font-size: 12px; opacity: 0; }
+  .fmt-option.selected .fmt-check { opacity: 1; }
   :global(.endpoint-modal .modal-footer) { flex-shrink: 0; gap: 12px; margin: 0; padding: 16px 24px; border-top: 1px solid var(--border-color); }
   .form-hint { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
   .suffix-toggle { margin-top: 10px; }
@@ -806,7 +940,6 @@
   .disclosure-body .key-settings-row { margin-bottom: 0; }
   .disclosure-body .gen-hint { margin-top: 10px; }
   .disclosure-body code { padding: 1px 4px; border-radius: 4px; background: var(--gray-100); font-family: monospace; font-size: 11.5px; }
-  .bulk-disclosure { margin-top: 10px; }
   .header-preset-row { align-items: flex-start; margin-bottom: 10px; }
   .header-preset-text { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
   .header-preset-name { font-family: monospace; font-size: 12.5px; overflow-wrap: anywhere; }
@@ -885,7 +1018,10 @@
   .key-status-pill.invalid { background: var(--danger-alpha-01); color: var(--danger); }
   .key-status-pill.timeout { background: rgba(217,119,6,.1); color: #d97706; }
   .key-status-pill.disabled { background: var(--gray-200); color: var(--gray-600); }
-  @media (prefers-reduced-motion: reduce) { .disclosure, .disclosure-head, .disclosure-chevron, .disclosure-summary { transition: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .disclosure, .disclosure-head, .disclosure-chevron, .disclosure-summary, .fmt-trigger, .fmt-caret, .fmt-option { transition: none; }
+    .fmt-menu { animation: none; }
+  }
   @media (max-width: 768px) {
     :global(.endpoint-modal-backdrop) { padding: 2.5vw; }
     /* Stacked to one column the content is much taller than it is wide, so the
