@@ -23,7 +23,7 @@ Nore Proxy is a unified LLM API gateway with OpenAI-compatible and Anthropic-com
 
 - `config/index.ts` loads process-level configuration and `endpoints.json`, validates required server settings, owns the in-memory endpoint map, and provides the key-rotation ordering helpers.
 - `utils/configPaths.ts` resolves the runtime JSON paths. Defaults point into the `data/` directory, with a read fallback to legacy repository-root files; `MODELS_PATH`, `ENDPOINTS_PATH`, `SETTINGS_PATH`, and `PROXIES_PATH` override outright. The four files self-materialize empty at their resolved path when missing, so a deployment mounting an empty `data/` directory comes up with working defaults.
-- `models.json` is the persisted model, pricing, and automatic-routing definition source. `loadModelsFromFile()` validates it and rebuilds the in-memory model registry, aliases, pricing, and automatic-routing counters while excluding disabled models. Each model may carry a `modality` of `text`, `image`, or `embedding`; absent and unrecognized values normalize to `text`, so a file written before the field existed keeps its previous behavior.
+- `models.json` is the persisted model, pricing, and automatic-routing definition source. `loadModelsFromFile()` validates it and rebuilds the in-memory model registry, aliases, pricing, and automatic-routing counters while excluding disabled models. A model stores no modality: `text`, `image`, and `embedding` are derived from the API-format category of the endpoint that serves it, and an automatic model inherits its first resolvable target's. A stored `modality` left by an older write is ignored and warned about at load.
 - `endpoints.json` contains upstream endpoint definitions and raw credentials. Loaded endpoints can use sticky or round-robin key selection; round-robin starts each request at a random position in the key list and walks forward from there, holding that position across the request's key hops. Key health and cooldown state are persisted separately by non-secret key identity.
 - `settings.json` contains runtime settings overrides merged with defaults in `services/settingsManager.ts`.
 - `proxies.json` contains outbound proxy definitions (HTTP and SOCKS, optional credentials). `services/proxyManager.ts` owns CRUD and masks passwords on admin responses; endpoints reference a proxy by id, and `utils/proxyAgents.ts` builds the cached axios agents that route upstream traffic through it. A proxy referenced by any endpoint cannot be deleted until the reference is cleared.
@@ -35,6 +35,7 @@ Treat these runtime JSON files as operational data, not examples or source fixtu
 - `routes/chat.ts`: OpenAI-compatible `POST /v1/chat/completions`.
 - `routes/messages.ts`: Anthropic-compatible `POST /v1/messages`, including protocol conversion and Anthropic event framing.
 - `routes/embeddings.ts`: OpenAI-compatible `POST /v1/embeddings`, the general embeddings syntax. Never streams.
+- `routes/images.ts`: OpenAI-compatible image generation on `POST /v1/images` and `POST /v1/images/generations`. Never streams.
 - `routes/models.ts`: public model discovery.
 - `routes/stats.ts`: public summaries and authenticated client-key usage.
 - `routes/admin.ts`: admin authentication, endpoint/model/key/proxy/settings CRUD, diagnostics, and analytics APIs.
@@ -59,8 +60,9 @@ Treat these runtime JSON files as operational data, not examples or source fixtu
 - `utils/autoRouting.ts` validates automatic models and controls target fallback.
 - `utils/endpointPolicies.ts` owns endpoint URL/path and generation policies.
 - `utils/pricing.ts`, `utils/logging.ts`, `utils/errorLogging.ts`, and `utils/upstreamErrors.ts` own accounting and sanitized diagnostics.
-- `utils/adapters/` transforms provider-specific requests and normalizes responses/streams. `utils/adapters/embeddings.ts` is the separate embeddings dispatch, keyed by the same `apiFormat`.
-- `utils/requestRouting.ts` owns the shared target/key/retry loop (`executeRouting`) used by `routes/chat.ts` and `routes/embeddings.ts`.
+- `utils/adapters/` transforms provider-specific requests and normalizes responses/streams. The registry in `utils/adapters/index.ts` holds the five text formats. `utils/adapters/images.ts` and `utils/adapters/embeddings.ts` are separate dispatches, each with its own two-function contract, keyed by their own category's formats only.
+- `shared/contracts/apiFormats.ts` is the single list of upstream formats, their categories, labels, and paths. The admin validation, the endpoint editor's picker, the settings default, and every model's derived modality all read from it.
+- `utils/requestRouting.ts` owns the shared target/key/retry loop (`executeRouting`) used by `routes/chat.ts`, `routes/images.ts`, and `routes/embeddings.ts`.
 
 Adapters own wire-protocol transformation. Route handlers own network calls, authentication dispatch, retries, logging, client response framing, and stream lifecycle.
 
@@ -80,8 +82,9 @@ Public pages are eagerly imported. Admin pages are lazy imported and form build 
 2. Preserve all unrelated modified and untracked user work. Do not revert, overwrite, reformat, or include it accidentally.
 3. Make the narrowest coherent change. Reuse existing services, utilities, adapters, stores, and CSS primitives.
 4. Follow the style of each file. Most Svelte code uses Svelte 5 runes, although some files retain legacy reactive syntax; do not perform an incidental migration.
-5. Do not commit, push, deploy, restart services, or alter live data unless explicitly requested.
-6. Do not edit generated output or runtime data as source.
+5. Write comments as statements of fact. State what the code does, what constraint it satisfies, or what shape the data has. Document non-obvious mechanics, provider quirks, and wire formats; do not restate the code.
+6. Do not commit, push, deploy, restart services, or alter live data unless explicitly requested.
+7. Do not edit generated output or runtime data as source.
 
 ## Backend invariants
 
@@ -94,10 +97,16 @@ Public pages are eagerly imported. Admin pages are lazy imported and form build 
 - Endpoint generation settings are enforced policies: disabled parameters are removed, and enabled configured values override the client request. Preserve this behavior consistently across protocols.
 - Endpoint custom body params are applied after the adapter builds the outbound body and after the generation policy, so they are the endpoint's final say on the wire body. Stripping runs before adding. `model` and `stream` are reserved: the admin API rejects them and `applyBodyParamPolicy` ignores them, because they carry the resolved routing target and the response framing both routes depend on.
 - Prompt caching remains endpoint-specific and opt-in for older endpoints; absent/null legacy values must not silently inherit new-endpoint defaults.
-- A model's modality decides which client route may serve it. `embedding` models are served only by `POST /v1/embeddings`; both chat routes refuse them, and the embeddings route refuses everything else. `text` and `image` route identically — the distinction exists for the catalogs, not for routing. `image` is the former `vision`; `normalizeModality()` still maps the old stored name onto it.
-- Embeddings never apply the endpoint's generation policy: `temperature`, `top_p`, and `max_tokens` are completions parameters that no embeddings API accepts. The body-param policy still runs last and remains the endpoint's final say on the wire body.
-- The OpenAI-format embedding adapter forwards unknown top-level params untouched. That passthrough is what makes an arbitrary OpenAI-compatible embeddings provider work without new code; do not replace it with an allow-list. Anthropic has no embeddings API, so an endpoint in that format is refused up front rather than posted to.
-- The supported upstream formats are `openai`, `anthropic`, `gemini`, `openai-responses`, and `openai-codex`. Each has distinct URL, authentication, request, response, and streaming requirements; `appendApiSuffix` also controls whether the proxy adds `/v1` or `/v1beta`. Do not implement a format as a URL-only switch.
+- An endpoint's `apiFormat` belongs to one of three categories, and the category is the modality of every model served by that endpoint. Nothing else sets a model's modality; the admin UI displays it read-only. Each category has its own client route, and a model registers the matching `type` (`chat`, `image`, `embedding`) for clients to discover.
+  - `text` — `openai`, `anthropic`, `gemini`, `openai-responses`, `openai-codex`.
+  - `image` — `openrouter-images`, `gemini-interactions`.
+  - `embedding` — `openai-embeddings`, `gemini-embeddings`.
+- A model's modality decides which client route may serve it, and each route refuses everything outside its own modality. `text` models are served by `POST /v1/chat/completions` and `POST /v1/messages`; `image` models by `POST /v1/images`; `embedding` models by `POST /v1/embeddings`. `normalizeModality()` still maps the former `vision` name onto `image` for stored values.
+- Only the text routes stream. Images and embeddings return one finished body, so `stream` is a proxy-owned param on both and never reaches the upstream.
+- Upstream credentials are placed by `upstreamAuthHeaders()` and `applyQueryKeyAuth()`, never inline. `anthropic` uses `x-api-key`, `gemini-interactions` uses `x-goog-api-key`, `gemini` and `gemini-embeddings` use the `?key=` query parameter, and everything else uses `Authorization: Bearer`.
+- Images and embeddings never apply the endpoint's generation policy: `temperature`, `top_p`, and `max_tokens` are completions parameters that neither API accepts. The body-param policy still runs last and remains the endpoint's final say on the wire body.
+- The `openai-embeddings` and `openrouter-images` adapters forward unknown top-level params untouched. That passthrough is what makes an arbitrary OpenAI-compatible provider work without new code; do not replace either with an allow-list. `gemini-embeddings` and `gemini-interactions` need real translation, since Google's native surfaces are not OpenAI-shaped. An endpoint outside the matching category is refused up front rather than posted to.
+- Every supported upstream format is declared in `shared/contracts/apiFormats.ts`. Each has distinct URL, authentication, request, response, and streaming requirements; `appendApiSuffix` also controls whether the proxy adds `/v1` or `/v1beta`. Do not implement a format as a URL-only switch, and do not hard-code the format list anywhere else.
 - Logging failures must not crash request/stream finalization. Client-aborted streams are not upstream failures.
 - Preserve nullable HTTP status semantics; a network error must not become status `0` through numeric coercion.
 
@@ -175,11 +184,11 @@ Update Express document paths, the appropriate Svelte pathname map, page titles,
 
 ### Endpoint or model CRUD
 
-Update types, input validation, JSON persistence, token masking, dependency handling, registry reloads, admin API responses, modality handling, and the Svelte editor/list. Preserve automatic-model references during rename/delete operations.
+Update types, input validation, JSON persistence, token masking, dependency handling, registry reloads, admin API responses, derived modality, and the Svelte editor/list. Preserve automatic-model references during rename/delete operations. Changing an endpoint's API format re-categorizes every model behind it, so the registry reload is what makes the new modality take effect.
 
 ### Provider/protocol behavior
 
-Check URL construction, authentication, request transformation, non-stream response normalization, SSE parsing/framing, usage mapping, retry boundaries, both client protocol routes, and sanitized failure logging.
+Check URL construction, authentication, request transformation, non-stream response normalization, SSE parsing/framing, usage mapping, retry boundaries, every client route the format's category serves, and sanitized failure logging.
 
 ### Logging, analytics, or schema changes
 
@@ -207,6 +216,7 @@ A change is complete when:
 
 - all coupled server, frontend, persistence, and protocol surfaces are updated;
 - credential, privacy, masking, logging, and streaming invariants are preserved;
+- comments state facts rather than narrate;
 - relevant checks have run from the working tree with appropriate runtime isolation, or documentation-only verification has completed;
 - failures and verification gaps are reported accurately;
 - generated/runtime files and unrelated user changes remain untouched;

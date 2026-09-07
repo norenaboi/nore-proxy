@@ -1,6 +1,11 @@
 /**
  * Embedding adapters — wire-protocol transformation for /v1/embeddings.
  *
+ * Embeddings are an explicit endpoint category: an endpoint declares
+ * `openai-embeddings` or `gemini-embeddings` and serves vectors, or it declares
+ * a format in another category and does not. The endpoint's format decides;
+ * models carry no modality of their own.
+ *
  * The proxy's client-facing embeddings route always speaks the OpenAI
  * embeddings shape, which is the de-facto general syntax: OpenRouter, DashScope
  * compatible-mode, Voyage, Jina, Together, Mistral, and Ollama all accept
@@ -9,15 +14,17 @@
  *
  * Because those providers diverge only in the *extra* params they accept
  * (`dimensions`, `encoding_format`, `input_type`, `task_type`, `truncate`,
- * `output_type`, …), the OpenAI-format adapter deliberately passes unknown
+ * `output_type`, …), the `openai-embeddings` adapter deliberately passes unknown
  * top-level params straight through instead of allow-listing them. That is what
  * makes an arbitrary OpenAI-compatible embeddings provider work without new
  * code, and the endpoint's body-param policy still gets the final say on the
  * wire body afterwards.
  *
- * Gemini is the one format that needs real translation: it has no OpenAI
- * compatibility for embeddings on the native surface, so requests become
- * `batchEmbedContents` and responses are normalized back to OpenAI shape.
+ * `gemini-embeddings` is the one format that needs real translation: Google has
+ * no OpenAI embeddings compatibility on the native surface, so requests become
+ * `embedContent` and responses are normalized back to OpenAI shape. That surface
+ * embeds one input per call, so a multi-item `input` is refused rather than
+ * silently truncated.
  *
  * Adapter contract:
  *   transformEmbeddingRequest(clientReq, actualModel) -> upstream body
@@ -128,62 +135,80 @@ function geminiTaskType(clientReq: any): string | undefined {
   return normalized;
 }
 
+/**
+ * POST {base}/v1beta/models/{model}:embedContent
+ *   { "content": { "parts": [{ "text": "..." }] },
+ *     "embedContentConfig": { "taskType": "...", "outputDimensionality": N } }
+ *
+ * Response:
+ *   { "embedding": { "values": [ … ] },
+ *     "usageMetadata": { "promptTokenCount": N } }
+ *
+ * The model is named by the URL path, not the body. `taskType` and
+ * `outputDimensionality` also exist as top-level body fields but are deprecated
+ * in favour of `embedContentConfig`; an endpoint that needs the old spelling can
+ * set it through its custom body params.
+ */
 const geminiEmbeddings: EmbeddingAdapter = {
   transformEmbeddingRequest(clientReq: any, actualModel: string) {
     const texts = embeddingInputToTexts(clientReq?.input);
     if (texts.length === 0) {
       throw new EmbeddingInputError("Embedding request requires at least one input.");
     }
+    if (texts.length > 1) {
+      throw new EmbeddingInputError(
+        `This endpoint embeds one input per request; ${texts.length} were sent. ` +
+        "Send a single string, or a one-element array.",
+      );
+    }
     const dimensions = Number(clientReq?.dimensions);
     const taskType = geminiTaskType(clientReq);
+    const config: Record<string, any> = {
+      ...(taskType ? { taskType } : {}),
+      ...(Number.isFinite(dimensions) && dimensions > 0
+        ? { outputDimensionality: Math.floor(dimensions) }
+        : {}),
+    };
     return {
-      requests: texts.map((text) => ({
-        model: `models/${actualModel}`,
-        content: { parts: [{ text }] },
-        ...(Number.isFinite(dimensions) && dimensions > 0
-          ? { outputDimensionality: Math.floor(dimensions) }
-          : {}),
-        ...(taskType ? { taskType } : {}),
-      })),
+      content: { parts: [{ text: texts[0] }] },
+      ...(Object.keys(config).length > 0 ? { embedContentConfig: config } : {}),
     };
   },
 
   parseEmbeddingResponse(rawData: any, ctx: EmbeddingContext) {
-    const embeddings = Array.isArray(rawData?.embeddings) ? rawData.embeddings : [];
+    const embedding = rawData?.embedding;
+    const values = Array.isArray(embedding?.values) ? embedding.values : [];
+    // embedContent reports prompt tokens; there is no completion side to bill.
+    const promptTokens = Number(rawData?.usageMetadata?.promptTokenCount ?? 0) || 0;
+    const usage = { prompt_tokens: promptTokens, total_tokens: promptTokens };
     return {
       response: {
         object: "list",
-        data: embeddings.map((entry: any, index: number) => ({
-          object: "embedding",
-          index,
-          embedding: Array.isArray(entry?.values) ? entry.values : [],
-        })),
+        data: embedding ? [{ object: "embedding", index: 0, embedding: values }] : [],
         model: ctx.modelName,
-        // batchEmbedContents reports no usage at all. Zeroes here are honest —
-        // the route estimates the billed input tokens from the request instead.
-        usage: { prompt_tokens: 0, total_tokens: 0 },
+        usage,
       },
-      embeddingCount: embeddings.length,
-      usage: { prompt_tokens: 0, total_tokens: 0 },
+      embeddingCount: embedding ? 1 : 0,
+      usage,
     };
   },
 };
 
 const EMBEDDING_ADAPTERS: Record<string, EmbeddingAdapter> = {
-  openai: openaiEmbeddings,
-  "openai-responses": openaiEmbeddings,
-  "openai-codex": openaiEmbeddings,
-  gemini: geminiEmbeddings,
+  "openai-embeddings": openaiEmbeddings,
+  "gemini-embeddings": geminiEmbeddings,
 };
 
 /**
- * The embedding adapter for an upstream format, or null when that format has no
- * embeddings API (Anthropic). Unlike getAdapter() this does not fall back to
- * OpenAI: silently posting an OpenAI embeddings body to an Anthropic endpoint
- * would turn a configuration mistake into an unexplained upstream failure.
+ * The embedding adapter for an upstream format, or null for every format
+ * outside the embedding category, an absent format included.
+ *
+ * Unlike getAdapter() this does not fall back to OpenAI: posting an embeddings
+ * body at an endpoint configured for completions would turn a configuration
+ * mistake into an unexplained upstream failure.
  */
 export function getEmbeddingAdapter(apiFormat: string | null | undefined): EmbeddingAdapter | null {
-  return EMBEDDING_ADAPTERS[apiFormat || "openai"] ?? null;
+  return apiFormat ? EMBEDDING_ADAPTERS[apiFormat] ?? null : null;
 }
 
 export { openaiEmbeddings, geminiEmbeddings };

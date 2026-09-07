@@ -1,11 +1,19 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
 import crypto from "crypto";
-import type { ModelModality, ModelTestResult } from "../shared/contracts/models.js";
-import { normalizeModality } from "../shared/contracts/models.js";
+import type { ModelTestResult } from "../shared/contracts/models.js";
+import { apiFormatCategory } from "../shared/contracts/apiFormats.js";
 import { getEmbeddingAdapter } from "./adapters/embeddings.js";
+import { getImageAdapter } from "./adapters/images.js";
 import type { ApiFormat, BodyParamPolicy } from "../types/endpoint.js";
 import { getAdapter, getExtraHeaders } from "./adapters/index.js";
-import { applyBodyParamPolicy, getEmbeddingsUrl, getFullUrl } from "./endpointPolicies.js";
+import {
+  applyBodyParamPolicy,
+  applyQueryKeyAuth,
+  getEmbeddingsUrl,
+  getFullUrl,
+  getImagesUrl,
+  upstreamAuthHeaders,
+} from "./endpointPolicies.js";
 import { proxyAgentsFor } from "./proxyAgents.js";
 
 export interface UpstreamModelTestInput {
@@ -17,12 +25,6 @@ export interface UpstreamModelTestInput {
   appendApiSuffix: boolean;
   bodyParams?: BodyParamPolicy | null;
   proxyId?: string | null;
-  /**
-   * Which upstream surface to ping. Embedding models have no completions
-   * endpoint, so a chat-shaped ping would report a configuration failure that
-   * says nothing about whether the model actually works.
-   */
-  modality?: ModelModality;
 }
 
 export type ModelTestRequester = (
@@ -47,24 +49,37 @@ function safeErrorMessage(error: unknown, token: string): string {
   return status ? `HTTP ${status}: ${message}` : message;
 }
 
+/**
+ * Fires a silent ping at one endpoint's upstream.
+ *
+ * The surface pinged follows the endpoint's API format — chat, images, or
+ * embeddings — since each answers on a different URL with a different body.
+ * An image ping generates an image and is billed by the provider accordingly.
+ */
 export async function testUpstreamModel(
   input: UpstreamModelTestInput,
   requester: ModelTestRequester = axios,
 ): Promise<ModelTestResult> {
   const { url, token, backend, customHeaders = {}, apiFormat, appendApiSuffix, bodyParams = null, proxyId = null } = input;
-  const modality = normalizeModality(input.modality);
-  const isEmbedding = modality === "embedding";
-  const embeddingAdapter = isEmbedding ? getEmbeddingAdapter(apiFormat) : null;
-  const embeddingUrl = isEmbedding ? getEmbeddingsUrl(url, apiFormat, backend, appendApiSuffix) : null;
-  if (isEmbedding && (!embeddingAdapter || !embeddingUrl)) {
+  const category = apiFormatCategory(apiFormat);
+  const embeddingAdapter = category === "embedding" ? getEmbeddingAdapter(apiFormat) : null;
+  const embeddingUrl = category === "embedding" ? getEmbeddingsUrl(url, apiFormat, backend, appendApiSuffix) : null;
+  if (category === "embedding" && (!embeddingAdapter || !embeddingUrl)) {
     return {
       ok: false,
       error: `The '${apiFormat}' format has no embeddings API, so this model cannot be served.`,
     };
   }
-  const fullUrl = embeddingUrl ?? getFullUrl(url, apiFormat, backend, false, appendApiSuffix);
+  const imageAdapter = category === "image" ? getImageAdapter(apiFormat) : null;
+  const imageUrl = category === "image" ? getImagesUrl(url, apiFormat, backend, appendApiSuffix) : null;
+  if (category === "image" && (!imageAdapter || !imageUrl)) {
+    return {
+      ok: false,
+      error: `The '${apiFormat}' format has no images API, so this model cannot be served.`,
+    };
+  }
+  const fullUrl = embeddingUrl ?? imageUrl ?? getFullUrl(url, apiFormat, backend, false, appendApiSuffix);
   const start = Date.now();
-  const isGemini = apiFormat === "gemini";
   const testRequestId = `models-test-${crypto.randomUUID()}`;
   const codexHeaders = apiFormat === "openai-codex"
     ? getExtraHeaders(apiFormat, { requestId: testRequestId, isStreaming: false })
@@ -72,15 +87,18 @@ export async function testUpstreamModel(
   const headers = {
     ...customHeaders,
     ...codexHeaders,
+    ...upstreamAuthHeaders(apiFormat, token),
     "Content-Type": "application/json",
-    ...(isGemini ? {} : { Authorization: `Bearer ${token}` }),
   };
-  const requestUrl = isGemini ? `${fullUrl}?key=${encodeURIComponent(token)}` : fullUrl;
+  const requestUrl = applyQueryKeyAuth(fullUrl, apiFormat, encodeURIComponent(token));
 
   let data: Record<string, unknown>;
   if (embeddingAdapter) {
     data = embeddingAdapter.transformEmbeddingRequest({ input: "ping" }, backend);
-  } else if (isGemini) {
+  } else if (imageAdapter) {
+    // The image adapters own the request shape; the ping reuses them.
+    data = imageAdapter.transformImageRequest({ prompt: "ping" }, backend);
+  } else if (apiFormat === "gemini") {
     data = { contents: [{ parts: [{ text: "ping" }] }] };
   } else if (apiFormat === "anthropic") {
     data = { model: backend, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false };

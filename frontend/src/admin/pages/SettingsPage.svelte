@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { requestAdminJson } from "$frontend/lib/api/admin";
   import { toast } from "$frontend/lib/stores";
+  import { API_FORMAT_CATEGORIES, apiFormatsInCategory } from "$contracts/apiFormats";
 
   interface Settings {
     rpdDefault: number; rpmDefault: number; maxContextSizeDefault: number;
@@ -125,11 +126,13 @@
       <div class="setting-row">
         <div class="setting-info"><div class="setting-label">Default API Format</div><div class="setting-description">Pre-selected API format for newly created endpoints.</div></div>
         <div class="setting-control select-control"><select bind:value={s.defaultEndpointApiFormat} class="form-select">
-          <option value="openai">OpenAI — /v1/chat/completions</option>
-          <option value="anthropic">Anthropic — /v1/messages</option>
-          <option value="gemini">Gemini — /v1beta/generateContent</option>
-          <option value="openai-responses">OpenAI Responses — /v1/responses</option>
-          <option value="openai-codex">OpenAI Codex — /v1/responses</option>
+          {#each API_FORMAT_CATEGORIES as group (group.category)}
+            <optgroup label={`${group.label} — ${group.hint}`}>
+              {#each apiFormatsInCategory(group.category) as format (format.value)}
+                <option value={format.value}>{format.label} — {format.path}</option>
+              {/each}
+            </optgroup>
+          {/each}
         </select></div>
       </div>
 

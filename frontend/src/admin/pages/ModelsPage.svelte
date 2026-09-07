@@ -8,7 +8,9 @@
   import { getProvider, type CatalogModel } from "$frontend/lib/models/catalog";
   import { deadTargets, effectiveModelName, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, targetHealth, type NumericInputValue } from "$frontend/admin/modelForm";
   import ModalityToggle from "$frontend/components/ModalityToggle.svelte";
+  import ModalityIcon from "$frontend/components/ModalityIcon.svelte";
   import type { ModelModality, ModelTestResult } from "$contracts/models";
+  import { apiFormatCategory, apiFormatLabel } from "$contracts/apiFormats";
 
   interface Pricing { input?: number; output?: number; cache_write?: number; cache_read?: number; }
   interface PricingForm {
@@ -19,15 +21,21 @@
   }
   interface Model {
     name: string; modelType?: "auto" | "concrete"; version?: string; backend?: string;
-    pricing?: Pricing; disabled?: boolean; hidden?: boolean; modality?: ModelModality;
+    pricing?: Pricing; disabled?: boolean; hidden?: boolean;
+    /** Derived server-side from the serving endpoint's API format; read-only. */
+    modality?: ModelModality;
     targets?: string[]; targetSelection?: "sticky" | "roundrobin"; maxTargetAttempts?: number | null;
   }
-  interface Endpoint { index: number; name?: string; }
+  interface Endpoint { index: number; name?: string; apiFormat?: string; }
   type TestResult = ModelTestResult;
   type GroupKind = "auto" | "endpoint" | "unknown";
   type ModelStateFilter = "all" | "enabled" | "disabled";
   type VisibilityFilter = "all" | "public" | "hidden";
   type ModelTypeFilter = "all" | "concrete" | "auto";
+
+  const modalityLabels: Record<ModelModality, string> = {
+    text: "Text", image: "Image", embedding: "Embedding",
+  };
   type SortField = "name" | "status";
 
   let models = $state<Model[]>([]);
@@ -70,7 +78,6 @@
   let fType = $state<"concrete" | "auto">("concrete");
   let fDisabled = $state(false);
   let fHidden = $state(false);
-  let fModality = $state<ModelModality>("text");
   let fVersion = $state("");
   let fBackend = $state("");
   let fPricing = $state<PricingForm>({ input: "", output: "", cache_write: "", cache_read: "" });
@@ -297,6 +304,28 @@
       .sort((a, b) => naturalSort(a.id, b.id)),
   );
   const availableTargets = $derived(concreteCandidates.filter((model) => !fTargets.includes(model.id)));
+  /**
+   * The modality the current form selection implies: the chosen endpoint's
+   * category, or for an automatic model, its first target's. Displayed
+   * read-only — the endpoint is what sets it.
+   */
+  const formModality = $derived.by((): ModelModality => {
+    if (fType === "auto") {
+      return fTargets.map((target) => models.find((m) => m.name === target)?.modality).find(Boolean) ?? "text";
+    }
+    return apiFormatCategory(endpoints[fVersion]?.apiFormat);
+  });
+
+  const formModalitySource = $derived.by(() => {
+    if (fType === "auto") {
+      const named = fTargets.find((target) => models.find((m) => m.name === target)?.modality);
+      return named ? `inherited from ${named}` : "text until a target is added";
+    }
+    if (!fVersion) return "select an endpoint to set it";
+    const endpoint = endpoints[fVersion];
+    return `from ${endpoint?.name || fVersion} · ${apiFormatLabel(endpoint?.apiFormat)}`;
+  });
+
   const formTargetHealth = $derived(targetHealth(fTargets, models));
   const formDeadTargets = $derived(fTargets.filter((t) => formTargetHealth.get(t) === "missing"));
   const formDisabledTargets = $derived(fTargets.filter((t) => formTargetHealth.get(t) === "disabled"));
@@ -321,7 +350,7 @@
 
   function resetForm() {
     resetDraftTest();
-    editingModel = null; modalMode = "add"; fName = ""; fType = "concrete"; fDisabled = false; fHidden = false; fModality = "text";
+    editingModel = null; modalMode = "add"; fName = ""; fType = "concrete"; fDisabled = false; fHidden = false;
     fVersion = ""; fBackend = ""; fPricing = { input: "", output: "", cache_write: "", cache_read: "" };
     fTargets = []; fTargetSelection = "sticky"; fMaxAttempts = "";
     dragIndex = null; dragOrigin = null; dragAnnouncement = "";
@@ -335,7 +364,6 @@
     fType = isAuto(m) ? "auto" : "concrete";
     fDisabled = m.disabled === true;
     fHidden = m.hidden === true;
-    fModality = m.modality ?? "text";
     if (isAuto(m)) {
       fTargets = [...new Set(Array.isArray(m.targets) ? m.targets : [])];
       fTargetSelection = m.targetSelection === "roundrobin" ? "roundrobin" : "sticky";
@@ -443,7 +471,7 @@
       const data = await requestAdminJson<ModelTestResult>("/api/models/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version, backend, modality: fModality }),
+        body: JSON.stringify({ version, backend }),
       });
       if (!modalOpen || fType !== "concrete" || fVersion.trim() !== version || fBackend.trim() !== backend || draftTestGeneration !== generation) return;
       draftTestResult = data;
@@ -503,7 +531,7 @@
     if (isDuplicateModelName(name, models, modalMode === "edit" ? editingModel : null)) {
       return toast.show("A model with that name already exists", "error");
     }
-    const payload: Record<string, unknown> = { name, modelType: fType, disabled: fDisabled, hidden: fHidden, modality: fModality, pricing: pricingPayload() };
+    const payload: Record<string, unknown> = { name, modelType: fType, disabled: fDisabled, hidden: fHidden, pricing: pricingPayload() };
 
     if (fType === "auto") {
       const unique = [...new Set(fTargets)];
@@ -716,12 +744,16 @@
               <div id={groupBodyId(group.key)} class="endpoint-group-models">
                 {#each group.items as model (model.name)}
                   {@const result = testResults.get(model.name)}
+                  {@const modality = model.modality ?? "text"}
                   <div class="model-item" class:disabled-model={model.disabled} class:auto-model-item={group.auto}>
                     <div class="model-info">
                       <div class="model-icon"><i class="fa-solid {group.auto ? 'fa-shuffle' : 'fa-microchip'}"></i></div>
                       <div class="model-meta">
                         <div class="model-meta-row">
                           <span class="model-name">{model.name}</span>
+                          <span class="model-badge model-badge-modality" title={`${modalityLabels[modality]} model`}>
+                            <ModalityIcon {modality} size={13} label={`${modalityLabels[modality]} model`} />
+                          </span>
                           {#if model.disabled}<span class="model-badge model-badge-disabled">disabled</span>{/if}
                           {#if model.hidden}<span class="model-badge model-badge-hidden">hidden</span>{/if}
                           {#if group.auto}
@@ -790,15 +822,6 @@
         <select id="mType" bind:value={fType} onchange={invalidateDraftTest} class="form-select" style="width:100%;" disabled={testingDraft}>
           <option value="concrete">Concrete (single backend)</option>
           <option value="auto">Automatic (routes across targets)</option>
-        </select>
-      </div>
-
-      <div class="form-group">
-        <label for="mModality">Modality</label>
-        <select id="mModality" bind:value={fModality} onchange={invalidateDraftTest} class="form-select" style="width:100%;" disabled={testingDraft}>
-          <option value="text">Text</option>
-          <option value="image">Image</option>
-          <option value="embedding">Embedding</option>
         </select>
       </div>
 
@@ -913,6 +936,15 @@
       {/if}
 
       <div class="form-group">
+        <span class="derived-label">Modality</span>
+        <div class="derived-modality">
+          <span class="model-badge model-badge-modality"><ModalityIcon modality={formModality} size={13} /></span>
+          <span class="derived-value">{modalityLabels[formModality]}</span>
+          <span class="derived-source">{formModalitySource}</span>
+        </div>
+      </div>
+
+      <div class="form-group">
         <div class="form-section-label">Pricing (per 1M tokens)</div>
         <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;">
           {#each [["Input", "input"], ["Output", "output"], ["Cache Write", "cache_write"], ["Cache Read", "cache_read"]] as [label, key]}
@@ -1014,7 +1046,13 @@
   .model-badge-disabled { background: var(--warning); color: white; opacity: .8; }
   .model-badge-hidden { background: var(--gray-200); color: var(--gray-700); }
   .model-badge-auto { background: var(--primary); color: white; }
-  .model-badge-modality { background: var(--primary-alpha-015); color: var(--primary-dark); }
+  .model-badge-modality { display: inline-flex; align-items: center; justify-content: center; padding: 3px; background: var(--primary-alpha-015); color: var(--primary-dark); }
+  /* Read-only field: label styled like the editable ones, value followed by
+     its source. */
+  .derived-label { display: block; margin-bottom: 8px; color: var(--text-secondary); font-size: 11px; font-weight: 700; letter-spacing: .03em; }
+  .derived-modality { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 24px; }
+  .derived-value { color: var(--text-primary); font-size: 13px; font-weight: 500; }
+  .derived-source { color: var(--text-secondary); font-size: 12px; }
   .model-badge-selection { background: var(--primary-alpha-015); color: var(--primary-dark); }
   .model-badge-targets { background: var(--success-alpha-01); color: var(--success-dark); }
   .model-badge-attempts { background: rgba(245,158,11,.12); color: #b45309; }

@@ -13,6 +13,7 @@ import { buildUpstreamErrorContext, readUpstreamErrorBody } from "../utils/upstr
 import { executeRouting, httpError, statusOf, withContext } from "../utils/requestRouting.js";
 import { markStreamOutputStarted, routingMetadata, summarizeRoutingAttempts } from "../utils/autoRouting.js";
 import { proxyAgentsFor } from "../utils/proxyAgents.js";
+import { applyQueryKeyAuth, upstreamAuthHeaders } from "../utils/endpointPolicies.js";
 
 
 type DynamicRecord = Record<string, any>;
@@ -57,11 +58,14 @@ function prepareAttempt(baseRequest: any, endpoint: any, requestId: any, isStrea
   const adapter = getAdapter(endpoint.apiFormat);
   const data = isStreaming ? adapter.transformStreamRequest(request, endpoint.actualModel, ctx) : adapter.transformRequest(request, endpoint.actualModel, ctx);
   applyBodyParamPolicy(data, endpoint.bodyParams);
-  const headers = { ...endpoint.customHeaders, ...getExtraHeaders(endpoint.apiFormat, ctx), "Content-Type": "application/json" };
-  if (endpoint.apiFormat === "anthropic") headers["x-api-key"] = endpoint.token;
-  else if (endpoint.apiFormat !== "gemini") headers.Authorization = `Bearer ${endpoint.token}`;
+  const headers = {
+    ...endpoint.customHeaders,
+    ...getExtraHeaders(endpoint.apiFormat, ctx),
+    ...upstreamAuthHeaders(endpoint.apiFormat, endpoint.token),
+    "Content-Type": "application/json",
+  };
   const fullUrl = getFullUrl(endpoint.url, endpoint.apiFormat, endpoint.actualModel, isStreaming, endpoint.appendApiSuffix);
-  const requestUrl = endpoint.apiFormat === "gemini" ? `${fullUrl}?${isStreaming ? "alt=sse&" : ""}key=${endpoint.token}` : fullUrl;
+  const requestUrl = applyQueryKeyAuth(fullUrl, endpoint.apiFormat, endpoint.token, isStreaming ? "alt=sse&" : "");
   return { adapter, data, headers, fullUrl, requestUrl };
 }
 
@@ -110,11 +114,16 @@ router.post("/v1/chat/completions", verifyApiKey, async (req: any, res: any) => 
   const streaming = baseRequest.stream === true;
   const registered = MODEL_REGISTRY[modelName];
   if (!registered) return res.status(404).json({ error: `Model '${modelName}' not found.` });
-  // Embedding models answer on /v1/embeddings only: their endpoints expose no
-  // completions surface, so serving one here would post a chat body at a URL
-  // that cannot answer it.
+  // Embedding and image models answer on their own routes: their endpoints
+  // expose no completions surface, so serving one here would post a chat body
+  // at a URL that cannot answer it.
   if (registered.modality === "embedding") {
     return res.status(400).json({ error: { message: `Model '${modelName}' is an embedding model. Use POST /v1/embeddings instead.`, code: "embedding_model_not_chat" } });
+  }
+  // Image models answer on the images surface, which takes a prompt rather than
+  // a message list and returns image bytes rather than a completion.
+  if (registered.modality === "image") {
+    return res.status(400).json({ error: { message: `Model '${modelName}' is an image model. Use POST /v1/images instead.`, code: "image_model_not_chat" } });
   }
   await logRequestStart(
     requestId,

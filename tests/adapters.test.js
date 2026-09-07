@@ -6,6 +6,12 @@ import * as codex from "../utils/adapters/openai-codex.js";
 import * as gemini from "../utils/adapters/gemini.js";
 import * as openai from "../utils/adapters/openai.js";
 import * as responses from "../utils/adapters/openai-responses.js";
+import {
+  ImageInputError,
+  geminiInteractions,
+  getImageAdapter,
+  openrouterImages,
+} from "../utils/adapters/images.js";
 import { ADAPTERS, getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 
 const request = {
@@ -17,13 +23,142 @@ const request = {
   temperature: 0.4,
 };
 
-test("adapter registry exposes every supported upstream format", () => {
+test("the chat registry holds the text formats only", () => {
+  // Image and embedding formats are dispatched by utils/adapters/images.ts and
+  // utils/adapters/embeddings.ts under their own contracts, and their models
+  // answer on their own client routes.
   assert.deepEqual(Object.keys(ADAPTERS).sort(), [
     "anthropic", "gemini", "openai", "openai-codex", "openai-responses",
   ]);
   assert.equal(getAdapter("anthropic"), ADAPTERS.anthropic);
   assert.equal(getAdapter(), ADAPTERS.openai);
   assert.deepEqual(getExtraHeaders("anthropic"), { "anthropic-version": "2023-06-01" });
+});
+
+test("the image registry holds the image formats only", () => {
+  assert.equal(getImageAdapter("openrouter-images"), openrouterImages);
+  assert.equal(getImageAdapter("gemini-interactions"), geminiInteractions);
+  // Unlike getAdapter(), this must not fall back. An absent format is not an
+  // image format.
+  for (const format of ["openai", "anthropic", "gemini", "openai-embeddings", undefined]) {
+    assert.equal(getImageAdapter(format), null, String(format));
+  }
+});
+
+test("the OpenRouter images adapter forwards provider-specific params untouched", () => {
+  const body = openrouterImages.transformImageRequest(
+    {
+      model: "client-facing-name",
+      prompt: "a red panda astronaut",
+      size: "2K",
+      // Params only some providers know. Passing them through unchanged is what
+      // makes an arbitrary OpenAI-compatible images provider work.
+      aspect_ratio: "16:9",
+      output_compression: 80,
+      input_references: [{ type: "image_url", image_url: { url: "https://cdn.example/ref.png" } }],
+      stream: true,
+      cache_depth: 2,
+      unset: null,
+    },
+    "bytedance-seed/seedream-4.5",
+  );
+
+  assert.deepEqual(body, {
+    model: "bytedance-seed/seedream-4.5",
+    prompt: "a red panda astronaut",
+    size: "2K",
+    aspect_ratio: "16:9",
+    output_compression: 80,
+    input_references: [{ type: "image_url", image_url: { url: "https://cdn.example/ref.png" } }],
+  });
+
+  assert.throws(
+    () => openrouterImages.transformImageRequest({ prompt: "  " }, "m"),
+    (error) => error instanceof ImageInputError && error.statusCode === 400,
+  );
+});
+
+test("the OpenRouter images adapter passes its answer through under the proxy's name", () => {
+  const parsed = openrouterImages.parseImageResponse(
+    {
+      created: 1748372400,
+      model: "upstream-only-name",
+      data: [{ b64_json: "QUJD", media_type: "image/webp" }],
+      usage: { prompt_tokens: 3, completion_tokens: 4175, total_tokens: 4178, cost: 0.04 },
+    },
+    { modelName: "shown-to-client" },
+  );
+
+  assert.equal(parsed.response.model, "shown-to-client");
+  assert.deepEqual(parsed.response.data, [{ b64_json: "QUJD", media_type: "image/webp" }]);
+  assert.equal(parsed.imageCount, 1);
+  assert.deepEqual(parsed.usage, { prompt_tokens: 3, completion_tokens: 4175, total_tokens: 4178 });
+
+  const noUsage = openrouterImages.parseImageResponse({ data: [] }, { modelName: "m" });
+  assert.deepEqual(noUsage.usage, { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+  assert.equal(noUsage.imageCount, 0);
+});
+
+test("the Gemini Interactions adapter translates to and from the Images shape", () => {
+  const body = geminiInteractions.transformImageRequest(
+    {
+      prompt: "a nano banana dish",
+      input_references: [
+        { type: "image_url", image_url: { url: "data:image/jpeg;base64,Wg==" } },
+        { type: "image_url", image_url: { url: "https://cdn.example/ref.png" } },
+      ],
+    },
+    "gemini-3.1-flash-image",
+  );
+
+  assert.deepEqual(body, {
+    model: "gemini-3.1-flash-image",
+    input: [
+      { type: "text", text: "a nano banana dish" },
+      { type: "image", mime_type: "image/jpeg", data: "Wg==" },
+      { type: "image", uri: "https://cdn.example/ref.png" },
+    ],
+  });
+
+  const parsed = geminiInteractions.parseImageResponse(
+    {
+      id: "v1_abc",
+      object: "interaction",
+      status: "completed",
+      steps: [
+        { type: "function_call", name: "ignored", arguments: {} },
+        {
+          type: "model_output",
+          content: [
+            { type: "text", text: "Here it is." },
+            { type: "image", data: "Wg==", mime_type: "image/jpeg" },
+          ],
+        },
+      ],
+      usage: { total_input_tokens: 7, total_output_tokens: 20, total_thought_tokens: 22, total_tokens: 49 },
+    },
+    { modelName: "shown-to-client" },
+  );
+
+  assert.equal(parsed.response.model, "shown-to-client");
+  assert.deepEqual(parsed.response.data, [
+    { b64_json: "Wg==", media_type: "image/jpeg", revised_prompt: "Here it is." },
+  ]);
+  assert.equal(parsed.imageCount, 1);
+  // Thought tokens land in completion_tokens; total_tokens is the reported one.
+  assert.equal(parsed.usage.prompt_tokens, 7);
+  assert.equal(parsed.usage.completion_tokens, 42);
+  assert.equal(parsed.usage.total_tokens, 49);
+});
+
+test("a failed interaction throws rather than answering with an empty image list", () => {
+  assert.throws(
+    () => geminiInteractions.parseImageResponse(
+      { status: "failed", errors: [{ code: "SAFETY", message: "blocked" }], steps: [] },
+      { modelName: "m" },
+    ),
+    (error) => error.name === "InteractionFailedError" && error.statusCode === 502 && error.code === "SAFETY",
+  );
 });
 
 test("request adapters preserve core messages and protocol requirements", () => {

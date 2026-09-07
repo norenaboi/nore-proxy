@@ -24,6 +24,9 @@ import * as anthropicAdapter from "./anthropic.js";
 import * as openaiResponsesAdapter from "./openai-responses.js";
 import * as openaiCodexAdapter from "./openai-codex.js";
 
+// The five completions surfaces. Image and embedding formats are not here:
+// utils/adapters/images.ts and utils/adapters/embeddings.ts dispatch those under
+// their own contracts, and their models answer on their own client routes.
 const ADAPTERS = {
   openai: openaiAdapter,
   gemini: geminiAdapter,

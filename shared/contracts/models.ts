@@ -34,6 +34,14 @@ export function isEmbeddingModality(value: unknown): boolean {
   return normalizeModality(value) === "embedding";
 }
 
+/** The client route that serves a modality, for redirect messages and hints. */
+export function clientRouteForModality(value: unknown): string {
+  const modality = normalizeModality(value);
+  if (modality === "image") return "POST /v1/images";
+  if (modality === "embedding") return "POST /v1/embeddings";
+  return "POST /v1/chat/completions";
+}
+
 export interface PublicModelDto {
   id: string;
   object: "model";

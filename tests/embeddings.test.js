@@ -13,38 +13,44 @@ import { getEmbeddingsUrl, supportsEmbeddings } from "../utils/endpointPolicies.
 
 test("embeddings URLs follow each format's own surface", () => {
   assert.equal(
-    getEmbeddingsUrl("https://api.example", "openai", "text-embedding-3-small"),
+    getEmbeddingsUrl("https://api.example", "openai-embeddings", "text-embedding-3-small"),
     "https://api.example/v1/embeddings",
   );
   // DashScope compatible-mode and OpenRouter are reached this way: the base URL
   // carries the provider's prefix and the proxy only appends /v1/embeddings.
   assert.equal(
-    getEmbeddingsUrl("https://dashscope.aliyuncs.com/compatible-mode", "openai", "text-embedding-v3"),
+    getEmbeddingsUrl("https://dashscope.aliyuncs.com/compatible-mode", "openai-embeddings", "text-embedding-v3"),
     "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
   );
   // An endpoint that already carries its own version path opts out of the suffix.
   assert.equal(
-    getEmbeddingsUrl("https://api.example/openai/v1", "openai", "m", false),
+    getEmbeddingsUrl("https://api.example/openai/v1", "openai-embeddings", "m", false),
     "https://api.example/openai/v1/embeddings",
   );
   assert.equal(
-    getEmbeddingsUrl("https://generativelanguage.googleapis.com", "gemini", "text-embedding-004"),
-    "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents",
-  );
-  // The Responses and Codex formats differ only in how completions are shaped.
-  assert.equal(
-    getEmbeddingsUrl("https://api.example", "openai-responses", "m"),
-    "https://api.example/v1/embeddings",
+    getEmbeddingsUrl("https://generativelanguage.googleapis.com", "gemini-embeddings", "text-embedding-004"),
+    "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent",
   );
 });
 
-test("anthropic has no embeddings surface and is refused rather than guessed at", () => {
-  assert.equal(supportsEmbeddings("anthropic"), false);
-  assert.equal(getEmbeddingsUrl("https://api.anthropic.com", "anthropic", "m"), null);
-  assert.equal(getEmbeddingAdapter("anthropic"), null);
-  // Unlike getAdapter(), this must not silently fall back to the OpenAI shape.
+test("only the embedding formats serve embeddings", () => {
+  assert.equal(supportsEmbeddings("openai-embeddings"), true);
+  assert.equal(supportsEmbeddings("gemini-embeddings"), true);
+
+  // Embeddings are an explicit endpoint category: a completions format is never
+  // reused as an embeddings surface.
+  for (const format of ["openai", "openai-responses", "openai-codex", "gemini", "anthropic"]) {
+    assert.equal(supportsEmbeddings(format), false, format);
+    assert.equal(getEmbeddingsUrl("https://api.example", format, "m"), null, format);
+    assert.equal(getEmbeddingAdapter(format), null, format);
+  }
+
+  // Unlike getAdapter(), this must not fall back to the OpenAI shape. An absent
+  // format is not an embeddings format.
   assert.equal(getEmbeddingAdapter("nonsense-format"), null);
-  assert.equal(getEmbeddingAdapter(undefined), openaiEmbeddings);
+  assert.equal(getEmbeddingAdapter(undefined), null);
+  assert.equal(getEmbeddingAdapter("openai-embeddings"), openaiEmbeddings);
+  assert.equal(getEmbeddingAdapter("gemini-embeddings"), geminiEmbeddings);
 });
 
 test("the OpenAI embedding adapter forwards provider-specific params untouched", () => {
@@ -97,57 +103,63 @@ test("the OpenAI embedding adapter normalizes usage across providers", () => {
   assert.equal(noUsage.embeddingCount, 0);
 });
 
-test("the gemini embedding adapter builds batchEmbedContents and normalizes back", () => {
+test("the gemini embedding adapter builds embedContent and normalizes back", () => {
   const body = geminiEmbeddings.transformEmbeddingRequest(
-    { input: ["one", "two"], dimensions: 256, input_type: "document" },
+    { input: ["one"], dimensions: 256, input_type: "document" },
     "text-embedding-004",
   );
+  // The model is named by the URL path, so it is absent from the body.
   assert.deepEqual(body, {
-    requests: [
-      {
-        model: "models/text-embedding-004",
-        content: { parts: [{ text: "one" }] },
-        outputDimensionality: 256,
-        taskType: "RETRIEVAL_DOCUMENT",
-      },
-      {
-        model: "models/text-embedding-004",
-        content: { parts: [{ text: "two" }] },
-        outputDimensionality: 256,
-        taskType: "RETRIEVAL_DOCUMENT",
-      },
-    ],
+    content: { parts: [{ text: "one" }] },
+    embedContentConfig: { taskType: "RETRIEVAL_DOCUMENT", outputDimensionality: 256 },
   });
 
   const parsed = geminiEmbeddings.parseEmbeddingResponse(
-    { embeddings: [{ values: [0.1, 0.2] }, { values: [0.3] }] },
+    { embedding: { values: [0.1, 0.2] }, usageMetadata: { promptTokenCount: 7 } },
     { modelName: "proxy-facing-name" },
   );
   assert.deepEqual(parsed.response, {
     object: "list",
-    data: [
-      { object: "embedding", index: 0, embedding: [0.1, 0.2] },
-      { object: "embedding", index: 1, embedding: [0.3] },
-    ],
+    data: [{ object: "embedding", index: 0, embedding: [0.1, 0.2] }],
     model: "proxy-facing-name",
-    usage: { prompt_tokens: 0, total_tokens: 0 },
+    usage: { prompt_tokens: 7, total_tokens: 7 },
   });
-  assert.equal(parsed.embeddingCount, 2);
+  assert.equal(parsed.embeddingCount, 1);
+
+  // An answer carrying no embedding bills nothing and lists nothing.
+  const empty = geminiEmbeddings.parseEmbeddingResponse({}, { modelName: "m" });
+  assert.deepEqual(empty.response.data, []);
+  assert.deepEqual(empty.usage, { prompt_tokens: 0, total_tokens: 0 });
+  assert.equal(empty.embeddingCount, 0);
+});
+
+test("embedContent embeds one input per request and refuses a batch", () => {
+  // The surface takes a single content, so a multi-item input is refused rather
+  // than truncated to its first entry.
+  assert.throws(
+    () => geminiEmbeddings.transformEmbeddingRequest({ input: ["one", "two"] }, "m"),
+    (error) => error instanceof EmbeddingInputError && error.statusCode === 400,
+  );
+  assert.deepEqual(
+    geminiEmbeddings.transformEmbeddingRequest({ input: "solo" }, "m"),
+    { content: { parts: [{ text: "solo" }] } },
+  );
 });
 
 test("gemini task types accept both its own enum and the OpenAI-compatible spelling", () => {
   const query = geminiEmbeddings.transformEmbeddingRequest({ input: "q", input_type: "query" }, "m");
-  assert.equal(query.requests[0].taskType, "RETRIEVAL_QUERY");
+  assert.equal(query.embedContentConfig.taskType, "RETRIEVAL_QUERY");
 
   const native = geminiEmbeddings.transformEmbeddingRequest(
     { input: "q", task_type: "SEMANTIC_SIMILARITY" },
     "m",
   );
-  assert.equal(native.requests[0].taskType, "SEMANTIC_SIMILARITY");
+  assert.equal(native.embedContentConfig.taskType, "SEMANTIC_SIMILARITY");
 
+  // With neither set there is no config object at all, so no empty envelope
+  // reaches the upstream.
   const none = geminiEmbeddings.transformEmbeddingRequest({ input: "q" }, "m");
-  assert.equal("taskType" in none.requests[0], false);
-  assert.equal("outputDimensionality" in none.requests[0], false);
+  assert.equal("embedContentConfig" in none, false);
 });
 
 test("token-id input is accepted by OpenAI-format upstreams and refused by gemini", () => {
@@ -161,6 +173,7 @@ test("token-id input is accepted by OpenAI-format upstreams and refused by gemin
     () => geminiEmbeddings.transformEmbeddingRequest({ input: [[1, 2]] }, "m"),
     (error) => error instanceof EmbeddingInputError && error.statusCode === 400,
   );
+  assert.throws(() => geminiEmbeddings.transformEmbeddingRequest({ input: [[1], [2]] }, "m"), EmbeddingInputError);
   assert.throws(() => geminiEmbeddings.transformEmbeddingRequest({ input: [] }, "m"), EmbeddingInputError);
   assert.throws(() => geminiEmbeddings.transformEmbeddingRequest({}, "m"), EmbeddingInputError);
 });

@@ -31,6 +31,7 @@ import {
   guardCarryBuffer,
 } from "../utils/streamLimits.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
+import { applyQueryKeyAuth, upstreamAuthHeaders } from "../utils/endpointPolicies.js";
 import { proxyAgentsFor } from "../utils/proxyAgents.js";
 import { openAIResponseToAnthropic } from "../utils/responseFormats.js";
 import {
@@ -495,6 +496,15 @@ router.post("/v1/messages", verifyApiKey, async (req: any, res: any) => {
       },
     });
   }
+  if (modelInfo.modality === "image") {
+    return res.status(400).json({
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: `Model '${modelName}' is an image model. Use POST /v1/images instead.`,
+      },
+    });
+  }
 
   // Log request start
   const requestParams = {
@@ -663,8 +673,8 @@ async function makeMessagesAttempt(
         headers = {
           ...customHeaders,
           ...extraHeaders,
+          ...upstreamAuthHeaders(apiFormat, backendToken),
           "Content-Type": "application/json",
-          "x-api-key": backendToken,
         };
       } else {
         // Backend is OpenAI/Gemini — convert Anthropic → OpenAI, then use adapters
@@ -693,17 +703,12 @@ async function makeMessagesAttempt(
         headers = {
           ...customHeaders,
           ...extraHeaders,
+          ...upstreamAuthHeaders(apiFormat, backendToken),
           "Content-Type": "application/json",
         };
-
-        if (apiFormat === "gemini") {
-          // handled in URL
-        } else {
-          headers["Authorization"] = `Bearer ${backendToken}`;
-        }
       }
 
-      requestUrl = apiFormat === "gemini" ? `${fullUrl}?key=${backendToken}` : fullUrl;
+      requestUrl = applyQueryKeyAuth(fullUrl as string, apiFormat, backendToken);
 
       const proxy = proxyAgentsFor(endpointInfo.proxyId);
       const resp = await axios({
@@ -932,8 +937,8 @@ async function streamMessagesAttempt(
         headers = {
           ...customHeaders,
           ...extraHeaders,
+          ...upstreamAuthHeaders(apiFormat, backendToken),
           "Content-Type": "application/json",
-          "x-api-key": backendToken,
         };
       } else {
         // Non-Anthropic backend — convert to OpenAI format, stream, then re-wrap as Anthropic SSE
@@ -962,19 +967,12 @@ async function streamMessagesAttempt(
         headers = {
           ...customHeaders,
           ...extraHeaders,
+          ...upstreamAuthHeaders(apiFormat, backendToken),
           "Content-Type": "application/json",
         };
-
-        if (apiFormat === "gemini") {
-          // handled in URL
-        } else {
-          headers["Authorization"] = `Bearer ${backendToken}`;
-        }
       }
 
-      requestUrl = apiFormat === "gemini"
-        ? `${fullUrl}?alt=sse&key=${backendToken}`
-        : fullUrl;
+      requestUrl = applyQueryKeyAuth(fullUrl as string, apiFormat, backendToken, "alt=sse&");
 
       const proxy = proxyAgentsFor(endpointInfo.proxyId);
       const resp = await axios({

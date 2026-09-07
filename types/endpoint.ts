@@ -1,9 +1,6 @@
-export type ApiFormat =
-  | "openai"
-  | "anthropic"
-  | "gemini"
-  | "openai-responses"
-  | "openai-codex";
+import type { ApiFormat } from "../shared/contracts/apiFormats.js";
+
+export type { ApiFormat };
 
 export type EndpointKey = `v${number}`;
 export type KeyRotation = "sticky" | "roundrobin";

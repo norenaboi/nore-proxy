@@ -10,6 +10,7 @@ import logManager from "../services/logManager.js";
 import keyStateManager from "../services/keyStateManager.js";
 import Config from "../config/index.js";
 import { loadModelsFromFile, normalizeEndpointUrl, getModelsUrl, getEndpointForModel } from "../utils/helpers.js";
+import { applyQueryKeyAuth, upstreamAuthHeaders } from "../utils/endpointPolicies.js";
 import axios from "axios";
 import { testUpstreamModel } from "../utils/modelTest.js";
 import { calculateCost } from "../utils/logging.js";
@@ -23,7 +24,9 @@ import {
 import { getEndpointsPath, getModelsPath, getProxiesPath } from "../utils/configPaths.js";
 import { writeFileAtomic, writeJsonAtomic } from "../utils/atomicJson.js";
 import { isReservedBodyParam } from "../shared/contracts/bodyParams.js";
-import { normalizeModality } from "../shared/contracts/models.js";
+import { API_FORMAT_VALUES, apiFormatCategory, isApiFormat } from "../shared/contracts/apiFormats.js";
+import type { ModelModality } from "../shared/contracts/models.js";
+import { deriveModelModalities } from "../utils/modelModality.js";
 import { isMaskedProxyPassword, maskProxyPassword, validateProxyConfig } from "../shared/contracts/proxies.js";
 import proxyManager from "../services/proxyManager.js";
 import { clearProxyAgents, proxyAgentsFor } from "../utils/proxyAgents.js";
@@ -660,11 +663,12 @@ function validateAdminModel(
   return result.valid ? null : result.errors.join("; ");
 }
 
-function normalizedModelRecord(name: any, config: any) {
+function normalizedModelRecord(name: any, config: any, modality: ModelModality) {
   const common = {
     name,
     modelType: modelType(config),
-    modality: normalizeModality(config.modality),
+    // Derived from the serving endpoint's API-format category; read-only.
+    modality,
     disabled: config.disabled === true,
     hidden: config.hidden === true,
     pricing: config.pricing || { ...DEFAULT_MODEL_PRICING },
@@ -700,11 +704,10 @@ function buildStoredModel(definition: DynamicRecord, existing: DynamicRecord = {
     hidden: incoming.hidden !== undefined
       ? incoming.hidden === true
       : existing.hidden === true,
-    // Coerced rather than validated: an unknown value from a hand-edited
-    // models.json reads as "text", which is how every model behaved before
-    // modalities existed.
-    modality: normalizeModality(incoming.modality ?? existing.modality),
   };
+  // Modality is derived from the serving endpoint and never stored. A value
+  // left by an older write is dropped rather than kept to contradict it.
+  delete stored.modality;
   const type = modelType(stored);
   if (type === "auto") {
     stored.type = "auto";
@@ -723,9 +726,10 @@ function buildStoredModel(definition: DynamicRecord, existing: DynamicRecord = {
 router.get("/api/models", verifySession, async (_req: any, res: any) => {
   try {
     const data = readModelsDocument();
+    const modalities = deriveModelModalities(data.models, readEndpointsDocument());
     return res.json({
       models: Object.entries(data.models).map(([name, config]) =>
-        normalizedModelRecord(name, config),
+        normalizedModelRecord(name, config, modalities.get(name) ?? "text"),
       ),
     });
   } catch (error: any) {
@@ -956,7 +960,6 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
       appendApiSuffix: endpoint.appendApiSuffix,
       bodyParams: endpoint.bodyParams,
       proxyId: endpoint.proxyId,
-      modality: normalizeModality(req.body?.modality),
     });
     return res.json(result);
   }
@@ -995,7 +998,6 @@ router.post("/api/models/test", verifySession, async (req: any, res: any) => {
       appendApiSuffix: endpointInfo.appendApiSuffix,
       bodyParams: endpointInfo.bodyParams,
       proxyId: endpointInfo.proxyId,
-      modality: normalizeModality(modelConfig.modality),
     });
     return res.json(result);
   } catch (error: any) {
@@ -1070,14 +1072,14 @@ router.post("/api/endpoints", verifySession, async (req: any, res: any) => {
     if (!url)
       return res.status(400).json({ error: "URL is required" });
 
-    // Validate and capture apiFormat from request, falling back to admin panel default
-    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'openai-responses', 'openai-codex'];
+    // Validate apiFormat, falling back to the admin panel default. The format
+    // sets the endpoint's category, and so the modality of its models.
     const apiFormat =
       (req.body.apiFormat !== undefined
         ? req.body.apiFormat
         : settingsManager.get("defaultEndpointApiFormat")) || "openai";
-    if (!VALID_FORMATS.includes(apiFormat)) {
-      return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${VALID_FORMATS.join(', ')}` });
+    if (!isApiFormat(apiFormat)) {
+      return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${API_FORMAT_VALUES.join(', ')}` });
     }
 
     let headersObj = {};
@@ -1208,13 +1210,14 @@ router.put("/api/endpoints", verifySession, async (req: any, res: any) => {
     if (!index || !url)
       return res.status(400).json({ error: "Index and URL are required" });
 
-    // Validate and capture apiFormat (undefined means keep existing)
-    const VALID_FORMATS = ['openai', 'anthropic', 'gemini', 'openai-responses', 'openai-codex'];
+    // Validate apiFormat; undefined keeps the existing one. A change
+    // re-categorizes every model on this endpoint, applied by the registry
+    // reload at the end of this handler.
     let apiFormat = undefined;
     if (req.body.apiFormat !== undefined) {
       apiFormat = req.body.apiFormat;
-      if (!VALID_FORMATS.includes(apiFormat)) {
-        return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${VALID_FORMATS.join(', ')}` });
+      if (!isApiFormat(apiFormat)) {
+        return res.status(400).json({ error: `Invalid apiFormat. Must be one of: ${API_FORMAT_VALUES.join(', ')}` });
       }
     }
 
@@ -1505,12 +1508,29 @@ router.get("/api/endpoints/:version/models", verifySession, async (req: any, res
       apiFormat,
       endpoint.appendApiSuffix !== false,
     );
-    let requestHeaders = { ...(endpoint.headers || {}) };
+    // Credential placement follows the endpoint's format.
+    let requestHeaders: Record<string, string> = {
+      ...(endpoint.headers || {}),
+      'Content-Type': 'application/json',
+      ...upstreamAuthHeaders(apiFormat, backendToken),
+    };
     let extractModels = (data: any) => [];
 
-    if (apiFormat === 'gemini') {
-      // Gemini: key goes in query string, no Authorization header
-      requestUrl += `?key=${encodeURIComponent(backendToken)}`;
+    // The listing shape follows the provider, not the category: Google
+    // surfaces answer with `models: [{ name: "models/…" }]`, OpenAI-compatible
+    // ones with `data: [{ id }]`.
+    const isGoogleFormat = apiFormat === 'gemini'
+      || apiFormat === 'gemini-interactions'
+      || apiFormat === 'gemini-embeddings';
+
+    if (isGoogleFormat) {
+      requestUrl = applyQueryKeyAuth(requestUrl, apiFormat, encodeURIComponent(backendToken));
+      if (apiFormat === 'gemini-interactions') {
+        // Interactions has no listing surface; its models are the catalogue the
+        // v1beta models endpoint reports.
+        requestUrl = getModelsUrl(endpoint.url, 'gemini', endpoint.appendApiSuffix !== false)
+          + `?key=${encodeURIComponent(backendToken)}`;
+      }
       extractModels = (data: any) => {
         const list = Array.isArray(data.models) ? data.models : [];
         return list
@@ -1522,13 +1542,7 @@ router.get("/api/endpoints/:version/models", verifySession, async (req: any, res
           .filter(Boolean);
       };
     } else if (apiFormat === 'anthropic') {
-      // Anthropic: x-api-key header, optional anthropic-version
-      requestHeaders = {
-        ...requestHeaders,
-        'Content-Type': 'application/json',
-        'x-api-key': backendToken,
-        'anthropic-version': '2023-06-01',
-      };
+      requestHeaders = { ...requestHeaders, 'anthropic-version': '2023-06-01' };
       extractModels = (data: any) => {
         const list = Array.isArray(data.data) ? data.data : [];
         return list
@@ -1536,12 +1550,7 @@ router.get("/api/endpoints/:version/models", verifySession, async (req: any, res
           .filter(Boolean);
       };
     } else {
-      // OpenAI-compatible (default)
-      requestHeaders = {
-        ...requestHeaders,
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${backendToken}`,
-      };
+      // OpenAI-compatible (default), including the images and embeddings formats
       extractModels = (data: any) => {
         const list = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
         return list
@@ -1853,7 +1862,7 @@ router.put("/api/settings", verifySession, (req: any, res: any) => {
     }
     if (
       updates.defaultEndpointApiFormat !== undefined &&
-      !["openai", "anthropic", "gemini", "openai-responses", "openai-codex"].includes(updates.defaultEndpointApiFormat)
+      !isApiFormat(updates.defaultEndpointApiFormat)
     ) {
       return res.status(400).json({ error: "Invalid default endpoint API format" });
     }

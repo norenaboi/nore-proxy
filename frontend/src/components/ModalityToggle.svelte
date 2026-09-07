@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ModelModality } from "$contracts/models";
+  import ModalityIcon from "./ModalityIcon.svelte";
 
   /**
    * Icon-only three-position modality filter with a thumb that slides between
@@ -9,32 +10,36 @@
    * the filter and fades the thumb out, which is what keeps an "all modalities"
    * view reachable from a control that only has three positions.
    *
-   * Icons are inline SVG rather than an icon font because the public documents
-   * do not load Font Awesome — only the admin stylesheet imports it.
+   * The glyphs come from ModalityIcon, so the badges on the model and endpoint
+   * lists carry the same mark as the segment that filters by it.
    */
   let {
     value = null,
     onChange,
     counts = null,
     idPrefix = "modality",
+    noun = "models",
   }: {
     value?: ModelModality | null;
     onChange: (next: ModelModality | null) => void;
     counts?: Partial<Record<ModelModality, number>> | null;
     idPrefix?: string;
+    /** Plural noun used in each segment's accessible name and tooltip. */
+    noun?: string;
   } = $props();
 
-  const OPTIONS: ReadonlyArray<{ modality: ModelModality; label: string; hint: string }> = [
-    { modality: "text", label: "Text", hint: "Text models" },
-    { modality: "image", label: "Image", hint: "Image models" },
-    { modality: "embedding", label: "Embedding", hint: "Embedding models" },
+  const OPTIONS: ReadonlyArray<{ modality: ModelModality; label: string }> = [
+    { modality: "text", label: "Text" },
+    { modality: "image", label: "Image" },
+    { modality: "embedding", label: "Embedding" },
   ];
 
   const activeIndex = $derived(OPTIONS.findIndex((option) => option.modality === value));
 
-  function describe(option: { modality: ModelModality; hint: string }): string {
+  function describe(option: { modality: ModelModality; label: string }): string {
+    const hint = `${option.label} ${noun}`;
     const count = counts?.[option.modality];
-    return count === undefined ? option.hint : `${option.hint} (${count})`;
+    return count === undefined ? hint : `${hint} (${count})`;
   }
 
   function select(modality: ModelModality): void {
@@ -42,7 +47,7 @@
   }
 </script>
 
-<div class="modality-toggle" class:cleared={activeIndex < 0} role="group" aria-label="Filter by modality">
+<div class="modality-toggle" class:cleared={activeIndex < 0} role="group" aria-label={`Filter ${noun} by modality`}>
   <span class="thumb" style={`--modality-index: ${Math.max(activeIndex, 0)}`} aria-hidden="true"></span>
   {#each OPTIONS as option (option.modality)}
     <button
@@ -55,25 +60,7 @@
       onclick={() => select(option.modality)}
     >
       <span class="icon" aria-hidden="true">
-        {#if option.modality === "text"}
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-            <path d="M4.4 5.2h11.2M10 5.2v9.6M7.3 14.8h5.4" />
-          </svg>
-        {:else if option.modality === "image"}
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2.6" y="3.9" width="14.8" height="12.2" rx="2.4" />
-            <circle cx="7.2" cy="8.1" r="1.3" />
-            <path d="M3.2 13.6l3.5-3.2a1.6 1.6 0 0 1 2.2 0l4.1 3.8M12 11.3l1.4-1.3a1.6 1.6 0 0 1 2.2 0l1.7 1.6" />
-          </svg>
-        {:else}
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M5.6 6.6 14.4 5M5.6 6.6l3.2 7.1M14.4 5l0.9 7.4M8.8 13.7l6.5-1.3" />
-            <circle cx="4.6" cy="6.2" r="1.9" fill="currentColor" stroke="none" />
-            <circle cx="15.3" cy="4.6" r="1.7" fill="currentColor" stroke="none" />
-            <circle cx="9.4" cy="14.6" r="1.7" fill="currentColor" stroke="none" />
-            <circle cx="15.8" cy="12.8" r="1.7" fill="currentColor" stroke="none" />
-          </svg>
-        {/if}
+        <ModalityIcon modality={option.modality} />
       </span>
       <span class="tip" id={`${idPrefix}-tip-${option.modality}`} role="tooltip">{describe(option)}</span>
     </button>
@@ -147,7 +134,6 @@
     transition: transform 0.26s cubic-bezier(0.34, 1.32, 0.5, 1);
   }
 
-  .icon :global(svg) { width: 17px; height: 17px; display: block; }
   .segment.active .icon { transform: scale(1.09); }
 
   /* Hover/focus label. The button already carries the same text as its

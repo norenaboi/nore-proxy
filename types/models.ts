@@ -18,8 +18,12 @@ interface StoredModelBase {
   pricing?: ModelPricing;
   disabled?: boolean;
   hidden?: boolean;
-  /** Absent on models stored before modalities existed; read as "text". */
-  modality?: ModelModality;
+  /**
+   * No `modality` field: it is derived from the API format of the serving
+   * endpoint, and for automatic models from the targets. Files written when the
+   * field was editable may still carry it; the loader warns and ignores it. It
+   * remains reachable through the index signature below.
+   */
   [key: string]: unknown;
 }
 
@@ -47,10 +51,11 @@ export interface ModelCapabilities {
 }
 
 /**
- * The `type` a registered model reports to clients. Derived from the modality:
- * text and image models are both "chat"; embedding models are "embedding".
+ * The `type` a registered model reports to clients, naming the route that
+ * serves it: "chat" for text models, "image" for POST /v1/images, and
+ * "embedding" for POST /v1/embeddings.
  */
-export type RegisteredModelType = "chat" | "embedding";
+export type RegisteredModelType = "chat" | "image" | "embedding";
 
 export interface RegisteredConcreteModel {
   type: RegisteredModelType;

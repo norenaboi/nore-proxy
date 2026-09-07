@@ -15,6 +15,8 @@ import {
 } from "./autoRouting.js";
 import type { ModelDefinition, ModelPricingRegistry, ModelRegistry, RegisteredModel } from "../types/models.js";
 import { normalizeModality } from "../shared/contracts/models.js";
+import { apiFormatCategory } from "../shared/contracts/apiFormats.js";
+import type { ModelModality } from "../shared/contracts/models.js";
 
 type ModelLoadOptions = {
   excludeHashes?: Set<string>;
@@ -66,6 +68,51 @@ export function resolveModelName(modelName: any) {
   return MODEL_ALIASES[modelName] || modelName;
 }
 
+/**
+ * Warns when a stored modality disagrees with the endpoint's category.
+ *
+ * The field is no longer read; the endpoint decides. The common case is an
+ * embedding model on a text endpoint, which now answers on the chat routes
+ * rather than /v1/embeddings.
+ */
+function warnOnStaleModality(
+  displayName: string,
+  stored: unknown,
+  derived: ModelModality,
+  version: string,
+) {
+  if (stored === undefined || stored === null || stored === "") return;
+  const previous = normalizeModality(stored);
+  if (previous === derived) return;
+  console.warn(
+    `Model '${displayName}' has a stored modality of '${previous}' but endpoint ${version} is a '${derived}' endpoint; ` +
+    `it now serves as a '${derived}' model. Change the endpoint's API format if that is wrong.`,
+  );
+}
+
+/**
+ * The modality of an automatic model: that of its first resolvable target.
+ *
+ * Concrete models are registered before this runs, so their modalities are
+ * known. Mixed targets are a misconfiguration; the model stays routable and the
+ * mismatch is warned about.
+ */
+function autoTargetModality(displayName: string, targets: string[]): ModelModality {
+  const modalities = targets
+    .map((target) => MODEL_REGISTRY[target]?.modality)
+    .filter((modality): modality is ModelModality => Boolean(modality));
+  if (modalities.length === 0) return "text";
+  const first = modalities[0];
+  const mixed = [...new Set(modalities)];
+  if (mixed.length > 1) {
+    console.warn(
+      `Auto model '${displayName}' mixes ${mixed.join(", ")} targets; it is registered as '${first}'. ` +
+      `Point it at endpoints of a single category.`,
+    );
+  }
+  return first;
+}
+
 export function loadModelsFromFile() {
   MODEL_REGISTRY = {};
   MODEL_ALIASES = {};
@@ -106,10 +153,12 @@ export function loadModelsFromFile() {
       if (!definition || definition.type !== "concrete") continue;
       const { backend, version } = definition;
       const actualBackend = `${backend}-${version}`;
-      const modality = normalizeModality(modelConfig.modality);
+      // The endpoint's API-format category is the model's modality.
+      const modality = apiFormatCategory(Config.ENDPOINTS[version as string]?.apiFormat);
+      warnOnStaleModality(displayName, modelConfig.modality, modality, version as string);
       MODEL_ALIASES[displayName] = actualBackend;
       MODEL_REGISTRY[displayName] = {
-        type: modality === "embedding" ? "embedding" : "chat",
+        type: modality === "text" ? "chat" : modality,
         modality,
         routingType: "concrete",
         capabilities: { outputCapabilities: {} },
@@ -138,9 +187,9 @@ export function loadModelsFromFile() {
           `Auto model '${displayName}' has ${dropped.length} unroutable target(s) that will be skipped: ${dropped.join(", ")}`,
         );
       }
-      const autoModality = normalizeModality(modelConfig.modality);
+      const autoModality = autoTargetModality(displayName, definition.targets as string[]);
       MODEL_REGISTRY[displayName] = {
-        type: autoModality === "embedding" ? "embedding" : "chat",
+        type: autoModality === "text" ? "chat" : autoModality,
         modality: autoModality,
         routingType: "auto",
         capabilities: { outputCapabilities: {} },
