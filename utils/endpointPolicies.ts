@@ -139,6 +139,10 @@ export function getImagesUrl(
     return `${baseUrl}${appendApiSuffix ? "/v1beta" : ""}/interactions`;
   }
 
+  if (apiFormat === "openai-images-generations") {
+    return `${baseUrl}${appendApiSuffix ? "/v1" : ""}/images/generations`;
+  }
+
   return `${baseUrl}${appendApiSuffix ? "/v1" : ""}/images`;
 }
 

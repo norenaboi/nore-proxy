@@ -6,8 +6,8 @@ A unified LLM API gateway with OpenAI- and Anthropic-compatible client APIs, mul
 
 - **Unified API gateway**: use OpenAI-compatible `/v1/chat/completions` or Anthropic-compatible `/v1/messages`, including Claude Code support.
 - **Embedding passthrough**: OpenAI-compatible `/v1/embeddings` for any provider that speaks the general embeddings syntax (OpenRouter, DashScope compatible-mode, Voyage, Jina, Together, Mistral, Ollama), with Gemini's `embedContent` translated to and from the same shape.
-- **Image generation**: OpenAI-compatible `/v1/images` backed by dedicated OpenRouter Images and Gemini Interactions adapters, with Google's Interactions surface translated to and from the same shape.
-- **Multi-provider support**: API formats grouped into three categories — text (OpenAI, Anthropic, Gemini, OpenAI Responses, OpenAI Codex), image (OpenRouter Images, Gemini Interactions), and embedding (OpenAI Embeddings, Gemini Embeddings). An endpoint's format decides what every model behind it is.
+- **Image generation**: OpenAI-compatible `/v1/images` and `/v1/images/generations` backed by OpenAI Images, OpenAI Images Generations, and Gemini Interactions adapters, with Google's Interactions surface translated to and from the same shape.
+- **Multi-provider support**: API formats grouped into three categories — text (OpenAI, Anthropic, Gemini, OpenAI Responses, OpenAI Codex), image (OpenAI Images, OpenAI Images Generations, Gemini Interactions), and embedding (OpenAI Embeddings, Gemini Embeddings). An endpoint's format decides what every model behind it is.
 - **Flexible model routing**: map public model names to specific backends or automatic target groups with fallback across models and providers.
 - **Reliable key rotation**: distribute requests across API keys with sticky or round-robin selection, retry transient failures, and automatically skip unhealthy or rate-limited keys.
 - **Outbound proxies**: route an endpoint's upstream traffic through an HTTP, SOCKS4, or SOCKS5 proxy, with credentials stored masked and applied to requests, model tests, and model fetches alike.
@@ -162,7 +162,7 @@ All admin endpoints require authentication.
 | `/v1/models` | GET | View models |
 | `/v1/chat/completions` | POST | OpenAI-format chat completions |
 | `/v1/messages` | POST | Anthropic-format messages, Claude Code compatible |
-| `/v1/images` | POST | OpenAI-format image generation |
+| `/v1/images`, `/v1/images/generations` | POST | OpenAI-format image generation |
 | `/v1/embeddings` | POST | OpenAI-format embeddings |
 | `/api/summary` | GET | Summary of statistics |
 | `/api/usage` | POST | View usage statistics |

@@ -158,8 +158,17 @@ test("embedding model tests translate the ping for Gemini", async () => {
   assert.equal(request.headers.Authorization.startsWith("Bearer "), false);
 });
 
-test("OpenRouter image tests ping the images surface with the adapter's own body", async () => {
-  const { request, result } = await captureRequest({ ...baseInput, apiFormat: "openrouter-images" });
+test("OpenAI Images Generations tests ping /v1/images/generations", async () => {
+  const { request, result } = await captureRequest({ ...baseInput, apiFormat: "openai-images-generations" });
+
+  assert.equal(request.url, "https://api.example/v1/images/generations");
+  assert.deepEqual(request.data, { model: "test-model", prompt: "ping" });
+  assert.equal(request.headers.Authorization, "Bearer secret-token");
+  assert.equal(result.ok, true);
+});
+
+test("OpenAI Images tests ping /v1/images with the adapter's own body", async () => {
+  const { request, result } = await captureRequest({ ...baseInput, apiFormat: "openai-images" });
 
   assert.equal(request.url, "https://api.example/v1/images");
   assert.deepEqual(request.data, { model: "test-model", prompt: "ping" });

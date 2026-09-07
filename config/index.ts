@@ -7,6 +7,7 @@ import settingsManager from "../services/settingsManager.js";
 import { getEndpointsPath } from "../utils/configPaths.js";
 import { ensureJsonAtomic } from "../utils/atomicJson.js";
 import type { EndpointsDocument, LoadedEndpoint } from "../types/endpoint.js";
+import { normalizeApiFormat, type ApiFormat } from "../shared/contracts/apiFormats.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -95,7 +96,10 @@ class Config {
           token: tokens[0] ?? null, // Keep for backward compat
           tokens,
           headers: endpoint.headers || {},
-          apiFormat: endpoint.apiFormat || "openai",
+          // Legacy format names in the file resolve to their current name. The
+          // stored value is typed ApiFormat and trusted as before; the cast
+          // covers the string normalizeApiFormat() returns.
+          apiFormat: (normalizeApiFormat(endpoint.apiFormat) || "openai") as ApiFormat,
           appendApiSuffix: endpoint.appendApiSuffix !== false,
           // Per-endpoint generation policy: strip, pass through, or override.
           generationDefaults: endpoint.generationDefaults || settingsManager.getDefaultGenerationDefaults(),

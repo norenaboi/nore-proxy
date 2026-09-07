@@ -10,7 +10,8 @@ import {
   ImageInputError,
   geminiInteractions,
   getImageAdapter,
-  openrouterImages,
+  openaiImages,
+  openaiImagesGenerations,
 } from "../utils/adapters/images.js";
 import { ADAPTERS, getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 
@@ -36,8 +37,14 @@ test("the chat registry holds the text formats only", () => {
 });
 
 test("the image registry holds the image formats only", () => {
-  assert.equal(getImageAdapter("openrouter-images"), openrouterImages);
+  assert.equal(getImageAdapter("openai-images"), openaiImages);
+  assert.equal(getImageAdapter("openai-images-generations"), openaiImagesGenerations);
   assert.equal(getImageAdapter("gemini-interactions"), geminiInteractions);
+  // The generations format reuses the OpenAI Images adapter; only the URL differs.
+  assert.equal(openaiImagesGenerations.transformImageRequest, openaiImages.transformImageRequest);
+  assert.equal(openaiImagesGenerations.parseImageResponse, openaiImages.parseImageResponse);
+  // Former name of openai-images, still present in older endpoints.json files.
+  assert.equal(getImageAdapter("openrouter-images"), openaiImages);
   // Unlike getAdapter(), this must not fall back. An absent format is not an
   // image format.
   for (const format of ["openai", "anthropic", "gemini", "openai-embeddings", undefined]) {
@@ -45,8 +52,8 @@ test("the image registry holds the image formats only", () => {
   }
 });
 
-test("the OpenRouter images adapter forwards provider-specific params untouched", () => {
-  const body = openrouterImages.transformImageRequest(
+test("the OpenAI images adapter forwards provider-specific params untouched", () => {
+  const body = openaiImages.transformImageRequest(
     {
       model: "client-facing-name",
       prompt: "a red panda astronaut",
@@ -73,13 +80,43 @@ test("the OpenRouter images adapter forwards provider-specific params untouched"
   });
 
   assert.throws(
-    () => openrouterImages.transformImageRequest({ prompt: "  " }, "m"),
+    () => openaiImages.transformImageRequest({ prompt: "  " }, "m"),
     (error) => error instanceof ImageInputError && error.statusCode === 400,
   );
 });
 
-test("the OpenRouter images adapter passes its answer through under the proxy's name", () => {
-  const parsed = openrouterImages.parseImageResponse(
+test("the OpenAI images adapter reads every usage spelling and tolerates none", () => {
+  const body = openaiImages.transformImageRequest(
+    { model: "client-facing-name", prompt: "a lighthouse at dusk", n: 2, size: "1024x1024", quality: "high", stream: false },
+    "gpt-image-1",
+  );
+  assert.deepEqual(body, { model: "gpt-image-1", prompt: "a lighthouse at dusk", n: 2, size: "1024x1024", quality: "high" });
+
+  // gpt-image-* usage: input_tokens/output_tokens.
+  const withUsage = openaiImages.parseImageResponse(
+    {
+      created: 1748372400,
+      data: [{ b64_json: "AAAA" }, { b64_json: "BBBB" }],
+      usage: { input_tokens: 12, output_tokens: 1056, total_tokens: 1068, input_tokens_details: { text_tokens: 12, image_tokens: 0 } },
+    },
+    { modelName: "client-facing-name" },
+  );
+  assert.equal(withUsage.imageCount, 2);
+  assert.deepEqual(withUsage.usage, { prompt_tokens: 12, completion_tokens: 1056, total_tokens: 1068 });
+  assert.equal(withUsage.response.model, "client-facing-name");
+  assert.equal(withUsage.response.data.length, 2);
+
+  // DALL·E: no usage block.
+  const noUsage = openaiImages.parseImageResponse(
+    { created: 1748372400, data: [{ url: "https://cdn.example/out.png", revised_prompt: "..." }] },
+    { modelName: "client-facing-name" },
+  );
+  assert.equal(noUsage.imageCount, 1);
+  assert.deepEqual(noUsage.usage, { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+});
+
+test("the OpenAI images adapter passes an OpenRouter answer through under the proxy's name", () => {
+  const parsed = openaiImages.parseImageResponse(
     {
       created: 1748372400,
       model: "upstream-only-name",
@@ -94,7 +131,7 @@ test("the OpenRouter images adapter passes its answer through under the proxy's 
   assert.equal(parsed.imageCount, 1);
   assert.deepEqual(parsed.usage, { prompt_tokens: 3, completion_tokens: 4175, total_tokens: 4178 });
 
-  const noUsage = openrouterImages.parseImageResponse({ data: [] }, { modelName: "m" });
+  const noUsage = openaiImages.parseImageResponse({ data: [] }, { modelName: "m" });
   assert.deepEqual(noUsage.usage, { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
   assert.equal(noUsage.imageCount, 0);
 });

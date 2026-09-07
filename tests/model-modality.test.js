@@ -17,6 +17,7 @@ fs.writeFileSync(
   process.env.ENDPOINTS_PATH,
   JSON.stringify({
     v1: { name: "Chat", url: "https://api.example.com", tokens: ["token-one"], apiFormat: "openai" },
+    // Former name of openai-images; the load path resolves it.
     v2: { name: "Pictures", url: "https://openrouter.ai/api", tokens: ["token-two"], apiFormat: "openrouter-images" },
     v3: { name: "Vectors", url: "https://api.example.com", tokens: ["token-three"], apiFormat: "openai-embeddings" },
     // Written before the format was recorded at all.
@@ -77,7 +78,7 @@ test("every API format declares a category, and unknown formats read as text", (
   }
   assert.deepEqual(
     API_FORMATS.filter((format) => format.category === "image").map((format) => format.value),
-    ["openrouter-images", "gemini-interactions"],
+    ["openai-images", "openai-images-generations", "gemini-interactions"],
   );
   assert.deepEqual(
     API_FORMATS.filter((format) => format.category === "embedding").map((format) => format.value),
@@ -99,6 +100,8 @@ test("the model registry takes each model's modality from its endpoint", () => {
   // Each category names the client route that serves it.
   assert.equal(helpers.MODEL_REGISTRY["makes-pictures"].modality, "image");
   assert.equal(helpers.MODEL_REGISTRY["makes-pictures"].type, "image");
+  // The file says "openrouter-images"; the loaded endpoint carries the current name.
+  assert.equal(Config.ENDPOINTS.v2.apiFormat, "openai-images");
 
   assert.equal(helpers.MODEL_REGISTRY["embed-small"].modality, "embedding");
   assert.equal(helpers.MODEL_REGISTRY["embed-small"].type, "embedding");

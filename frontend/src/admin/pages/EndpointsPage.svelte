@@ -1002,7 +1002,8 @@
   .api-format-badge.gemini { background: rgba(99,102,241,.1); color: #6366f1; }
   .api-format-badge.openai-responses { background: rgba(16,185,129,.1); color: #10b981; }
   .api-format-badge.openai-codex { background: rgba(20,184,166,.1); color: #14b8a6; }
-  .api-format-badge.openrouter-images { background: rgba(236,72,153,.1); color: #ec4899; }
+  .api-format-badge.openai-images { background: rgba(236,72,153,.1); color: #ec4899; }
+  .api-format-badge.openai-images-generations { background: rgba(244,63,94,.1); color: #e11d48; }
   .api-format-badge.gemini-interactions { background: rgba(168,85,247,.1); color: #a855f7; }
   .api-format-badge.openai-embeddings { background: rgba(6,182,212,.1); color: #0891b2; }
   .api-format-badge.gemini-embeddings { background: rgba(14,165,233,.1); color: #0284c7; }

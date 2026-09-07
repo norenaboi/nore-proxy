@@ -1,20 +1,28 @@
 /**
- * OpenRouter Images Adapter — POST {base}/v1/images.
+ * OpenAI Images Adapter — POST {base}/v1/images.
  *
  *   Authorization: Bearer <key>
- *   { "model": "...", "prompt": "..." }
+ *   { "model": "...", "prompt": "...", "n", "size", "quality", "response_format", ... }
  *
  * Response:
  *   { "created": 1748372400,
- *     "data": [{ "b64_json": "...", "media_type": "image/png" }],
- *     "usage": { "prompt_tokens", "completion_tokens", "total_tokens", "cost" } }
+ *     "data": [{ "b64_json": "..." | "url": "...", "revised_prompt"?: "..." }],
+ *     "usage"?: { "input_tokens", "output_tokens", "total_tokens", "input_tokens_details" } }
  *
- * OpenRouter's images API already speaks the OpenAI Images shape the proxy's
- * own route exposes, so the request is forwarded with unknown top-level params
- * intact. That passthrough is what makes provider-specific extras
- * (`aspect_ratio`, `output_compression`, `provider`, `input_references`, …)
- * reach the upstream without new code here; do not replace it with an
- * allow-list. The endpoint's body-param policy still runs last on the wire body.
+ * The request and response shapes match the proxy's own images route. Unknown
+ * top-level params are forwarded untouched; any OpenAI Images-compatible
+ * provider works through this adapter without an allow-list. Provider extras
+ * (OpenRouter's `media_type` per image, `cost` in usage, `aspect_ratio`,
+ * `input_references`, …) pass through the same way. The endpoint's body-param
+ * policy runs last on the wire body.
+ *
+ * `usage` is optional. `gpt-image-*` reports `input_tokens`/`output_tokens`,
+ * DALL·E reports no usage, and compatible gateways may use
+ * `prompt_tokens`/`completion_tokens`. Both spellings are read; absent usage
+ * parses as zero and the route bills its prompt-length estimate instead.
+ *
+ * `openai-images-generations` posts the same body to `/v1/images/generations`
+ * and re-exports this module.
  */
 
 import { imagePromptOf, PROXY_OWNED_IMAGE_PARAMS, type ImageContext } from "./images.js";

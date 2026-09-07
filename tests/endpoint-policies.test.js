@@ -24,11 +24,16 @@ test("endpoint URLs use the correct protocol paths", () => {
 });
 
 test("only the image formats serve images, each on its own surface", () => {
-  assert.equal(supportsImages("openrouter-images"), true);
+  assert.equal(supportsImages("openai-images"), true);
+  assert.equal(supportsImages("openai-images-generations"), true);
   assert.equal(supportsImages("gemini-interactions"), true);
   assert.equal(
-    getImagesUrl("https://openrouter.ai/api", "openrouter-images", "m"),
+    getImagesUrl("https://openrouter.ai/api", "openai-images", "m"),
     "https://openrouter.ai/api/v1/images",
+  );
+  assert.equal(
+    getImagesUrl("https://api.openai.com", "openai-images-generations", "m"),
+    "https://api.openai.com/v1/images/generations",
   );
   assert.equal(
     getImagesUrl("https://generativelanguage.googleapis.com", "gemini-interactions", "m"),
@@ -36,9 +41,16 @@ test("only the image formats serve images, each on its own surface", () => {
   );
   // An endpoint that already carries its own version path opts out of the suffix.
   assert.equal(
-    getImagesUrl("https://openrouter.ai/api/v1", "openrouter-images", "m", false),
+    getImagesUrl("https://openrouter.ai/api/v1", "openai-images", "m", false),
     "https://openrouter.ai/api/v1/images",
   );
+  assert.equal(
+    getImagesUrl("https://api.openai.com/v1", "openai-images-generations", "m", false),
+    "https://api.openai.com/v1/images/generations",
+  );
+  // Former name of openai-images.
+  assert.equal(supportsImages("openrouter-images"), true);
+  assert.equal(getImagesUrl("https://openrouter.ai/api", "openrouter-images", "m"), "https://openrouter.ai/api/v1/images");
 
   for (const format of ["openai", "anthropic", "gemini", "openai-embeddings"]) {
     assert.equal(supportsImages(format), false, format);
@@ -49,14 +61,14 @@ test("only the image formats serve images, each on its own surface", () => {
   // so an image format there falls through to the OpenAI default rather than
   // naming an images path.
   assert.equal(
-    getFullUrl("https://api.example", "openrouter-images", "m"),
+    getFullUrl("https://api.example", "openai-images", "m"),
     "https://api.example/v1/chat/completions",
   );
 
   // Every Google surface lists models under /v1beta, whatever its category.
   assert.equal(getModelsUrl("https://api.example", "gemini-interactions"), "https://api.example/v1beta/models");
   assert.equal(getModelsUrl("https://api.example", "gemini-embeddings"), "https://api.example/v1beta/models");
-  assert.equal(getModelsUrl("https://api.example", "openrouter-images"), "https://api.example/v1/models");
+  assert.equal(getModelsUrl("https://api.example", "openai-images"), "https://api.example/v1/models");
 });
 
 test("credentials go where each provider expects them", () => {
@@ -64,7 +76,8 @@ test("credentials go where each provider expects them", () => {
   // header; only the two query-key formats touch the URL.
   assert.deepEqual(upstreamAuthHeaders("openai", "k"), { Authorization: "Bearer k" });
   assert.deepEqual(upstreamAuthHeaders("openai-embeddings", "k"), { Authorization: "Bearer k" });
-  assert.deepEqual(upstreamAuthHeaders("openrouter-images", "k"), { Authorization: "Bearer k" });
+  assert.deepEqual(upstreamAuthHeaders("openai-images", "k"), { Authorization: "Bearer k" });
+  assert.deepEqual(upstreamAuthHeaders("openai-images-generations", "k"), { Authorization: "Bearer k" });
   assert.deepEqual(upstreamAuthHeaders("anthropic", "k"), { "x-api-key": "k" });
   assert.deepEqual(upstreamAuthHeaders("gemini-interactions", "k"), { "x-goog-api-key": "k" });
   assert.deepEqual(upstreamAuthHeaders("gemini", "k"), {});

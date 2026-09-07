@@ -20,7 +20,7 @@ export type TextApiFormat =
   | "openai-responses"
   | "openai-codex";
 
-export type ImageApiFormat = "openrouter-images" | "gemini-interactions";
+export type ImageApiFormat = "openai-images" | "openai-images-generations" | "gemini-interactions";
 
 export type EmbeddingApiFormat = "openai-embeddings" | "gemini-embeddings";
 
@@ -42,7 +42,8 @@ export const API_FORMATS: readonly ApiFormatSpec[] = [
   { value: "gemini", label: "Gemini", category: "text", path: "/v1beta/generateContent" },
   { value: "openai-responses", label: "OpenAI Responses", category: "text", path: "/v1/responses" },
   { value: "openai-codex", label: "OpenAI Codex", category: "text", path: "/v1/responses" },
-  { value: "openrouter-images", label: "OpenRouter Images", category: "image", path: "/v1/images" },
+  { value: "openai-images", label: "OpenAI Images", category: "image", path: "/v1/images" },
+  { value: "openai-images-generations", label: "OpenAI Images Generations", category: "image", path: "/v1/images/generations" },
   { value: "gemini-interactions", label: "Gemini Interactions", category: "image", path: "/v1beta/interactions" },
   { value: "openai-embeddings", label: "OpenAI Embeddings", category: "embedding", path: "/v1/embeddings" },
   { value: "gemini-embeddings", label: "Gemini Embeddings", category: "embedding", path: "/v1beta/embedContent" },
@@ -63,12 +64,29 @@ const SPEC_BY_VALUE = new Map<string, ApiFormatSpec>(
   API_FORMATS.map((format) => [format.value, format]),
 );
 
+/** Former format names a stored endpoint may still carry, mapped onto the current name. */
+const LEGACY_API_FORMATS: Record<string, ApiFormat> = {
+  "openrouter-images": "openai-images",
+};
+
+/**
+ * The current name for a stored format value. Legacy names resolve to their
+ * replacement; every other string is returned unchanged; non-strings and empty
+ * strings return null.
+ */
+export function normalizeApiFormat(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null;
+  return LEGACY_API_FORMATS[value] ?? value;
+}
+
+/** True for a current format name only. Legacy names are rejected at the admin API. */
 export function isApiFormat(value: unknown): value is ApiFormat {
   return typeof value === "string" && SPEC_BY_VALUE.has(value);
 }
 
 export function apiFormatSpec(value: unknown): ApiFormatSpec | null {
-  return typeof value === "string" ? SPEC_BY_VALUE.get(value) ?? null : null;
+  const normalized = normalizeApiFormat(value);
+  return normalized ? SPEC_BY_VALUE.get(normalized) ?? null : null;
 }
 
 /**

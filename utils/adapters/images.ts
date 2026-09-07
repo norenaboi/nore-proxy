@@ -3,8 +3,9 @@
  *
  * The proxy's client-facing images route speaks the OpenAI Images shape:
  * `{ model, prompt, ... }` in, `{ created, data: [{ b64_json | url }], usage }`
- * out. OpenRouter's own images API already speaks it, so that adapter is a
- * passthrough; Google's Interactions surface does not, so it is translated.
+ * out. `openai-images` (/v1/images) and `openai-images-generations`
+ * (/v1/images/generations) are passthroughs differing only in upstream path;
+ * Google's Interactions surface is translated.
  *
  * Which models this serves is decided by the endpoint: a model is an image
  * model when its endpoint uses an Image API format.
@@ -17,8 +18,10 @@
  * report, never the upstream's own name.
  */
 
-import * as openrouterImages from "./openrouter-images.js";
+import * as openaiImages from "./openai-images.js";
+import * as openaiImagesGenerations from "./openai-images-generations.js";
 import * as geminiInteractions from "./gemini-interactions.js";
+import { normalizeApiFormat } from "../../shared/contracts/apiFormats.js";
 
 export interface ImageContext {
   modelName: string;
@@ -68,7 +71,8 @@ export function imagePromptOf(clientReq: any): string {
 }
 
 const IMAGE_ADAPTERS: Record<string, ImageAdapter> = {
-  "openrouter-images": openrouterImages,
+  "openai-images": openaiImages,
+  "openai-images-generations": openaiImagesGenerations,
   "gemini-interactions": geminiInteractions,
 };
 
@@ -80,7 +84,8 @@ const IMAGE_ADAPTERS: Record<string, ImageAdapter> = {
  * failure.
  */
 export function getImageAdapter(apiFormat: string | null | undefined): ImageAdapter | null {
-  return apiFormat ? IMAGE_ADAPTERS[apiFormat] ?? null : null;
+  const normalized = normalizeApiFormat(apiFormat);
+  return normalized ? IMAGE_ADAPTERS[normalized] ?? null : null;
 }
 
-export { openrouterImages, geminiInteractions };
+export { openaiImages, openaiImagesGenerations, geminiInteractions };

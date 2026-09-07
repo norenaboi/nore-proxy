@@ -7,8 +7,8 @@
  * answers are `{ created, data: [{ b64_json | url }], usage }`.
  *
  * Provider-specific extras (`aspect_ratio`, `quality`, `output_format`,
- * `input_references`, …) are forwarded untouched by the OpenRouter adapter, so a
- * new OpenAI-compatible images provider needs no code here. Gemini's
+ * `input_references`, …) are forwarded untouched by the OpenAI Images adapters,
+ * so a new OpenAI-compatible images provider needs no code here. Gemini's
  * Interactions surface, which has no OpenAI images compatibility, is translated
  * by its own adapter.
  *
