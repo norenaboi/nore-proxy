@@ -193,7 +193,7 @@
 
   const visibleCount = $derived(grouped.reduce((total, group) => total + group.items.length, 0));
   const modalityCounts = $derived.by(() => {
-    const counts: Record<ModelModality, number> = { text: 0, vision: 0, embedding: 0 };
+    const counts: Record<ModelModality, number> = { text: 0, image: 0, embedding: 0 };
     for (const m of models) counts[m.modality ?? "text"]++;
     return counts;
   });
@@ -797,7 +797,7 @@
         <label for="mModality">Modality</label>
         <select id="mModality" bind:value={fModality} onchange={invalidateDraftTest} class="form-select" style="width:100%;" disabled={testingDraft}>
           <option value="text">Text</option>
-          <option value="vision">Vision</option>
+          <option value="image">Image</option>
           <option value="embedding">Embedding</option>
         </select>
       </div>

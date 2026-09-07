@@ -7,24 +7,27 @@ export interface PublicModelPricing {
 
 /**
  * How a model is exercised, and — for "embedding" — which client route may
- * serve it. "text" and "vision" are both chat models and route identically;
+ * serve it. "text" and "image" are both chat models and route identically;
  * they are distinguished so the catalogs can be filtered by what a model
- * accepts. "embedding" is routing-relevant: those models answer on
+ * produces. "embedding" is routing-relevant: those models answer on
  * /v1/embeddings and are refused by the chat routes.
  */
-export type ModelModality = "text" | "vision" | "embedding";
+export type ModelModality = "text" | "image" | "embedding";
 
-export const MODEL_MODALITIES: readonly ModelModality[] = ["text", "vision", "embedding"];
+export const MODEL_MODALITIES: readonly ModelModality[] = ["text", "image", "embedding"];
 
 export const DEFAULT_MODEL_MODALITY: ModelModality = "text";
 
 /**
  * Coerces a stored or submitted modality to a known value. Absent and
  * unrecognized values become "text", so a models.json written before this field
- * existed keeps behaving exactly as it did.
+ * existed keeps behaving exactly as it did. "vision" is the former name of
+ * "image" and still maps onto it, so entries stored under the old name are not
+ * silently demoted to "text".
  */
 export function normalizeModality(value: unknown): ModelModality {
-  return value === "vision" || value === "embedding" ? value : DEFAULT_MODEL_MODALITY;
+  if (value === "vision") return "image";
+  return value === "image" || value === "embedding" ? value : DEFAULT_MODEL_MODALITY;
 }
 
 export function isEmbeddingModality(value: unknown): boolean {

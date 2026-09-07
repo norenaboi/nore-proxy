@@ -48,7 +48,7 @@
       counts[model.modality] = (counts[model.modality] ?? 0) + 1;
       return counts;
     },
-    { text: 0, vision: 0, embedding: 0 } as Record<ModelModality, number>,
+    { text: 0, image: 0, embedding: 0 } as Record<ModelModality, number>,
   );
   $: normalizedQuery = searchQuery.trim().toLowerCase();
   $: filteredModels = models

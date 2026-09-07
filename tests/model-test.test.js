@@ -178,8 +178,8 @@ test("an embedding model on an Anthropic endpoint fails before any request is ma
 });
 
 test("a non-embedding modality leaves the chat ping exactly as it was", async () => {
-  // text and vision route identically; only "embedding" changes the surface.
-  for (const modality of ["text", "vision", undefined]) {
+  // text and image route identically; only "embedding" changes the surface.
+  for (const modality of ["text", "image", "vision", undefined]) {
     const { request } = await captureRequest({ ...baseInput, modality });
     assert.equal(request.url, "https://api.example/v1/chat/completions");
     assert.deepEqual(request.data, {

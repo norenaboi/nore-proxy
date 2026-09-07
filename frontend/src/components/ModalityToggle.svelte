@@ -26,7 +26,7 @@
 
   const OPTIONS: ReadonlyArray<{ modality: ModelModality; label: string; hint: string }> = [
     { modality: "text", label: "Text", hint: "Text models" },
-    { modality: "vision", label: "Vision", hint: "Vision models" },
+    { modality: "image", label: "Image", hint: "Image models" },
     { modality: "embedding", label: "Embedding", hint: "Embedding models" },
   ];
 
@@ -59,10 +59,11 @@
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
             <path d="M4.4 5.2h11.2M10 5.2v9.6M7.3 14.8h5.4" />
           </svg>
-        {:else if option.modality === "vision"}
+        {:else if option.modality === "image"}
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M1.9 10S4.9 4.6 10 4.6 18.1 10 18.1 10 15.1 15.4 10 15.4 1.9 10 1.9 10Z" />
-            <circle cx="10" cy="10" r="2.4" />
+            <rect x="2.6" y="3.9" width="14.8" height="12.2" rx="2.4" />
+            <circle cx="7.2" cy="8.1" r="1.3" />
+            <path d="M3.2 13.6l3.5-3.2a1.6 1.6 0 0 1 2.2 0l4.1 3.8M12 11.3l1.4-1.3a1.6 1.6 0 0 1 2.2 0l1.7 1.6" />
           </svg>
         {:else}
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">

@@ -48,7 +48,7 @@ export interface ModelCapabilities {
 
 /**
  * The `type` a registered model reports to clients. Derived from the modality:
- * text and vision models are both "chat"; embedding models are "embedding".
+ * text and image models are both "chat"; embedding models are "embedding".
  */
 export type RegisteredModelType = "chat" | "embedding";
 

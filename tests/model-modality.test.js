@@ -25,7 +25,9 @@ fs.writeFileSync(
     models: {
       // Written before modalities existed: no modality key at all.
       "legacy-chat": { backend: "legacy-chat", version: "v1" },
-      "sees-things": { backend: "sees-things", version: "v1", modality: "vision" },
+      "makes-pictures": { backend: "makes-pictures", version: "v1", modality: "image" },
+      // Written when the image modality was still called "vision".
+      "legacy-vision": { backend: "legacy-vision", version: "v1", modality: "vision" },
       "embed-small": { backend: "embed-small", version: "v1", modality: "embedding" },
       // A hand-edited file can hold anything; it must degrade, not break.
       "bogus-modality": { backend: "bogus-modality", version: "v1", modality: "audio" },
@@ -46,17 +48,19 @@ const { normalizeModality, isEmbeddingModality, MODEL_MODALITIES } = await impor
 );
 
 test("modality normalization keeps a pre-modality models.json behaving as text", () => {
-  assert.deepEqual([...MODEL_MODALITIES], ["text", "vision", "embedding"]);
+  assert.deepEqual([...MODEL_MODALITIES], ["text", "image", "embedding"]);
   assert.equal(normalizeModality(undefined), "text");
   assert.equal(normalizeModality(null), "text");
   assert.equal(normalizeModality(""), "text");
   assert.equal(normalizeModality("audio"), "text");
   assert.equal(normalizeModality("TEXT"), "text");
-  assert.equal(normalizeModality("vision"), "vision");
+  assert.equal(normalizeModality("image"), "image");
+  // "vision" is the former name of "image" and must not degrade to text.
+  assert.equal(normalizeModality("vision"), "image");
   assert.equal(normalizeModality("embedding"), "embedding");
 
   assert.equal(isEmbeddingModality("embedding"), true);
-  assert.equal(isEmbeddingModality("vision"), false);
+  assert.equal(isEmbeddingModality("image"), false);
   assert.equal(isEmbeddingModality(undefined), false);
 });
 
@@ -67,9 +71,12 @@ test("the model registry records a modality and derives the client-facing type",
   assert.equal(helpers.MODEL_REGISTRY["legacy-chat"].modality, "text");
   assert.equal(helpers.MODEL_REGISTRY["legacy-chat"].type, "chat");
 
-  assert.equal(helpers.MODEL_REGISTRY["sees-things"].modality, "vision");
-  // Vision is still a chat model: it routes through /v1/chat/completions.
-  assert.equal(helpers.MODEL_REGISTRY["sees-things"].type, "chat");
+  assert.equal(helpers.MODEL_REGISTRY["makes-pictures"].modality, "image");
+  // Image is still a chat model: it routes through /v1/chat/completions.
+  assert.equal(helpers.MODEL_REGISTRY["makes-pictures"].type, "chat");
+
+  assert.equal(helpers.MODEL_REGISTRY["legacy-vision"].modality, "image");
+  assert.equal(helpers.MODEL_REGISTRY["legacy-vision"].type, "chat");
 
   assert.equal(helpers.MODEL_REGISTRY["embed-small"].modality, "embedding");
   assert.equal(helpers.MODEL_REGISTRY["embed-small"].type, "embedding");
