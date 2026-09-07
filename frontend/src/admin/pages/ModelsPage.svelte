@@ -5,12 +5,14 @@
   import { motionDuration } from "$frontend/lib/motion";
   import { pageHeaderActions, toast } from "$frontend/lib/stores";
   import AutoModelTargetPicker from "$frontend/components/admin/AutoModelTargetPicker.svelte";
-  import { getProvider, type CatalogModel } from "$frontend/lib/models/catalog";
+  import FilterablePicker, { type PickerFilter, type PickerOption } from "$frontend/components/admin/FilterablePicker.svelte";
+  import { getProvider, getProviderIcon, type CatalogModel, type Provider } from "$frontend/lib/models/catalog";
   import { deadTargets, effectiveModelName, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, targetHealth, type NumericInputValue } from "$frontend/admin/modelForm";
   import ModalityToggle from "$frontend/components/ModalityToggle.svelte";
   import ModalityIcon from "$frontend/components/ModalityIcon.svelte";
   import type { ModelModality, ModelTestResult } from "$contracts/models";
   import { apiFormatCategory, apiFormatLabel } from "$contracts/apiFormats";
+  import { MODEL_MODALITIES } from "$contracts/models";
 
   interface Pricing { input?: number; output?: number; cache_write?: number; cache_read?: number; }
   interface PricingForm {
@@ -325,6 +327,47 @@
     const endpoint = endpoints[fVersion];
     return `from ${endpoint?.name || fVersion} · ${apiFormatLabel(endpoint?.apiFormat)}`;
   });
+
+  // Endpoint picker. Rows carry the endpoint's category glyph and format, and
+  // the chips filter by category, so the choice that sets a model's modality
+  // shows that modality before it is made.
+  const endpointOptions = $derived<PickerOption[]>(
+    versionKeys.map((key) => ({
+      id: key,
+      label: endpoints[key]?.name || key,
+      badge: key,
+      meta: apiFormatLabel(endpoints[key]?.apiFormat),
+      filter: apiFormatCategory(endpoints[key]?.apiFormat),
+      search: String(endpoints[key]?.apiFormat ?? ""),
+    })),
+  );
+  const endpointFilters = $derived<PickerFilter[]>(
+    MODEL_MODALITIES.map((modality) => ({
+      key: modality,
+      label: `${modalityLabels[modality]} endpoints`,
+      count: endpointOptions.filter((option) => option.filter === modality).length,
+    })).filter((filter) => filter.count > 0),
+  );
+
+  // Fetched-model picker. An aggregator endpoint answers with hundreds of names
+  // across providers, so the rows carry the same provider logos and chips the
+  // target picker uses.
+  const fetchedOptions = $derived<PickerOption[]>(
+    availableModels.map((name) => ({ id: name, label: name, filter: getProvider(name) })),
+  );
+  const fetchedFilters = $derived<PickerFilter[]>(
+    [...new Set(fetchedOptions.map((option) => option.filter as Provider))]
+      .sort()
+      .map((provider) => ({
+        key: provider,
+        label: provider,
+        count: fetchedOptions.filter((option) => option.filter === provider).length,
+      })),
+  );
+
+  function hideBrokenImage(event: Event): void {
+    (event.currentTarget as HTMLImageElement).hidden = true;
+  }
 
   const formTargetHealth = $derived(targetHealth(fTargets, models));
   const formDeadTargets = $derived(fTargets.filter((t) => formTargetHealth.get(t) === "missing"));
@@ -827,11 +870,30 @@
 
       {#if fType === "concrete"}
         <div class="form-group">
-          <label for="mVersion">Endpoint</label>
-          <select id="mVersion" bind:value={fVersion} onchange={() => { availableModels = []; upstreamFetched = false; invalidateDraftTest(); }} class="form-select" style="width:100%;" disabled={fetchingModels || testingDraft}>
-            <option value="">Select an endpoint</option>
-            {#each versionKeys as v}<option value={v}>{endpoints[v]?.name || v}</option>{/each}
-          </select>
+          <span class="picker-label" id="mVersionLabel">Endpoint</span>
+          <div class="picker-row">
+            <FilterablePicker
+              labelledBy="mVersionLabel"
+              options={endpointOptions}
+              filters={endpointFilters}
+              value={fVersion}
+              disabled={fetchingModels || testingDraft}
+              panelId="model-endpoint-picker-panel"
+              panelLabel="Endpoints"
+              placeholder="Select an endpoint"
+              searchPlaceholder="Search endpoints…"
+              emptyText="No endpoints match."
+              note="An endpoint's API format decides the modality of every model on it."
+              onSelect={(id) => { fVersion = id; availableModels = []; upstreamFetched = false; invalidateDraftTest(); }}
+            >
+              {#snippet icon(option)}
+                <span class="picker-glyph"><ModalityIcon modality={(option.filter ?? "text") as ModelModality} size={15} /></span>
+              {/snippet}
+              {#snippet filterIcon(filter)}
+                <ModalityIcon modality={filter.key as ModelModality} size={22} />
+              {/snippet}
+            </FilterablePicker>
+          </div>
         </div>
         <div class="form-group">
           <label for="mBackend">Backend Model</label>
@@ -855,10 +917,26 @@
             </div>
           {/if}
           {#if upstreamFetched && availableModels.length}
-            <select onchange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; if (v) { fBackend = v; invalidateDraftTest(); } }} class="form-select" style="width:100%;margin-top:8px;">
-              <option value="">Select a fetched model</option>
-              {#each availableModels as m}<option value={m}>{m}</option>{/each}
-            </select>
+            <div class="picker-row fetched-picker">
+              <FilterablePicker
+                options={fetchedOptions}
+                filters={fetchedFilters}
+                value={fBackend}
+                panelId="fetched-model-picker-panel"
+                panelLabel="Fetched models"
+                placeholder={`Select one of ${availableModels.length} fetched models`}
+                searchPlaceholder="Search fetched models…"
+                emptyText="No fetched models match."
+                onSelect={(id) => { fBackend = id; invalidateDraftTest(); }}
+              >
+                {#snippet icon(option)}
+                  <img src={getProviderIcon(option.filter as Provider)} class="picker-provider-icon" alt="" loading="lazy" onerror={hideBrokenImage} />
+                {/snippet}
+                {#snippet filterIcon(filter)}
+                  <img src={getProviderIcon(filter.key as Provider)} class="picker-provider-icon large" alt="" loading="lazy" onerror={hideBrokenImage} />
+                {/snippet}
+              </FilterablePicker>
+            </div>
           {/if}
         </div>
       {:else}
@@ -1080,6 +1158,14 @@
   .auto-model-group .endpoint-group-header { background: var(--primary-alpha-01); }
   .auto-model-group .endpoint-icon, .auto-model-item .model-icon { background: linear-gradient(135deg, var(--primary) 0%, var(--warning) 140%); }
   .auto-model-item { border-color: var(--primary-alpha-035); background: var(--primary-alpha-01); }
+  /* The pickers replace <select>s, so their label matches .form-group label and
+     the wrapper gives the component the flex row it stretches into. */
+  .picker-label { display: block; margin-bottom: 6px; color: var(--text-secondary); font-size: 12px; font-weight: 600; letter-spacing: .06em; }
+  .picker-row { display: flex; min-width: 0; }
+  .fetched-picker { margin-top: 8px; }
+  .picker-glyph { display: inline-flex; flex-shrink: 0; color: var(--primary-dark); }
+  .picker-provider-icon { width: 24px; height: 24px; flex-shrink: 0; border-radius: 5px; object-fit: contain; }
+  .picker-provider-icon.large { width: 27px; height: 27px; }
   .form-section-label { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; padding-top: 12px; border-top: 1px solid var(--border-color); color: var(--text-secondary); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
   .form-help { margin: 7px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
   .backend-select-row { display: flex; align-items: stretch; gap: 8px; }

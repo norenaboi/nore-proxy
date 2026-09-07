@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { filterModelNames } from "$frontend/admin/modelForm";
+  import { bindPanelListeners, panelGeometryStyle } from "$frontend/lib/admin/pickerPanel";
   import {
     formatPrice,
     getProviderIcon,
@@ -18,7 +19,7 @@
 
   let open = $state(false);
   let searchQuery = $state("");
-  let activeFilters = $state(new Set<Provider>());
+  let activeProvider = $state<Provider | null>(null);
   let pending = $state(new Set<string>());
   let wrapper: HTMLDivElement | undefined = $state();
   let trigger: HTMLButtonElement | undefined = $state();
@@ -26,9 +27,6 @@
   let panel: HTMLDivElement | undefined = $state();
   let panelStyle = $state("");
 
-  const PANEL_WIDTH = 500;
-  const VIEWPORT_GUTTER = 12;
-  const PANEL_GAP = 6;
   const PANEL_ID = "auto-model-target-picker-panel";
 
   const providerCounts = $derived(
@@ -41,33 +39,20 @@
   const visibleOptions = $derived.by(() => {
     const filteredIds = new Set(filterModelNames(options.map((option) => option.id), searchQuery));
     return options.filter(
-      (option) => filteredIds.has(option.id) && (activeFilters.size === 0 || activeFilters.has(option.provider)),
+      (option) => filteredIds.has(option.id) && (activeProvider === null || option.provider === activeProvider),
     );
   });
 
   function positionPanel(): void {
     if (!trigger) return;
-    const rect = trigger.getBoundingClientRect();
-    const containerRect = wrapper?.getBoundingClientRect();
-    const parentWidth = containerRect?.width ?? rect.width;
-    const width = Math.min(PANEL_WIDTH, parentWidth, window.innerWidth - VIEWPORT_GUTTER * 2);
-    const preferredLeft = containerRect?.left ?? rect.left;
-    const left = Math.min(Math.max(preferredLeft, VIEWPORT_GUTTER), window.innerWidth - width - VIEWPORT_GUTTER);
-    const roomBelow = window.innerHeight - rect.bottom - PANEL_GAP - VIEWPORT_GUTTER;
-    const roomAbove = rect.top - PANEL_GAP - VIEWPORT_GUTTER;
-    const placeBelow = roomBelow >= 260 || roomBelow >= roomAbove;
-    const room = Math.max(96, placeBelow ? roomBelow : roomAbove);
-    const verticalPosition = placeBelow
-      ? `top: ${rect.bottom + PANEL_GAP}px;`
-      : `bottom: ${window.innerHeight - rect.top + PANEL_GAP}px;`;
-    panelStyle = `${verticalPosition} left: ${left}px; width: ${width}px; --picker-room: ${room}px;`;
+    panelStyle = panelGeometryStyle({ trigger, wrapper });
   }
 
   function toggle(): void {
     open = !open;
     if (!open) return;
     searchQuery = "";
-    activeFilters = new Set();
+    activeProvider = null;
     pending = new Set();
     positionPanel();
     void tick().then(() => {
@@ -105,11 +90,11 @@
     pending = next;
   }
 
+  // The provider chips are single-select, matching the public catalog: picking
+  // one replaces whatever was active, and picking the active one again clears
+  // back to every provider.
   function toggleFilter(provider: Provider): void {
-    const next = new Set(activeFilters);
-    if (next.has(provider)) next.delete(provider);
-    else next.add(provider);
-    activeFilters = next;
+    activeProvider = activeProvider === provider ? null : provider;
   }
 
   function hideBrokenImage(event: Event): void {
@@ -118,20 +103,11 @@
 
   $effect(() => {
     if (!open) return;
-    const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target as Node;
-      if (wrapper?.contains(target) || panel?.contains(target)) return;
-      close();
-    };
-    const reposition = (): void => positionPanel();
-    document.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("resize", reposition);
-    window.addEventListener("scroll", reposition, true);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("resize", reposition);
-      window.removeEventListener("scroll", reposition, true);
-    };
+    return bindPanelListeners({
+      contains: () => [wrapper, panel],
+      close,
+      reposition: positionPanel,
+    });
   });
 </script>
 
@@ -177,12 +153,12 @@
         <div class="chips" aria-label="Filter by provider">
           {#each providers as provider}
             <button
-              class:active={activeFilters.has(provider)}
+              class:active={activeProvider === provider}
               class="chip"
               type="button"
               aria-label={`Filter by ${provider} (${providerCounts.get(provider)} models)`}
               title={`${provider} · ${providerCounts.get(provider)} models`}
-              aria-pressed={activeFilters.has(provider)}
+              aria-pressed={activeProvider === provider}
               onclick={() => toggleFilter(provider)}
             >
               <img src={getProviderIcon(provider)} class="icon" alt="" loading="lazy" onerror={hideBrokenImage} />
