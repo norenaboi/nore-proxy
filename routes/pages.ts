@@ -1,11 +1,12 @@
 import express, { type Request, type Response } from "express";
-import { verifySessionOrRedirect } from "../middleware/auth.js";
+import { verifyAccountSessionOrRedirect, verifySessionOrRedirect } from "../middleware/auth.js";
 import { validateSession } from "../services/sessionManager.js";
+import { validateAccountSession } from "../services/accountSessionManager.js";
 import { renderFrontend } from "../frontend/server/frontendHost.js";
 
 const router = express.Router();
 
-const publicPaths = ["/", "/models", "/status", "/usage", "/playground", "/terms", "/privacy"] as const;
+const publicPaths = ["/", "/models", "/status", "/playground", "/terms", "/privacy"] as const;
 for (const publicPath of publicPaths) {
   router.get(publicPath, async (req: Request, res: Response) => {
     await renderFrontend(req, res, "public.html");
@@ -16,15 +17,28 @@ router.get("/v1", (_req, res) => {
   res.redirect("/");
 });
 
-router.get("/admin", (_req, res) => {
-  res.redirect("/admin/login");
-});
-
-router.get("/admin/login", async (req: Request, res: Response) => {
+// One sign-in document for both audiences: POST /api/login decides which panel
+// the submitted key opens. An existing session skips the form.
+router.get("/login", async (req: Request, res: Response) => {
   if (await validateSession(req.cookies?.adminSession)) {
     return res.redirect("/admin/dashboard");
   }
+  if (validateAccountSession(req.cookies?.accountSession)) {
+    return res.redirect("/account");
+  }
   return renderFrontend(req, res, "login.html");
+});
+
+router.get("/account", verifyAccountSessionOrRedirect, async (req: Request, res: Response) => {
+  await renderFrontend(req, res, "public.html");
+});
+
+router.get("/admin", (_req, res) => {
+  res.redirect("/login");
+});
+
+router.get("/admin/login", (_req, res) => {
+  res.redirect("/login");
 });
 
 router.get("/admin/model-usage", verifySessionOrRedirect, (_req, res) => {

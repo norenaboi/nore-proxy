@@ -14,7 +14,7 @@ A unified LLM API gateway with OpenAI- and Anthropic-compatible client APIs, mul
 - **Normalized responses**: preserve streaming, reasoning, thinking, and generated-image content across supported formats.
 - **Live management**: configure endpoints, models, proxies, headers, API formats, and runtime settings without restarting the server.
 - **Request controls**: set per-endpoint generation policies and per-key request, token, and context limits.
-- **Usage and cost tracking**: monitor requests, tokens, cache usage, and costs by user and model.
+- **Usage and cost tracking**: monitor requests, tokens, cache usage, and costs by user and model. Key holders sign in at `/login` to review their own usage and full request history.
 - **Model uptime**: a public status page and admin dashboard scoring availability and time-to-first-token from real relay traffic.
 - **Chat playground**: a public page for trying models directly, with saved conversations, file and image attachments, and generated images.
 - **Admin dashboard**: manage configuration, test model connectivity, inspect request history and upstream errors, and view live logs.
@@ -50,10 +50,10 @@ npm start
 Once the server is running, open:
 
 - Public UI: `http://localhost:8741`
-- Admin login: `http://localhost:8741/admin/login`
+- Sign in: `http://localhost:8741/login`
+- Account: `http://localhost:8741/account`
 - Models: `http://localhost:8741/models`
 - Status: `http://localhost:8741/status`
-- Usage: `http://localhost:8741/usage`
 - Playground: `http://localhost:8741/playground`
 
 For development, use `npm run dev` for automatic restarts and `npm run typecheck` to run the TypeScript compiler without emitting files.
@@ -153,6 +153,22 @@ All admin endpoints require authentication.
 | `/api/endpoints/:version/keys/disable` | POST | Manually disable a key |
 | `/api/users` | GET | Get all users' usage stats |
 | `/api/users/:keyId` | GET | Get individual user details |
+| `/admin/logout` | POST | End the administrator session |
+
+### Account Endpoints
+
+`/login` accepts either a client API key or the master key. A client key opens
+`/account`; the master key opens the admin panel. The submitted key is hashed and
+matched against stored key hashes, and only that hash is kept — in memory, for
+the life of the session — so no raw key is ever persisted. Sessions therefore do
+not survive a server restart.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/login` | POST | Exchange a key for a session; answers with the path to open |
+| `/api/account/logout` | POST | End the account session |
+| `/api/account/summary` | GET | The signed-in key's usage over 24h, 7d, 30d, and all time |
+| `/api/account/requests` | GET | The signed-in key's paginated request history |
 
 ### Public Endpoints
 
@@ -165,7 +181,6 @@ All admin endpoints require authentication.
 | `/v1/images`, `/v1/images/generations` | POST | OpenAI-format image generation |
 | `/v1/embeddings` | POST | OpenAI-format embeddings |
 | `/api/summary` | GET | Summary of statistics |
-| `/api/usage` | POST | View usage statistics |
 | `/api/public-uptime` | GET | Status-page availability for publicly listed models |
 
 ## Architecture

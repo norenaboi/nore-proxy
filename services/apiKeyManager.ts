@@ -224,6 +224,19 @@ export class APIKeyManager {
     }));
   }
 
+  /**
+   * Resolves a raw key to the non-secret lookup hash used everywhere else, or
+   * null when no such key is stored. Callers keep the hash instead of the key.
+   */
+  async resolveKeyHash(apiKey: unknown): Promise<string | null> {
+    if (typeof apiKey !== "string" || !apiKey) return null;
+    const row = await this.db.get<{ key_hash: string }>(
+      "SELECT key_hash FROM api_keys WHERE key_hash = ?",
+      [hashApiKey(apiKey)],
+    );
+    return row?.key_hash ?? null;
+  }
+
   /** Resolves an admin-facing opaque identity to the non-secret lookup hash. */
   async resolveKeyId(keyId: unknown): Promise<string | null> {
     if (typeof keyId !== "string" || !keyId) return null;
@@ -340,6 +353,34 @@ export class APIKeyManager {
     return row?.name || "Unknown";
   }
 
+  /**
+   * The filter that identifies a key in request logs. Rows written before keys
+   * carried an opaque id hold only a mask, so the mask is offered as a fallback
+   * — but only when exactly one key wears it, since masks can collide.
+   */
+  private async logIdentityFor<T extends string | null | undefined>(
+    keyId: T,
+    mask: string | undefined,
+  ): Promise<{ apiKey: T; legacyMask?: string }> {
+    const maskMatches = mask
+      ? await this.db.get<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM api_keys WHERE api_key_masked = ?",
+          [mask],
+        )
+      : undefined;
+    return {
+      apiKey: keyId,
+      ...(mask && Number(maskMatches?.count) === 1 ? { legacyMask: mask } : {}),
+    };
+  }
+
+  /** Log-query identity for a stored key hash; null when the key is gone. */
+  async getLogIdentity(keyHash: string): Promise<{ apiKey: string; legacyMask?: string } | null> {
+    const row = await this.getRowByHash(keyHash);
+    if (!row) return null;
+    return this.logIdentityFor(row.api_key_id, row.api_key_masked);
+  }
+
   async getUsageStats(apiKeyOrHash: string, aggregate: any = null, stored = false) {
     const row = stored
       ? await this.getRowByHash(apiKeyOrHash)
@@ -347,18 +388,10 @@ export class APIKeyManager {
     const keyData = row ? this.rowToKey(row) : undefined;
     let stats = aggregate;
     if (!stats) {
-      const mask = stored ? row?.api_key_masked : maskKey(apiKeyOrHash);
-      const keyId = stored ? row?.api_key_id : getApiKeyId(apiKeyOrHash);
-      const maskMatches = mask
-        ? await this.db.get<{ count: number }>(
-            "SELECT COUNT(*) AS count FROM api_keys WHERE api_key_masked = ?",
-            [mask],
-          )
-        : undefined;
-      const identity = {
-        apiKey: keyId,
-        ...(mask && Number(maskMatches?.count) === 1 ? { legacyMask: mask } : {}),
-      };
+      const identity = await this.logIdentityFor(
+        stored ? row?.api_key_id : getApiKeyId(apiKeyOrHash),
+        stored ? row?.api_key_masked : maskKey(apiKeyOrHash),
+      );
       const allTime = await logManager.getRequestAggregates(identity);
       const daily = await logManager.getRequestAggregates({ ...identity, from: Date.now() / 1000 - 86400 });
       stats = {

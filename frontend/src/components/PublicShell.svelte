@@ -17,13 +17,13 @@
 
   const isHome = $derived(activePath === "/");
   const isModels = $derived(activePath === "/models");
-  const isUsage = $derived(activePath === "/usage");
+  const isAccount = $derived(activePath === "/account");
   const isStatus = $derived(activePath === "/status");
   const isPlayground = $derived(activePath === "/playground");
   const isTerms = $derived(activePath === "/terms");
   const isPrivacy = $derived(activePath === "/privacy");
   const isLegal = $derived(isTerms || isPrivacy);
-  const isNotFound = $derived(!isHome && !isModels && !isUsage && !isStatus && !isPlayground && !isLegal);
+  const isNotFound = $derived(!isHome && !isModels && !isAccount && !isStatus && !isPlayground && !isLegal);
   const isWide = $derived(isModels || isPlayground);
 </script>
 
@@ -46,7 +46,7 @@
     <nav aria-label="Public navigation">
       <a href="/status" aria-current={isStatus ? "page" : undefined}>Status</a>
       <a href="/playground" aria-current={isPlayground ? "page" : undefined}>Playground</a>
-      <a href="/usage" aria-current={isUsage ? "page" : undefined}>Check Usage</a>
+      <a href="/account" aria-current={isAccount ? "page" : undefined}>Account</a>
       <a href="/models" aria-current={isModels ? "page" : undefined}>Models</a>
     </nav>
   </header>
@@ -67,7 +67,6 @@
     <span class="public-footer-links">
       <a href="/terms" aria-current={isTerms ? "page" : undefined}>Terms of Service</a>
       <a href="/privacy" aria-current={isPrivacy ? "page" : undefined}>Privacy Policy</a>
-      <a href="/admin/login">Admin</a>
       <a href="https://github.com/norenaboi/nore-proxy">Nore-Proxy</a>
     </span>
   </footer>

@@ -10,6 +10,7 @@ import apiKeyManager from "./services/apiKeyManager.js";
 import keyStateManager from "./services/keyStateManager.js";
 import logManager from "./services/logManager.js";
 import { closeSessionManager, cleanupExpiredSessions, initializeSessionManager } from "./services/sessionManager.js";
+import { cleanupExpiredAccountSessions } from "./services/accountSessionManager.js";
 import realtimeStats from "./services/realtimeStats.js";
 import uptimeService from "./services/uptime/index.js";
 
@@ -22,6 +23,7 @@ import imagesRoutes from "./routes/images.js";
 import modelsRoutes from "./routes/models.js";
 import statsRoutes, { setStartupTime } from "./routes/stats.js";
 import adminRoutes from "./routes/admin.js";
+import accountRoutes from "./routes/account.js";
 import pagesRoutes from "./routes/pages.js";
 import logsRoutes from "./routes/logs.js";
 import uptimeRoutes from "./routes/uptime.js";
@@ -136,6 +138,7 @@ function startBackgroundTasks(): void {
 
   const sessionCleanupTask = setInterval(() => {
     if (SHUTTING_DOWN) return;
+    cleanupExpiredAccountSessions();
     void cleanupExpiredSessions().catch((error) =>
       console.error("Error cleaning expired sessions:", error),
     );
@@ -187,6 +190,7 @@ app.use(imagesRoutes);
 app.use(modelsRoutes);
 app.use(statsRoutes);
 app.use(adminRoutes);
+app.use(accountRoutes);
 app.use(pagesRoutes);
 app.use(logsRoutes);
 app.use(uptimeRoutes);

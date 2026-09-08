@@ -149,25 +149,6 @@ button, input { font: inherit; }
 .destinations p { margin: 7px 0 0; color: var(--muted); }
 .destinations b { color: var(--accent-ink); font-size: 12px; }
 
-/* Usage */
-.usage-head { display: flex; align-items: end; justify-content: space-between; gap: 32px; margin-bottom: 28px; }
-.input-group { display: grid; gap: 9px; padding: 20px; margin-bottom: 20px; }
-.input-group > label { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.key-entry { display: flex; gap: 10px; }
-.key-entry input { flex: 1; min-width: 0; padding: 11px 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
-.usage-button { padding: 10px 17px; border: 1px solid var(--accent-ink); border-radius: 8px; background: var(--accent-ink); color: var(--on-accent); cursor: pointer; }
-.usage-button:disabled { opacity: .55; cursor: wait; }
-.usage-error { margin: 0 0 20px; padding: 14px 16px; border: 1px solid var(--danger-line); border-radius: 8px; background: var(--danger-soft); color: var(--danger); }
-.stats-section { overflow: hidden; }
-.stats-header { padding: 20px; border-bottom: 1px solid var(--line); }
-.stats-header h2 { margin: 0; font: 500 24px/1.2 Georgia, serif; }
-.stat-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
-.stat-row:last-child { border-bottom: 0; }
-.stat-label { color: var(--muted); }
-.stat-value { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
-.stat-value.active { color: var(--success); }
-.stat-value.inactive { color: var(--danger); }
-
 /* Legal and not found */
 .legal-main { max-width: 850px; margin: 0 auto; }
 .legal-main > .lead { margin-bottom: 28px; }
@@ -183,7 +164,7 @@ button, input { font: inherit; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } .copy-notification { transition: none; } }
 @media (max-width: 850px) {
-  .catalog-head, .intro, .usage-head { display: grid; }
+  .catalog-head, .intro { display: grid; }
   .service-strip { grid-template-columns: 1fr; }
   .service-strip div, .service-strip div:nth-child(3n), .service-strip div:nth-last-child(-n + 3) { border-right: 0; border-bottom: 1px solid var(--line); }
   .service-strip div:last-child { border-bottom: 0; }
@@ -199,8 +180,6 @@ button, input { font: inherit; }
   .public-footer { display: grid; }
   .model-grid, .destinations { grid-template-columns: 1fr; }
   .card-copy { opacity: 1; }
-  .key-entry { display: grid; }
-  .stat-row { align-items: flex-start; }
 }
 /* Narrow viewports cannot spare the height for a locked layout, so the
    playground falls back to a tall chat panel on a normally scrolling page. */

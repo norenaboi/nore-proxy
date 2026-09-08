@@ -69,11 +69,13 @@
 .toolbar,
 .result-meta,
 .model-grid > *,
-.usage-head,
-.input-group,
-.usage-error,
-.stats-header,
-.stat-row,
+.account-head,
+.account-error,
+.range-tabs,
+.account-summary > article,
+.account-ledger > article,
+.limits-card,
+.history-card,
 .legal-main > .eyebrow,
 .legal-main > h1,
 .legal-main > .lead,
@@ -83,7 +85,6 @@
 }
 
 .public-utility,
-.stats-section,
 .legal-copy,
 .playground {
   animation: var(--motion-fade) var(--motion-fade-duration) ease var(--motion-delay, 0s) backwards;
@@ -141,14 +142,17 @@
 .model-grid > *:nth-child(n + 5):nth-child(-n + 8) { --motion-delay: 0.3s; }
 .model-grid > *:nth-child(n + 9) { --motion-delay: 0.36s; }
 
-/* Usage */
-.usage-error { --motion-delay: 0.04s; }
-.usage-head { --motion-delay: 0.06s; }
-.input-group { --motion-delay: 0.14s; }
-.stats-header { --motion-delay: 0.08s; }
-.stat-row:nth-child(-n + 4) { --motion-delay: 0.14s; }
-.stat-row:nth-child(n + 5):nth-child(-n + 7) { --motion-delay: 0.2s; }
-.stat-row:nth-child(n + 8) { --motion-delay: 0.26s; }
+/* Account */
+.account-error { --motion-delay: 0.04s; }
+.account-head { --motion-delay: 0.06s; }
+.range-tabs { --motion-delay: 0.12s; }
+.account-summary > article:nth-child(1) { --motion-delay: 0.16s; }
+.account-summary > article:nth-child(2) { --motion-delay: 0.2s; }
+.account-summary > article:nth-child(3) { --motion-delay: 0.24s; }
+.account-ledger > article:nth-child(-n + 2) { --motion-delay: 0.26s; }
+.account-ledger > article:nth-child(n + 3) { --motion-delay: 0.3s; }
+.limits-card { --motion-delay: 0.34s; }
+.history-card { --motion-delay: 0.38s; }
 
 /* Legal */
 .legal-main > .eyebrow { --motion-delay: 0.06s; }

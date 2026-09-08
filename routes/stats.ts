@@ -1,6 +1,4 @@
 import express, { type Request, type Response } from "express";
-import { verifyApiKey } from "../middleware/auth.js";
-import { usageRateLimit } from "../middleware/rateLimiter.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
 
@@ -39,22 +37,5 @@ router.get("/api/summary", async (_req: Request, res: Response) => {
     total_api_keys: allApiKeys.length,
   });
 });
-
-router.post(
-  "/api/usage",
-  usageRateLimit,
-  verifyApiKey,
-  async (req: Request, res: Response) => {
-  const apiKey = req.apiKey;
-
-  if (!apiKey) {
-    return res.status(400).json({ error: "API key required" });
-  }
-
-  const stats = await apiKeyManager.getUsageStats(apiKey);
-
-  res.json({ usage: stats });
-  },
-);
 
 export default router;

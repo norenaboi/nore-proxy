@@ -1,23 +1,25 @@
 <script lang="ts">
-  let masterKey = $state("");
+  let key = $state("");
   let errorMessage = $state("");
   let loading = $state(false);
 
+  // One form for both audiences: the server decides from the submitted key
+  // whether this is an account or the admin panel, and answers with the path.
   async function login(event: SubmitEvent): Promise<void> {
     event.preventDefault();
     errorMessage = "";
     loading = true;
     try {
-      const res = await fetch("/admin/login", {
+      const res = await fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ masterKey }),
+        body: JSON.stringify({ key }),
       });
-      if (res.ok) {
-        window.location.href = "/admin/dashboard";
+      const data = await res.json().catch(() => ({})) as { redirect?: string; error?: string };
+      if (res.ok && data.redirect) {
+        window.location.href = data.redirect;
       } else {
-        const data = await res.json().catch(() => ({})) as { error?: string };
-        errorMessage = data.error ?? "Invalid master key";
+        errorMessage = data.error ?? "Invalid key";
       }
     } catch {
       errorMessage = "Network error. Please try again.";
@@ -33,22 +35,22 @@
     <strong>Nore Proxy</strong>
   </a>
   <section class="container" aria-labelledby="loginTitle">
-    <p class="eyebrow">Administration</p>
+    <p class="eyebrow">Sign in</p>
     <h1 id="loginTitle">Welcome back.</h1>
-    <p class="intro">Enter the master key to access proxy operations and usage.</p>
+    <p class="intro">Enter your API key</p>
     <form onsubmit={login} aria-busy={loading}>
       <div class="form-group">
-        <label for="masterKey">Master key</label>
+        <label for="key">API key</label>
         <input
-          id="masterKey"
+          id="key"
           type="password"
-          bind:value={masterKey}
-          placeholder="Enter master key"
+          bind:value={key}
+          placeholder="Enter your key"
           autocomplete="current-password"
           required
         />
       </div>
-      <button type="submit" disabled={loading}>Access dashboard</button>
+      <button type="submit" disabled={loading}>{loading ? "Signing in…" : "Continue"}</button>
       {#if errorMessage}
         <div class="error" role="alert">{errorMessage}</div>
       {/if}

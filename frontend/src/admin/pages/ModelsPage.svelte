@@ -633,7 +633,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(editing ? { oldName: editingModel, ...payload } : payload),
       });
-      if (res.status === 401 || res.status === 403) { window.location.href = "/admin/login"; return; }
+      if (res.status === 401 || res.status === 403) { window.location.href = "/login"; return; }
       const data = await res.json().catch(() => ({})) as { error?: string; dependents?: string[]; blockers?: string[] };
       if (!res.ok) throw new Error(res.status === 409 ? depMessage(data, "Model has active dependencies") : (data.error || `Failed to ${editing ? "update" : "add"} model`));
       toast.show(`Model ${modalMode === "clone" ? "cloned" : editing ? "updated" : "added"} successfully`);
@@ -651,7 +651,7 @@
     togglingDisabled = new Set(togglingDisabled).add(name);
     try {
       const res = await fetch("/api/models/toggle", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-      if (res.status === 401 || res.status === 403) { window.location.href = "/admin/login"; return; }
+      if (res.status === 401 || res.status === 403) { window.location.href = "/login"; return; }
       const data = await res.json().catch(() => ({})) as { error?: string; message?: string; dependents?: string[]; blockers?: string[] };
       if (!res.ok) throw new Error(res.status === 409 ? depMessage(data, "Model has active dependencies") : (data.error || "Failed to toggle model"));
       toast.show(data.message || "Model updated");
@@ -670,7 +670,7 @@
     togglingVisibility = new Set(togglingVisibility).add(name);
     try {
       const res = await fetch("/api/models/visibility", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-      if (res.status === 401 || res.status === 403) { window.location.href = "/admin/login"; return; }
+      if (res.status === 401 || res.status === 403) { window.location.href = "/login"; return; }
       const data = await res.json().catch(() => ({})) as { error?: string; message?: string };
       if (!res.ok) throw new Error(data.error || "Failed to update model visibility");
       toast.show(data.message || "Model visibility updated");
@@ -709,7 +709,7 @@
     deleting = true;
     try {
       const res = await fetch("/api/models", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: deletingModel }) });
-      if (res.status === 401 || res.status === 403) { window.location.href = "/admin/login"; return; }
+      if (res.status === 401 || res.status === 403) { window.location.href = "/login"; return; }
       const data = await res.json().catch(() => ({})) as { error?: string; dependents?: string[]; blockers?: string[]; updatedAutoModels?: string[]; emptiedAutoModels?: string[] };
       if (!res.ok) throw new Error(res.status === 409 ? depMessage(data, "Model has active dependencies") : (data.error || "Failed to delete model"));
       const updated = data.updatedAutoModels ?? [];

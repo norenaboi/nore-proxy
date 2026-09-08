@@ -12,7 +12,7 @@
   import NotFoundPage from "./pages/NotFoundPage.svelte";
   import PlaygroundPage from "./pages/PlaygroundPage.svelte";
   import StatusPage from "./pages/StatusPage.svelte";
-  import UsagePage from "./pages/UsagePage.svelte";
+  import AccountPage from "./pages/AccountPage.svelte";
 
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
   let theme = $state<PublicTheme>(applyPublicTheme(readPublicTheme()));
@@ -25,7 +25,7 @@
   // be set here rather than in public.html.
   const titles: Record<string, string> = {
     "/": "Unified model access",
-    "/usage": "Usage",
+    "/account": "Account",
     "/models": "Models",
     "/status": "System Status",
     "/playground": "Playground",
@@ -42,8 +42,8 @@
 <PublicShell activePath={path} {theme} onThemeChange={changeTheme}>
   {#if path === "/"}
     <HomePage />
-  {:else if path === "/usage"}
-    <UsagePage />
+  {:else if path === "/account"}
+    <AccountPage />
   {:else if path === "/models"}
     <ModelsPage />
   {:else if path === "/status"}

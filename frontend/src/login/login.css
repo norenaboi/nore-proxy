@@ -28,8 +28,17 @@ body {
   font: 14px/1.5 Inter, ui-sans-serif, sans-serif;
 }
 
+/* The grid centers #app, which has no width of its own, so it would be sized
+   to fit its contents — leaving the shell's percentage width resolving against
+   its own text and the card drifting as the copy changes. Filling the column
+   gives the percentage a fixed basis and hands the centering to the margin. */
+#app {
+  width: 100%;
+}
+
 .login-shell {
   width: min(440px, 100%);
+  margin-inline: auto;
 }
 
 .brand {

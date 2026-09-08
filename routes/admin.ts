@@ -3,7 +3,6 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { verifySession } from "../middleware/auth.js";
-import { adminRateLimit } from "../middleware/rateLimiter.js";
 import settingsManager from "../services/settingsManager.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
@@ -14,8 +13,7 @@ import { applyQueryKeyAuth, upstreamAuthHeaders } from "../utils/endpointPolicie
 import axios from "axios";
 import { testUpstreamModel } from "../utils/modelTest.js";
 import { calculateCost } from "../utils/logging.js";
-import crypto from "crypto";
-import { createSession, deleteSession } from "../services/sessionManager.js";
+import { deleteSession } from "../services/sessionManager.js";
 import {
   pruneAutoTargetReferences,
   rewriteAutoTargetReferences,
@@ -30,6 +28,12 @@ import { deriveModelModalities } from "../utils/modelModality.js";
 import { isMaskedProxyPassword, maskProxyPassword, validateProxyConfig } from "../shared/contracts/proxies.js";
 import proxyManager from "../services/proxyManager.js";
 import { clearProxyAgents, proxyAgentsFor } from "../utils/proxyAgents.js";
+import {
+  USAGE_RANGES,
+  aggregateUsageGroups,
+  parseRequestInteger,
+  withEstimatedCost,
+} from "../utils/usageReporting.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,36 +43,6 @@ type JsonDocument = Record<string, DynamicRecord>;
 type QueryValue = string | undefined;
 
 const router = express.Router();
-
-// POST /admin/login — validate master key and issue a session cookie.
-// IP-level rate limiting is applied only here to throttle brute-force attempts;
-// other admin routes are session-authenticated and would otherwise burn the
-// shared budget with normal dashboard XHR traffic.
-router.post("/admin/login", adminRateLimit, async (req: any, res: any) => {
-  const provided = (req.body.masterKey || "").toString();
-  const expected = Config.MASTER_KEY;
-  let valid = false;
-  try {
-    valid =
-      provided.length === expected.length &&
-      crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
-  } catch (_) {}
-
-  if (!valid) {
-    return res.status(403).json({ error: "Invalid master key" });
-  }
-
-  const sessionId = await createSession();
-  const isProduction = process.env.NODE_ENV === "production";
-  res.cookie("adminSession", sessionId, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "strict",
-    maxAge:
-      parseInt(process.env.SESSION_TTL_HOURS || "24", 10) * 60 * 60 * 1000,
-  });
-  res.json({ success: true });
-});
 
 // POST /admin/logout — delete the session and clear the cookie
 router.post("/admin/logout", async (req: any, res: any) => {
@@ -155,39 +129,6 @@ function computeCostsFromLogs(logs: any) {
   };
 }
 
-const DASHBOARD_RANGES = {
-  "24h": 86400,
-  "7d": 604800,
-  "30d": 2592000,
-  total: null,
-};
-
-// Groups are logManager.getBulkApiKeyAggregates rows: one per key, model,
-// accounting version, and recorded-cost mask, so getCostForGroups resolves
-// recorded-versus-calculated cost per group exactly as it would per request.
-function aggregateDashboardGroups(groups: any[]) {
-  const sum = (field: string) =>
-    groups.reduce((total: number, group: any) => total + (Number(group[field]) || 0), 0);
-  const costs = logManager.getCostForGroups(groups);
-  const requests = sum("total");
-  const successes = sum("successful");
-  return {
-    requests,
-    successes,
-    failures: sum("failed"),
-    success_rate: requests ? (successes / requests) * 100 : 0,
-    input_tokens: sum("inputTokens"),
-    output_tokens: sum("outputTokens"),
-    cache_write_tokens: sum("cacheWriteTokens"),
-    cache_read_tokens: sum("cacheReadTokens"),
-    input_cost: costs.input,
-    output_cost: costs.output,
-    cache_write_cost: costs.cacheWrite,
-    cache_read_cost: costs.cacheRead,
-    estimated_cost: costs.total,
-  };
-}
-
 async function buildDashboardRanges(
   configuredKeys: Array<{ id: string; mask: string; name: string }>,
 ) {
@@ -198,7 +139,7 @@ async function buildDashboardRanges(
   }
 
   const entries = await Promise.all(
-    Object.entries(DASHBOARD_RANGES).map(async ([range, seconds]) => {
+    Object.entries(USAGE_RANGES).map(async ([range, seconds]) => {
       const groups: any[] = await logManager.getBulkApiKeyAggregates(
         seconds === null ? {} : { from: now - seconds },
       );
@@ -218,11 +159,11 @@ async function buildDashboardRanges(
           id: key.id,
           name: key.name,
           api_key: key.mask,
-          ...aggregateDashboardGroups(byKey.get(key.id) ?? []),
+          ...aggregateUsageGroups(byKey.get(key.id) ?? []),
         }))
         .sort((a, b) => b.requests - a.requests || a.name.localeCompare(b.name));
 
-      return [range, { summary: aggregateDashboardGroups(groups), api_keys: apiKeys }] as const;
+      return [range, { summary: aggregateUsageGroups(groups), api_keys: apiKeys }] as const;
     }),
   );
 
@@ -245,16 +186,6 @@ router.get("/api/logs", verifySession, async (_req: any, res: any) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
-
-function parseRequestInteger(value: any, fallback: any, minimum: any, maximum: any) {
-  if (value === undefined) return fallback;
-  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
-    return null;
-  }
-  return parsed;
-}
 
 router.get("/api/requests/filters", verifySession, async (_req: any, res: any) => {
   try {
@@ -319,27 +250,7 @@ router.get("/api/requests", verifySession, async (req: any, res: any) => {
       from,
       to,
     });
-    const requests = result.requests.map((request: any) => {
-      const costs = calculateCost(
-        request.model,
-        request.inputTokens,
-        request.outputTokens,
-        request.cacheWriteTokens,
-        request.cacheReadTokens,
-        request.tokenAccountingVersion,
-      );
-      const {
-        tokenAccountingVersion,
-        recordedCost,
-        recordedCosts,
-        ...safeRequest
-      } = request;
-      return {
-        ...safeRequest,
-        estimatedCost: recordedCost ?? costs.totalCost,
-        costSource: recordedCost === null ? "current-pricing-estimate" : "recorded",
-      };
-    });
+    const requests = result.requests.map(withEstimatedCost);
 
     return res.json({ requests, total: result.total, limit, offset });
   } catch (error: any) {

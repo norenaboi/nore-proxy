@@ -74,10 +74,10 @@
 </section>
 
 <section class="destinations">
-  <a class="panel" href="/usage">
+  <a class="panel" href="/account">
     <span>Account</span>
-    <div><strong>Review API key usage</strong><p>Inspect quota, request totals, token volume, and key status.</p></div>
-    <b>View usage →</b>
+    <div><strong>Sign in with your API key</strong><p>Inspect quota, request totals, token volume, cost, and your full request history.</p></div>
+    <b>Open account →</b>
   </a>
   <a class="panel" href="/models">
     <span>Catalog</span>

@@ -37,10 +37,11 @@ Treat these runtime JSON files as operational data, not examples or source fixtu
 - `routes/embeddings.ts`: OpenAI-compatible `POST /v1/embeddings`, the general embeddings syntax. Never streams.
 - `routes/images.ts`: OpenAI-compatible image generation on `POST /v1/images` and `POST /v1/images/generations`. Never streams.
 - `routes/models.ts`: public model discovery.
-- `routes/stats.ts`: public summaries and authenticated client-key usage.
+- `routes/stats.ts`: public summaries.
 - `routes/admin.ts`: admin authentication, endpoint/model/key/proxy/settings CRUD, diagnostics, and analytics APIs.
 - `routes/logs.ts`: authenticated live console logging and clearing.
-- `routes/pages.ts`: public, login, and authenticated admin document routes.
+- `routes/account.ts`: the single sign-in route and the signed-in key's own usage and request history.
+- `routes/pages.ts`: public, login, account, and authenticated admin document routes.
 
 ### Services
 
@@ -49,6 +50,7 @@ Treat these runtime JSON files as operational data, not examples or source fixtu
 - `services/keyStateManager.ts`: upstream-key health, cooldowns, disabling, and counters.
 - `services/logManager.ts`: request/error persistence, migrations, projections, and analytics rollups.
 - `services/sessionManager.ts`: persistent administrator sessions.
+- `services/accountSessionManager.ts`: in-memory API-key holder sessions, holding only the key's stored hash.
 - `services/settingsManager.ts`: runtime defaults and JSON overrides.
 - `services/proxyManager.ts`: persisted outbound proxy definitions and their masked admin views.
 - `services/realtimeStats.ts`: active-request state.
@@ -63,6 +65,7 @@ Treat these runtime JSON files as operational data, not examples or source fixtu
 - `utils/adapters/` transforms provider-specific requests and normalizes responses/streams. The registry in `utils/adapters/index.ts` holds the five text formats. `utils/adapters/images.ts` and `utils/adapters/embeddings.ts` are separate dispatches, each with its own two-function contract, keyed by their own category's formats only.
 - `shared/contracts/apiFormats.ts` is the single list of upstream formats, their categories, labels, and paths. The admin validation, the endpoint editor's picker, the settings default, and every model's derived modality all read from it.
 - `utils/requestRouting.ts` owns the shared target/key/retry loop (`executeRouting`) used by `routes/chat.ts`, `routes/images.ts`, and `routes/embeddings.ts`.
+- `utils/usageReporting.ts` owns the reporting windows, the group aggregation, and the request-row cost projection shared by the admin dashboard and the account page, so both report identical numbers.
 
 Adapters own wire-protocol transformation. Route handlers own network calls, authentication dispatch, retries, logging, client response framing, and stream lifecycle.
 
@@ -132,7 +135,9 @@ Public pages are eagerly imported. Admin pages are lazy imported and form build 
 - Preserve case-insensitive credential-header stripping and credential-query sanitization, including provider keys placed in URLs.
 - Do not log prompts or outbound request bodies unnecessarily. `request_params` in error storage is legacy-only; do not repopulate it casually.
 - Keep field-size limits at persistence boundaries for headers, response bodies, and stack traces.
-- `MASTER_KEY` is mandatory and must be replaced with a strong deployment-specific value.
+- `MASTER_KEY` is mandatory and must be replaced with a strong deployment-specific value. `POST /api/login` is the only route that accepts it; keep the master-key and client-key failures answering with one identical response so the endpoint never reveals which credential space a guess landed near.
+- Account sessions are in-memory by design and hold only the client key's stored hash, never the key. Do not add persistence or a raw-key field. `verifyAccountSession` re-reads the key row per request, which is what makes key deletion revoke sessions.
+- Account responses are scoped by the session's key and never by a client-supplied identity, and they must not expose endpoint names, endpoint keys, or upstream key masks.
 - CORS currently defaults to `*`. Client-IP extraction may trust `CF-Connecting-IP`, while Express proxy trust is not globally configured. These are existing operational behaviors, not endorsement; change them only as an explicit, tested security task.
 
 ## Runtime configuration and data

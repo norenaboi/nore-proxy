@@ -13,7 +13,7 @@ export async function requestAdminJson<T>(
 ): Promise<T> {
   const response = await fetch(url, options);
   if (response.status === 401 || response.status === 403) {
-    window.location.href = "/admin/login";
+    window.location.href = "/login";
     throw new AdminApiError("Session expired", response.status);
   }
   const data = await response.json().catch(() => ({})) as Record<string, unknown>;
@@ -28,7 +28,7 @@ export async function requestAdminJson<T>(
 
 export async function logout(): Promise<void> {
   await fetch("/admin/logout", { method: "POST" }).catch(() => {});
-  window.location.href = "/admin/login";
+  window.location.href = "/login";
 }
 
 export function formatNumber(num: number): string {

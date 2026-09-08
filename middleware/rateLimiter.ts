@@ -26,23 +26,8 @@ function resolveAdminMaxAttempts(rawValue: string | undefined): number {
   return parsed;
 }
 
-// IP-level brute-force limiter for /api/usage
-// Prevents attackers from enumerating valid API keys via repeated lookups
-const USAGE_WINDOW_SECONDS = 60;
-const USAGE_MAX_ATTEMPTS = 10;
-const usageAttempts: AttemptMap = new Map();
-
-// Eviction timers are unref'd: they exist to bound map growth in a running
-// server, and must not by themselves keep the process alive.
-setInterval(() => {
-  const cutoff = Date.now() / 1000 - USAGE_WINDOW_SECONDS * 2;
-  for (const [ip, timestamps] of usageAttempts.entries()) {
-    const fresh = timestamps.filter((t: any) => t > cutoff);
-    if (fresh.length === 0) usageAttempts.delete(ip);
-    else usageAttempts.set(ip, fresh);
-  }
-}, 60000).unref();
-
+// The eviction timer is unref'd: it exists to bound map growth in a running
+// server, and must not by itself keep the process alive.
 setInterval(() => {
   const cutoff = Date.now() / 1000 - ADMIN_WINDOW_SECONDS * 2;
   for (const [ip, timestamps] of adminAttempts.entries()) {
@@ -51,26 +36,6 @@ setInterval(() => {
     else adminAttempts.set(ip, fresh);
   }
 }, 60000).unref();
-
-export function usageRateLimit(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): void | Response {
-  const ip = getClientIp(req);
-  const now = Date.now() / 1000;
-  const recent = (usageAttempts.get(ip) || []).filter(
-    (t: any) => now - t < USAGE_WINDOW_SECONDS,
-  );
-  if (recent.length >= USAGE_MAX_ATTEMPTS) {
-    return res
-      .status(429)
-      .json({ detail: "Too many requests. Please try again later." });
-  }
-  recent.push(now);
-  usageAttempts.set(ip, recent);
-  next();
-}
 
 export function adminRateLimit(
   req: Request,
