@@ -2,7 +2,43 @@
   import { onMount } from "svelte";
   import { requestAdminJson } from "$frontend/lib/api/admin";
   import { toast } from "$frontend/lib/stores";
-  import { API_FORMAT_CATEGORIES, apiFormatsInCategory } from "$contracts/apiFormats";
+  import { API_FORMATS, API_FORMAT_CATEGORIES } from "$contracts/apiFormats";
+  import type { ApiFormatCategory } from "$contracts/apiFormats";
+  import ModalityIcon from "$frontend/components/ModalityIcon.svelte";
+  import SelectMenu, { type SelectMenuGroup, type SelectMenuOption } from "$frontend/components/admin/SelectMenu.svelte";
+
+  // The format menu mirrors the endpoint editor's: one group per category,
+  // each row carrying the upstream path the proxy would post to.
+  const apiFormatOptions: SelectMenuOption[] = API_FORMATS.map((format) => ({
+    value: format.value,
+    label: format.label,
+    note: format.note,
+    meta: format.path,
+    group: format.category,
+  }));
+
+  const categoryAccents: Record<ApiFormatCategory, string> = {
+    text: "var(--primary-dark)",
+    image: "#be3f8c",
+    embedding: "#0e7490",
+  };
+
+  const apiFormatGroups: SelectMenuGroup[] = API_FORMAT_CATEGORIES.map((group) => ({
+    key: group.category,
+    label: group.label,
+    hint: group.hint,
+    accent: categoryAccents[group.category],
+  }));
+
+  const keyRotationOptions: SelectMenuOption[] = [
+    { value: "sticky", label: "Sticky", meta: "one key until it fails" },
+    { value: "roundrobin", label: "Round-robin", meta: "next key each request" },
+  ];
+
+  const keyHealthOptions: SelectMenuOption[] = [
+    { value: "on", label: "On", meta: "bench keys on errors" },
+    { value: "off", label: "Off", meta: "never bench keys" },
+  ];
 
   interface Settings {
     rpdDefault: number; rpmDefault: number; maxContextSizeDefault: number;
@@ -124,32 +160,70 @@
       <div class="card-body">
 
       <div class="setting-row">
-        <div class="setting-info"><div class="setting-label">Default API Format</div><div class="setting-description">Pre-selected API format for newly created endpoints.</div></div>
-        <div class="setting-control select-control"><select bind:value={s.defaultEndpointApiFormat} class="form-select">
-          {#each API_FORMAT_CATEGORIES as group (group.category)}
-            <optgroup label={`${group.label} — ${group.hint}`}>
-              {#each apiFormatsInCategory(group.category) as format (format.value)}
-                <option value={format.value}>{format.label} — {format.path}</option>
-              {/each}
-            </optgroup>
-          {/each}
-        </select></div>
+        <div class="setting-info"><div class="setting-label" id="settingsApiFormatLabel">Default API Format</div><div class="setting-description">Pre-selected API format for newly created endpoints.</div></div>
+        <div class="setting-control select-control">
+          <SelectMenu
+            options={apiFormatOptions}
+            groups={apiFormatGroups}
+            value={s.defaultEndpointApiFormat}
+            onSelect={(value) => { if (s) s.defaultEndpointApiFormat = value; }}
+            panelId="settings-api-format-menu"
+            panelLabel="API format"
+            placeholder="Select an API format"
+            labelledBy="settingsApiFormatLabel"
+            groupLayout="columns"
+            panelMinWidth={620}
+            panelMaxWidth={680}
+            align="end"
+          >
+            {#snippet icon(option)}
+              <ModalityIcon modality={(option.group ?? "text") as ApiFormatCategory} size={14} />
+            {/snippet}
+            {#snippet groupIcon(group)}
+              <ModalityIcon modality={group.key as ApiFormatCategory} size={13} />
+            {/snippet}
+          </SelectMenu>
+        </div>
       </div>
 
       <div class="setting-row">
-        <div class="setting-info"><div class="setting-label">Default Key Rotation</div><div class="setting-description">Rotation mode seeded onto new endpoints.</div></div>
-        <div class="setting-control select-control"><select bind:value={s.defaultEndpointKeyRotation} class="form-select">
-          <option value="sticky">Sticky</option>
-          <option value="roundrobin">Round-robin</option>
-        </select></div>
+        <div class="setting-info"><div class="setting-label" id="settingsKeyRotationLabel">Default Key Rotation</div><div class="setting-description">Rotation mode seeded onto new endpoints.</div></div>
+        <div class="setting-control select-control">
+          <SelectMenu
+            options={keyRotationOptions}
+            value={s.defaultEndpointKeyRotation}
+            onSelect={(value) => { if (s) s.defaultEndpointKeyRotation = value; }}
+            panelId="settings-key-rotation-menu"
+            panelLabel="Key rotation"
+            labelledBy="settingsKeyRotationLabel"
+            panelMinWidth={300}
+            align="end"
+          >
+            {#snippet icon(option)}
+              <i class={`fa-solid ${option.value === "roundrobin" ? "fa-rotate" : "fa-thumbtack"}`} aria-hidden="true"></i>
+            {/snippet}
+          </SelectMenu>
+        </div>
       </div>
 
       <div class="setting-row">
-        <div class="setting-info"><div class="setting-label">Default Key Health</div><div class="setting-description">Whether new endpoints bench keys on errors. Turn off for short-window rate limits.</div></div>
-        <div class="setting-control select-control"><select bind:value={s.defaultEndpointKeyHealth} class="form-select">
-          <option value={true as unknown as string}>On</option>
-          <option value={false as unknown as string}>Off</option>
-        </select></div>
+        <div class="setting-info"><div class="setting-label" id="settingsKeyHealthLabel">Default Key Health</div><div class="setting-description">Whether new endpoints bench keys on errors. Turn off for short-window rate limits.</div></div>
+        <div class="setting-control select-control">
+          <SelectMenu
+            options={keyHealthOptions}
+            value={s.defaultEndpointKeyHealth ? "on" : "off"}
+            onSelect={(value) => { if (s) s.defaultEndpointKeyHealth = value === "on"; }}
+            panelId="settings-key-health-menu"
+            panelLabel="Key health"
+            labelledBy="settingsKeyHealthLabel"
+            panelMinWidth={300}
+            align="end"
+          >
+            {#snippet icon(option)}
+              <i class={`fa-solid ${option.value === "on" ? "fa-heart-pulse" : "fa-heart-crack"}`} aria-hidden="true"></i>
+            {/snippet}
+          </SelectMenu>
+        </div>
       </div>
 
       <div class="setting-row">
@@ -206,8 +280,7 @@
   .setting-label { margin-bottom: 4px; color: var(--text-primary); font-size: 15px; font-weight: 600; }
   .setting-description { color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
   .setting-control { display: flex; align-items: center; flex-shrink: 0; }
-  .select-control { min-width: 220px; }
-  .form-select { width: 100%; min-height: 42px; padding: 10px 36px 10px 14px; border: 1px solid var(--input-border); border-radius: 8px; background-color: var(--input-bg); color: var(--text-primary); }
+  .select-control { width: 260px; min-width: 260px; }
   .number-input { width: 100px; padding: 9px 12px; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); text-align: center; transition: opacity .2s ease; }
   .number-input:disabled { opacity: .4; cursor: not-allowed; }
   .toggle-control { gap: 12px; }
@@ -221,5 +294,5 @@
   .skeleton-label { width: min(210px, 60%); height: 16px; }
   .skeleton-description { width: min(480px, 90%); height: 12px; }
   .skeleton-control { width: 100px; height: 42px; flex-shrink: 0; }
-  @media (max-width: 768px) { .settings-stack { padding-bottom: 116px; } .setting-row { flex-direction: column; gap: 12px; } .setting-control, .select-control { width: 100%; } .toggle-control { justify-content: flex-end; } .card-header, .card-body { padding-left: 18px; padding-right: 18px; } .card-subtitle { font-size: 11px; } .save-row { right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); } }
+  @media (max-width: 768px) { .settings-stack { padding-bottom: 116px; } .setting-row { flex-direction: column; gap: 12px; } .setting-control, .select-control { width: 100%; min-width: 0; } .toggle-control { justify-content: flex-end; } .card-header, .card-body { padding-left: 18px; padding-right: 18px; } .card-subtitle { font-size: 11px; } .save-row { right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); } }
 </style>

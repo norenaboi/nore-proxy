@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { requestAdminJson } from "$frontend/lib/api/admin";
+  import SelectMenu, { type SelectMenuOption } from "$frontend/components/admin/SelectMenu.svelte";
 
   interface Request {
     id: number; timestamp: number; name: string; apiKey: string; model: string;
@@ -128,6 +129,33 @@
   function fmtTime(ts: number) { const d = new Date(ts * 1000); return `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`; }
   function money(v: number) { return `$${Number(v || 0).toFixed(8)}`; }
 
+  // Each list keeps the empty sentinel the query builder reads as "unfiltered".
+  // The key, model, and endpoint lists come from traffic, so they can run long
+  // enough for the menu to grow its own search box.
+  const apiKeyMenuOptions = $derived<SelectMenuOption[]>([
+    { value: "", label: "All keys" },
+    ...apiKeyOptions.map((option) => ({ value: option.value, label: option.label })),
+  ]);
+  const modelMenuOptions = $derived<SelectMenuOption[]>([
+    { value: "", label: "All models" },
+    ...modelOptions.map((model) => ({ value: model, label: model })),
+  ]);
+  const endpointMenuOptions = $derived<SelectMenuOption[]>([
+    { value: "", label: "All endpoints" },
+    ...endpointOptions.map((endpoint) => ({ value: endpoint, label: endpoint })),
+  ]);
+  const statusMenuOptions: SelectMenuOption[] = [
+    { value: "", label: "All statuses" },
+    { value: "success", label: "Success" },
+    { value: "failed", label: "Failed" },
+  ];
+  const timeMenuOptions: SelectMenuOption[] = [
+    { value: "", label: "All time" },
+    { value: "24h", label: "Last 24 hours" },
+    { value: "7d", label: "Last 7 days" },
+    { value: "30d", label: "Last 30 days" },
+  ];
+
   function resetFilters() {
     apiKeyFilter = ""; modelFilter = ""; endpointFilter = ""; statusFilter = ""; timeFilter = "";
     loadPage({ reset: true });
@@ -160,37 +188,69 @@
 <section class="toolbar" aria-label="Request filters">
   <div class="filters">
     <div class="filter-field">
-      <label for="apiKeyFilter">API key</label>
-      <select id="apiKeyFilter" bind:value={apiKeyFilter} onchange={() => loadPage({ reset: true })}>
-        <option value="">All keys</option>
-        {#each apiKeyOptions as o}<option value={o.value}>{o.label}</option>{/each}
-      </select>
+      <span class="filter-label" id="apiKeyFilterLabel">API key</span>
+      <SelectMenu
+        options={apiKeyMenuOptions}
+        value={apiKeyFilter}
+        onSelect={(value) => { apiKeyFilter = value; loadPage({ reset: true }); }}
+        panelId="logs-api-key-filter-menu"
+        panelLabel="API key filter"
+        labelledBy="apiKeyFilterLabel"
+        searchPlaceholder="Search keys…"
+        emptyText="No keys match."
+        panelMinWidth={260}
+      />
     </div>
     <div class="filter-field">
-      <label for="modelFilter">Model</label>
-      <select id="modelFilter" bind:value={modelFilter} onchange={() => loadPage({ reset: true })}>
-        <option value="">All models</option>
-        {#each modelOptions as m}<option value={m}>{m}</option>{/each}
-      </select>
+      <span class="filter-label" id="modelFilterLabel">Model</span>
+      <SelectMenu
+        options={modelMenuOptions}
+        value={modelFilter}
+        onSelect={(value) => { modelFilter = value; loadPage({ reset: true }); }}
+        panelId="logs-model-filter-menu"
+        panelLabel="Model filter"
+        labelledBy="modelFilterLabel"
+        searchPlaceholder="Search models…"
+        emptyText="No models match."
+        panelMinWidth={280}
+      />
     </div>
     <div class="filter-field">
-      <label for="endpointFilter">Endpoint</label>
-      <select id="endpointFilter" bind:value={endpointFilter} onchange={() => loadPage({ reset: true })}>
-        <option value="">All endpoints</option>
-        {#each endpointOptions as e}<option value={e}>{e}</option>{/each}
-      </select>
+      <span class="filter-label" id="endpointFilterLabel">Endpoint</span>
+      <SelectMenu
+        options={endpointMenuOptions}
+        value={endpointFilter}
+        onSelect={(value) => { endpointFilter = value; loadPage({ reset: true }); }}
+        panelId="logs-endpoint-filter-menu"
+        panelLabel="Endpoint filter"
+        labelledBy="endpointFilterLabel"
+        searchPlaceholder="Search endpoints…"
+        emptyText="No endpoints match."
+        panelMinWidth={260}
+      />
     </div>
     <div class="filter-field">
-      <label for="statusFilter">Status</label>
-      <select id="statusFilter" bind:value={statusFilter} onchange={() => loadPage({ reset: true })}>
-        <option value="">All statuses</option><option value="success">Success</option><option value="failed">Failed</option>
-      </select>
+      <span class="filter-label" id="statusFilterLabel">Status</span>
+      <SelectMenu
+        options={statusMenuOptions}
+        value={statusFilter}
+        onSelect={(value) => { statusFilter = value; loadPage({ reset: true }); }}
+        panelId="logs-status-filter-menu"
+        panelLabel="Status filter"
+        labelledBy="statusFilterLabel"
+      />
     </div>
     <div class="filter-field">
-      <label for="timeFilter">Time range</label>
-      <select id="timeFilter" bind:value={timeFilter} onchange={() => loadPage({ reset: true })}>
-        <option value="">All time</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option>
-      </select>
+      <span class="filter-label" id="timeFilterLabel">Time range</span>
+      <SelectMenu
+        options={timeMenuOptions}
+        value={timeFilter}
+        onSelect={(value) => { timeFilter = value; loadPage({ reset: true }); }}
+        panelId="logs-time-filter-menu"
+        panelLabel="Time range filter"
+        labelledBy="timeFilterLabel"
+        panelMinWidth={200}
+      />
     </div>
   </div>
   <div class="toolbar-actions">
@@ -323,9 +383,7 @@
   .toolbar { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding: 18px; margin-bottom: 24px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); }
   .filters { display: grid; grid-template-columns: repeat(5, minmax(140px, 220px)); gap: 12px; flex: 1; }
   .filter-field { display: flex; flex-direction: column; gap: 7px; }
-  .filter-field label { color: var(--text-secondary); font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
-  .filter-field select { width: 100%; min-height: 42px; padding: 9px 36px 9px 12px; border: 1px solid var(--input-border); border-radius: 8px; outline: none; background: var(--input-bg); color: var(--text-primary); font-family: inherit; }
-  .filter-field select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-alpha-01); }
+  .filter-label { color: var(--text-secondary); font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
   .toolbar-actions { display: flex; gap: 10px; }
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 10px 15px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 650; }
   .btn-primary { border-color: var(--primary-dark); background: var(--primary-dark); color: white; }

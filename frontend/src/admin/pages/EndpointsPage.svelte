@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import { fade, scale, slide } from "svelte/transition";
   import { requestAdminJson } from "$frontend/lib/api/admin";
   import { motionDuration } from "$frontend/lib/motion";
@@ -23,12 +23,12 @@
   import { pageHeaderActions, toast } from "$frontend/lib/stores";
   import ModalityToggle from "$frontend/components/ModalityToggle.svelte";
   import ModalityIcon from "$frontend/components/ModalityIcon.svelte";
+  import SelectMenu, { type SelectMenuGroup, type SelectMenuOption } from "$frontend/components/admin/SelectMenu.svelte";
   import {
     API_FORMATS,
     API_FORMAT_CATEGORIES,
     apiFormatCategory,
     apiFormatLabel,
-    apiFormatsInCategory,
     type ApiFormatCategory,
   } from "$contracts/apiFormats";
 
@@ -149,6 +149,32 @@
       .sort((a, b) => apiFormatLabel(a).localeCompare(apiFormatLabel(b))),
   );
 
+  // Filter-bar menus. Each keeps the "all" sentinel the matchers read as
+  // unfiltered; the format list follows the endpoints in use.
+  const formatFilterMenu = $derived<SelectMenuOption[]>([
+    { value: "all", label: "All formats" },
+    ...formatFilterOptions.map((value) => ({ value, label: apiFormatLabel(value) })),
+  ]);
+  const rotationFilterMenu: SelectMenuOption[] = [
+    { value: "all", label: "Any rotation" },
+    { value: "sticky", label: "Sticky" },
+    { value: "roundrobin", label: "Round-robin" },
+  ];
+  const proxyFilterMenu: SelectMenuOption[] = [
+    { value: "all", label: "Any connection" },
+    { value: "direct", label: "Direct" },
+    { value: "proxied", label: "Through a proxy" },
+  ];
+  const sortFieldMenu: SelectMenuOption[] = [
+    { value: "index", label: "Version" },
+    { value: "name", label: "Name" },
+    { value: "format", label: "Modality" },
+  ];
+  const sortDirectionMenu: SelectMenuOption[] = [
+    { value: "asc", label: "Ascending" },
+    { value: "desc", label: "Descending" },
+  ];
+
   function clearCriteria() {
     query = "";
     formatFilter = "all";
@@ -232,60 +258,32 @@
   );
   const bulkSummary = $derived(bulkInput.trim() ? "Unimported lines" : "Paste many keys");
 
-  // API Format listbox. A <select> cannot render the name/path pair, so the
-  // keyboard contract is implemented here: arrows wrap, Home/End jump to the
-  // ends, Escape and Tab close, focus opens on the current choice.
-  let fmtOpen = $state(false);
-  let fmtTrigger: HTMLButtonElement | undefined = $state();
-  const fmtOptionButtons: (HTMLButtonElement | undefined)[] = [];
+  // API Format menu. A <select> cannot render the name/path pair, so the editor
+  // uses the shared listbox, with the categories standing side by side as
+  // columns — every format stays visible without scrolling the modal.
   const selectedFormat = $derived(apiFormats.find((option) => option.value === fApiFormat));
   const clientRoute = $derived(categoryRoutes[selectedFormat?.category ?? "text"]);
 
-  function openFmt(focusIndex: number) {
-    fmtOpen = true;
-    void tick().then(() => fmtOptionButtons[focusIndex]?.focus());
-  }
+  const apiFormatMenu: SelectMenuOption[] = apiFormats.map((format) => ({
+    value: format.value,
+    label: format.label,
+    note: format.note,
+    meta: format.path,
+    group: format.category,
+  }));
 
-  function closeFmt({ restoreFocus = false } = {}) {
-    if (!fmtOpen) return;
-    fmtOpen = false;
-    if (restoreFocus) fmtTrigger?.focus();
-  }
+  const categoryAccents: Record<ApiFormatCategory, string> = {
+    text: "var(--primary-dark)",
+    image: "#be3f8c",
+    embedding: "#0e7490",
+  };
 
-  function toggleFmt() {
-    if (fmtOpen) closeFmt({ restoreFocus: true });
-    else openFmt(Math.max(apiFormats.findIndex((option) => option.value === fApiFormat), 0));
-  }
-
-  function chooseFmt(value: string) {
-    fApiFormat = value;
-    closeFmt({ restoreFocus: true });
-  }
-
-  function handleFmtTriggerKeydown(event: KeyboardEvent) {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    event.preventDefault();
-    openFmt(event.key === "ArrowDown" ? 0 : apiFormats.length - 1);
-  }
-
-  function handleFmtOptionKeydown(event: KeyboardEvent, index: number) {
-    const last = apiFormats.length - 1;
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      fmtOptionButtons[index === last ? 0 : index + 1]?.focus();
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      fmtOptionButtons[index === 0 ? last : index - 1]?.focus();
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      fmtOptionButtons[0]?.focus();
-    } else if (event.key === "End") {
-      event.preventDefault();
-      fmtOptionButtons[last]?.focus();
-    } else if (event.key === "Tab") {
-      closeFmt();
-    }
-  }
+  const apiFormatMenuGroups: SelectMenuGroup[] = API_FORMAT_CATEGORIES.map((group) => ({
+    key: group.category,
+    label: group.label,
+    hint: group.hint,
+    accent: categoryAccents[group.category],
+  }));
 
   // Delete modal
   let deletingIndex = $state<number | null>(null);
@@ -382,7 +380,7 @@
     fName = ""; fUrl = ""; fAppendSuffix = true; fHeaders = ""; fHeaderPresets = emptyHeaderPresets();
     fBodyParamsAdd = ""; fBodyParamsStrip = ""; fProxyId = "";
     tokenInput = ""; bulkInput = ""; pendingTokens = []; pendingDeleteConfirm = new Set();
-    openSection = null; fmtOpen = false;
+    openSection = null;
     let defaults: Settings | undefined;
     try {
       defaults = (await requestAdminJson<{ settings: Settings }>("/api/settings")).settings;
@@ -410,7 +408,7 @@
     editingIndex = index;
     fName = ep.name || ""; fUrl = ep.url; fAppendSuffix = ep.appendApiSuffix !== false;
     tokenInput = ""; bulkInput = "";
-    openSection = null; fmtOpen = false;
+    openSection = null;
     pendingTokens = [...(ep.tokens || (ep.token ? [ep.token] : []))];
     pendingDeleteConfirm = new Set();
     const extracted = extractHeaderPresets(ep.headers);
@@ -431,7 +429,7 @@
   function closeModal() {
     modalOpen = false; editingIndex = null; pendingTokens = []; pendingDeleteConfirm = new Set();
     fHeaderPresets = emptyHeaderPresets();
-    openSection = null; fmtOpen = false;
+    openSection = null;
   }
 
   function collectGenDefaults() {
@@ -561,8 +559,6 @@
 
   onMount(() => {
     const onDocumentClick = (event: MouseEvent) => {
-      const clicked = event.target;
-      if (fmtOpen && !(clicked instanceof Element && clicked.closest(".fmt-select"))) closeFmt();
       if (pendingDeleteConfirm.size === 0) return;
       const target = event.target;
       if (target instanceof Element && target.closest("[data-token-confirm]")) return;
@@ -570,8 +566,7 @@
     };
     const onKeydown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (fmtOpen) closeFmt({ restoreFocus: true });
-      else if (bulkDeleteOpen) bulkDeleteOpen = false;
+      if (bulkDeleteOpen) bulkDeleteOpen = false;
       else if (deletingIndex !== null) deletingIndex = null;
       else if (keysModalIndex !== null) keysModalIndex = null;
       else if (modalOpen) closeModal();
@@ -630,11 +625,26 @@
     </div>
     {#if filtersOpen}
       <div id="endpoint-filters" class="endpoint-filters">
-        <label>API format<select bind:value={formatFilter} class="form-select"><option value="all">All formats</option>{#each formatFilterOptions as value}<option {value}>{apiFormatLabel(value)}</option>{/each}</select></label>
-        <label>Key rotation<select bind:value={rotationFilter} class="form-select"><option value="all">Any rotation</option><option value="sticky">Sticky</option><option value="roundrobin">Round-robin</option></select></label>
-        <label>Connection<select bind:value={proxyFilter} class="form-select"><option value="all">Any connection</option><option value="direct">Direct</option><option value="proxied">Through a proxy</option></select></label>
-        <label>Sort by<select bind:value={sortField} class="form-select"><option value="index">Version</option><option value="name">Name</option><option value="format">Modality</option></select></label>
-        <label>Direction<select bind:value={sortDirection} class="form-select"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
+        <div class="filter-field">
+          <span class="filter-label" id="endpointFormatFilterLabel">API format</span>
+          <SelectMenu compact options={formatFilterMenu} value={formatFilter} onSelect={(value) => (formatFilter = value)} panelId="endpoint-format-filter-menu" panelLabel="API format filter" labelledBy="endpointFormatFilterLabel" panelMinWidth={230} />
+        </div>
+        <div class="filter-field">
+          <span class="filter-label" id="endpointRotationFilterLabel">Key rotation</span>
+          <SelectMenu compact options={rotationFilterMenu} value={rotationFilter} onSelect={(value) => (rotationFilter = value as typeof rotationFilter)} panelId="endpoint-rotation-filter-menu" panelLabel="Key rotation filter" labelledBy="endpointRotationFilterLabel" panelMinWidth={190} />
+        </div>
+        <div class="filter-field">
+          <span class="filter-label" id="endpointProxyFilterLabel">Connection</span>
+          <SelectMenu compact options={proxyFilterMenu} value={proxyFilter} onSelect={(value) => (proxyFilter = value as typeof proxyFilter)} panelId="endpoint-proxy-filter-menu" panelLabel="Connection filter" labelledBy="endpointProxyFilterLabel" panelMinWidth={200} />
+        </div>
+        <div class="filter-field">
+          <span class="filter-label" id="endpointSortFieldLabel">Sort by</span>
+          <SelectMenu compact options={sortFieldMenu} value={sortField} onSelect={(value) => (sortField = value as typeof sortField)} panelId="endpoint-sort-field-menu" panelLabel="Sort field" labelledBy="endpointSortFieldLabel" panelMinWidth={180} />
+        </div>
+        <div class="filter-field">
+          <span class="filter-label" id="endpointSortDirectionLabel">Direction</span>
+          <SelectMenu compact options={sortDirectionMenu} value={sortDirection} onSelect={(value) => (sortDirection = value as typeof sortDirection)} panelId="endpoint-sort-direction-menu" panelLabel="Sort direction" labelledBy="endpointSortDirectionLabel" align="end" panelMinWidth={180} />
+        </div>
         <button class="btn btn-secondary clear-filters" type="button" onclick={clearCriteria} disabled={!activeCriteria}>Clear</button>
       </div>
     {/if}
@@ -694,60 +704,30 @@
           <div class="form-group"><label for="epUrl">Endpoint URL</label><input id="epUrl" type="url" bind:value={fUrl} placeholder="e.g., https://api.example.com" /><label class="gen-toggle suffix-toggle"><input type="checkbox" bind:checked={fAppendSuffix} /><span class="gen-toggle-slider"></span><span>Append API version suffix (/v1)</span></label></div>
           <div class="form-group">
             <span class="section-label" id="epFmtLabel">API Format</span>
-            <div class="fmt-select">
-              <button
-                bind:this={fmtTrigger}
-                class:open={fmtOpen}
-                class="fmt-trigger"
-                type="button"
-                aria-haspopup="listbox"
-                aria-expanded={fmtOpen}
-                aria-labelledby="epFmtLabel epFmtValue"
-                onclick={toggleFmt}
-                onkeydown={handleFmtTriggerKeydown}
-              >
-                <span class="fmt-category {selectedFormat?.category ?? 'text'}" title={categoryLabels[selectedFormat?.category ?? "text"]}>
-                  <ModalityIcon modality={selectedFormat?.category ?? "text"} size={14} label={categoryLabels[selectedFormat?.category ?? "text"]} />
-                </span>
-                <span class="fmt-value" id="epFmtValue">{apiFormatLabel(fApiFormat)}</span>
-                <span class="fmt-path">{selectedFormat?.path ?? ""}</span>
-                <i class="fa-solid fa-chevron-down fmt-caret" aria-hidden="true"></i>
-              </button>
-              {#if fmtOpen}
-                <!-- Grouped by category. Arrow keys walk one flat option
-                     sequence; the group headers are presentational and never
-                     take focus. -->
-                <div class="fmt-menu" role="listbox" aria-label="API format" tabindex="-1">
-                  {#each API_FORMAT_CATEGORIES as group (group.category)}
-                    <div class="fmt-group {group.category}">
-                      <div class="fmt-group-head" aria-hidden="true">
-                        <span class="fmt-group-glyph"><ModalityIcon modality={group.category} size={13} /></span>
-                        <span class="fmt-group-label">{group.label}</span>
-                        <span class="fmt-group-hint">{group.hint}</span>
-                      </div>
-                      {#each apiFormatsInCategory(group.category) as option (option.value)}
-                        {@const index = apiFormats.findIndex((format) => format.value === option.value)}
-                        <button
-                          bind:this={fmtOptionButtons[index]}
-                          class:selected={fApiFormat === option.value}
-                          class="fmt-option"
-                          type="button"
-                          role="option"
-                          aria-selected={fApiFormat === option.value}
-                          aria-label={`${option.label} — ${group.label}`}
-                          onclick={() => chooseFmt(option.value)}
-                          onkeydown={(event) => handleFmtOptionKeydown(event, index)}
-                        >
-                          <span class="fmt-option-label">{option.label}{#if option.note} <span class="fmt-option-note">({option.note})</span>{/if}</span>
-                          <span class="fmt-option-path">{option.path}</span>
-                          <i class="fa-solid fa-check fmt-check" aria-hidden="true"></i>
-                        </button>
-                      {/each}
-                    </div>
-                  {/each}
-                </div>
-              {/if}
-            </div>
+            <SelectMenu
+              options={apiFormatMenu}
+              groups={apiFormatMenuGroups}
+              value={fApiFormat}
+              onSelect={(value) => (fApiFormat = value)}
+              panelId="endpoint-api-format-menu"
+              panelLabel="API format"
+              placeholder="Select an API format"
+              labelledBy="epFmtLabel"
+              groupLayout="columns"
+              panelMinWidth={620}
+              panelMaxWidth={680}
+            >
+              {#snippet icon(option)}
+                <ModalityIcon
+                  modality={(option.group ?? "text") as ApiFormatCategory}
+                  size={14}
+                  label={categoryLabels[(option.group ?? "text") as ApiFormatCategory]}
+                />
+              {/snippet}
+              {#snippet groupIcon(group)}
+                <ModalityIcon modality={group.key as ApiFormatCategory} size={13} />
+              {/snippet}
+            </SelectMenu>
             <p class="form-hint">The format's category is what every model on this endpoint becomes: a model served here is a {categoryLabels[selectedFormat?.category ?? "text"].toLowerCase()} model, answering on <code>{clientRoute}</code>.</p>
           </div>
           <div class="form-group">
@@ -1028,8 +1008,8 @@
   .filters-toggle.active { border-color: var(--primary-alpha-035); background: var(--primary-alpha-012); color: var(--primary-dark); }
   .filter-count { display: inline-flex; min-width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 999px; background: var(--primary); color: white; font-size: 10px; }
   .endpoint-filters { display: grid; grid-template-columns: repeat(5, minmax(110px, 1fr)) auto; align-items: end; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--border-color); background: var(--bg-tertiary); }
-  .endpoint-filters label { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: var(--text-secondary); font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
-  .endpoint-filters select { width: 100%; min-width: 0; height: 38px; padding: 0 32px 0 12px; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); font-size: 12px; text-transform: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; }
+  .endpoint-filters .filter-field { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+  .filter-label { color: var(--text-secondary); font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
   .clear-filters { height: 38px; }
   .filtered-empty { display: flex; min-height: 260px; align-items: center; justify-content: center; flex-direction: column; gap: 9px; color: var(--text-secondary); text-align: center; }
   .filtered-empty > i { color: var(--gray-300); font-size: 30px; }
@@ -1056,48 +1036,6 @@
   :global(.endpoint-modal .form-group > input), :global(.endpoint-modal .form-group > select), :global(.endpoint-modal .form-group > textarea), :global(.endpoint-modal .input-row input), :global(.endpoint-modal .gen-input) { padding: 12px 16px; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); font: 14px/normal Inter, ui-sans-serif, system-ui, sans-serif; transition: border-color .2s ease, box-shadow .2s ease, background .2s ease; }
   :global(.endpoint-modal .form-group input:focus), :global(.endpoint-modal .form-group select:focus), :global(.endpoint-modal .form-group textarea:focus) { outline: none; border-color: var(--primary); background-color: var(--card-bg); box-shadow: 0 0 0 3px var(--primary-alpha-01); }
   :global(.endpoint-modal .form-select) { min-width: 0; padding-right: 36px; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; }
-  /* API Format listbox, styled like the app's other dropdowns: bordered trigger
-     with a caret, floating panel, check on the current row. The panel is
-     absolute inside the scrolling body; the field sits near the top of the
-     column, so it opens downward. */
-  .fmt-select { position: relative; }
-  .fmt-trigger { display: flex; width: 100%; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); font: 14px/normal Inter, ui-sans-serif, system-ui, sans-serif; text-align: left; cursor: pointer; transition: border-color .2s ease, box-shadow .2s ease, background .2s ease; }
-  .fmt-trigger:hover { border-color: var(--primary-dark); }
-  .fmt-trigger.open { border-color: var(--primary); background: var(--card-bg); box-shadow: 0 0 0 3px var(--primary-alpha-01); }
-  .fmt-category { flex-shrink: 0; }
-  .fmt-value { min-width: 0; flex-shrink: 0; font-weight: 500; }
-  .fmt-path { min-width: 0; flex: 1; overflow: hidden; color: var(--text-secondary); font: 400 12px monospace; text-overflow: ellipsis; white-space: nowrap; }
-  .fmt-caret { flex-shrink: 0; color: var(--text-secondary); font-size: 11px; transition: transform .18s ease, color .2s ease; }
-  .fmt-trigger.open .fmt-caret { color: var(--primary-dark); transform: rotate(180deg); }
-  .fmt-menu { position: absolute; top: calc(100% + 6px); right: 0; left: 0; z-index: 30; display: grid; gap: 2px; padding: 6px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); box-shadow: 0 14px 36px rgba(36, 27, 45, .2); animation: fmt-menu-in .16s ease; }
-  @keyframes fmt-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-  /* Fixed-width check column: selecting a different format must not reflow the
-     menu. */
-  .fmt-option { display: grid; align-items: center; grid-template-columns: auto minmax(0, 1fr) 13px; gap: 10px; padding: 8px 10px; border: 0; border-radius: 7px; background: none; color: var(--text-primary); font: inherit; text-align: left; cursor: pointer; transition: background .12s ease, color .12s ease; }
-  .fmt-option:hover { background: var(--primary-alpha-01); }
-  .fmt-option:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-  .fmt-option.selected { background: var(--primary-alpha-012); color: var(--primary-dark); }
-  /* A tinted rail on each group's left edge marks the category without adding
-     a column to every row. */
-  .fmt-group { padding: 2px 0 2px 8px; border-left: 3px solid transparent; border-radius: 4px; }
-  .fmt-group + .fmt-group { margin-top: 6px; }
-  .fmt-group.text { border-left-color: var(--primary-alpha-035); }
-  .fmt-group.image { border-left-color: rgba(236,72,153,.45); }
-  .fmt-group.embedding { border-left-color: rgba(6,182,212,.5); }
-  .fmt-group-head { display: flex; align-items: center; gap: 7px; padding: 4px 10px 5px; }
-  .fmt-group-glyph { display: inline-flex; color: var(--text-secondary); }
-  .fmt-group.text .fmt-group-glyph { color: var(--primary-dark); }
-  .fmt-group.image .fmt-group-glyph { color: #be3f8c; }
-  .fmt-group.embedding .fmt-group-glyph { color: #0e7490; }
-  .fmt-group-label { color: var(--text-primary); font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
-  .fmt-group-hint { color: var(--text-secondary); font-size: 10.5px; }
-  .fmt-option-label { font-size: 13px; font-weight: 600; }
-  .fmt-option-note { color: var(--text-secondary); font-size: 11px; font-weight: 400; }
-  .fmt-option.selected .fmt-option-note { color: inherit; opacity: .75; }
-  .fmt-option-path { overflow: hidden; color: var(--text-secondary); font: 400 11px monospace; text-overflow: ellipsis; white-space: nowrap; }
-  .fmt-option:hover .fmt-option-path, .fmt-option.selected .fmt-option-path { color: inherit; opacity: .75; }
-  .fmt-check { color: var(--primary-dark); font-size: 12px; opacity: 0; }
-  .fmt-option.selected .fmt-check { opacity: 1; }
   :global(.endpoint-modal .modal-footer) { flex-shrink: 0; gap: 12px; margin: 0; padding: 16px 24px; border-top: 1px solid var(--border-color); }
   .form-hint { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
   .suffix-toggle { margin-top: 10px; }
@@ -1205,8 +1143,7 @@
   .key-status-pill.timeout { background: rgba(217,119,6,.1); color: #d97706; }
   .key-status-pill.disabled { background: var(--gray-200); color: var(--gray-600); }
   @media (prefers-reduced-motion: reduce) {
-    .disclosure, .disclosure-head, .disclosure-chevron, .disclosure-summary, .fmt-trigger, .fmt-caret, .fmt-option { transition: none; }
-    .fmt-menu { animation: none; }
+    .disclosure, .disclosure-head, .disclosure-chevron, .disclosure-summary { transition: none; }
   }
   @media (max-width: 768px) {
     :global(.endpoint-modal-backdrop) { padding: 2.5vw; }

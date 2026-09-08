@@ -6,6 +6,7 @@
   import { pageHeaderActions, toast } from "$frontend/lib/stores";
   import AutoModelTargetPicker from "$frontend/components/admin/AutoModelTargetPicker.svelte";
   import FilterablePicker, { type PickerFilter, type PickerOption } from "$frontend/components/admin/FilterablePicker.svelte";
+  import SelectMenu, { type SelectMenuOption } from "$frontend/components/admin/SelectMenu.svelte";
   import { getProvider, getProviderIcon, type CatalogModel, type Provider } from "$frontend/lib/models/catalog";
   import { deadTargets, effectiveModelName, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, targetHealth, type NumericInputValue } from "$frontend/admin/modelForm";
   import ModalityToggle from "$frontend/components/ModalityToggle.svelte";
@@ -210,6 +211,40 @@
     const keys = [...new Set(models.map(groupKey))];
     return keys.sort((a, b) => naturalSort(groupLabel(a), groupLabel(b)));
   });
+
+  // Filter-bar menus. Each keeps the "all" sentinel the matchers read as
+  // unfiltered; the version key rides in the meta column rather than the label.
+  const endpointFilterMenu = $derived<SelectMenuOption[]>([
+    { value: "all", label: "All endpoints" },
+    ...endpointFilterOptions.map((key) => ({
+      value: key,
+      label: groupLabel(key),
+      meta: key.startsWith("v") ? key : undefined,
+    })),
+  ]);
+  const typeFilterMenu: SelectMenuOption[] = [
+    { value: "all", label: "All types" },
+    { value: "concrete", label: "Concrete" },
+    { value: "auto", label: "Automatic" },
+  ];
+  const stateFilterMenu: SelectMenuOption[] = [
+    { value: "all", label: "Any state" },
+    { value: "enabled", label: "Enabled" },
+    { value: "disabled", label: "Disabled" },
+  ];
+  const visibilityFilterMenu: SelectMenuOption[] = [
+    { value: "all", label: "Any visibility" },
+    { value: "public", label: "Public" },
+    { value: "hidden", label: "Hidden" },
+  ];
+  const sortFieldMenu: SelectMenuOption[] = [
+    { value: "name", label: "Name" },
+    { value: "status", label: "Status" },
+  ];
+  const sortDirectionMenu: SelectMenuOption[] = [
+    { value: "asc", label: "Ascending" },
+    { value: "desc", label: "Descending" },
+  ];
 
   function clearCriteria() {
     query = "";
@@ -755,12 +790,30 @@
     </div>
     {#if filtersOpen}
       <div id="model-filters" class="model-filters">
-        <label>Endpoint<select bind:value={endpointFilter} class="form-select"><option value="all">All endpoints</option>{#each endpointFilterOptions as key}<option value={key}>{groupLabel(key)}{key.startsWith("v") ? ` (${key})` : ""}</option>{/each}</select></label>
-        <label>Type<select bind:value={typeFilter} class="form-select"><option value="all">All types</option><option value="concrete">Concrete</option><option value="auto">Automatic</option></select></label>
-        <label>State<select bind:value={stateFilter} class="form-select"><option value="all">Any state</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
-        <label>Visibility<select bind:value={visibilityFilter} class="form-select"><option value="all">Any visibility</option><option value="public">Public</option><option value="hidden">Hidden</option></select></label>
-        <label>Sort by<select bind:value={sortField} class="form-select"><option value="name">Name</option><option value="status">Status</option></select></label>
-        <label>Direction<select bind:value={sortDirection} class="form-select"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
+        <div class="filter-field">
+          <span class="filter-label" id="modelEndpointFilterLabel">Endpoint</span>
+          <SelectMenu compact options={endpointFilterMenu} value={endpointFilter} onSelect={(value) => (endpointFilter = value)} panelId="model-endpoint-filter-menu" panelLabel="Endpoint filter" labelledBy="modelEndpointFilterLabel" searchPlaceholder="Search endpoints…" emptyText="No endpoints match." panelMinWidth={260} />
+        </div>
+        <div class="filter-field">
+          <span class="filter-label" id="modelTypeFilterLabel">Type</span>
+          <SelectMenu compact options={typeFilterMenu} value={typeFilter} onSelect={(value) => (typeFilter = value as typeof typeFilter)} panelId="model-type-filter-menu" panelLabel="Type filter" labelledBy="modelTypeFilterLabel" panelMinWidth={180} />
+        </div>
+        <div class="filter-field">
+          <span class="filter-label" id="modelStateFilterLabel">State</span>
+          <SelectMenu compact options={stateFilterMenu} value={stateFilter} onSelect={(value) => (stateFilter = value as typeof stateFilter)} panelId="model-state-filter-menu" panelLabel="State filter" labelledBy="modelStateFilterLabel" panelMinWidth={180} />
+        </div>
+        <div class="filter-field">
+          <span class="filter-label" id="modelVisibilityFilterLabel">Visibility</span>
+          <SelectMenu compact options={visibilityFilterMenu} value={visibilityFilter} onSelect={(value) => (visibilityFilter = value as typeof visibilityFilter)} panelId="model-visibility-filter-menu" panelLabel="Visibility filter" labelledBy="modelVisibilityFilterLabel" panelMinWidth={180} />
+        </div>
+        <div class="filter-field">
+          <span class="filter-label" id="modelSortFieldLabel">Sort by</span>
+          <SelectMenu compact options={sortFieldMenu} value={sortField} onSelect={(value) => (sortField = value as typeof sortField)} panelId="model-sort-field-menu" panelLabel="Sort field" labelledBy="modelSortFieldLabel" panelMinWidth={180} />
+        </div>
+        <div class="filter-field">
+          <span class="filter-label" id="modelSortDirectionLabel">Direction</span>
+          <SelectMenu compact options={sortDirectionMenu} value={sortDirection} onSelect={(value) => (sortDirection = value as typeof sortDirection)} panelId="model-sort-direction-menu" panelLabel="Sort direction" labelledBy="modelSortDirectionLabel" align="end" panelMinWidth={180} />
+        </div>
         <button class="btn btn-secondary clear-filters" type="button" onclick={clearCriteria} disabled={!activeCriteria}>Clear</button>
       </div>
     {/if}
@@ -1085,8 +1138,8 @@
   .filters-toggle.active { border-color: var(--primary-alpha-035); background: var(--primary-alpha-012); color: var(--primary-dark); }
   .filter-count { display: inline-flex; min-width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 999px; background: var(--primary); color: white; font-size: 10px; }
   .model-filters { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)) auto; align-items: end; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--border-color); background: var(--bg-tertiary); }
-  .model-filters label { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: var(--text-secondary); font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
-  .model-filters select { width: 100%; min-width: 0; height: 38px; font-size: 12px; text-transform: none; }
+  .model-filters .filter-field { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+  .filter-label { color: var(--text-secondary); font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
   .clear-filters { height: 38px; }
   .card-body { padding: 18px 24px 24px; }
   .models-list { display: flex; flex-direction: column; gap: 10px; }
