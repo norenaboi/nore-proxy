@@ -5,6 +5,8 @@
 
   const path = window.location.pathname.replace(/\/+$/, "") || "/admin/dashboard";
 
+  const dashboardRanges: DashboardRange[] = ["24h", "7d", "30d", "total"];
+
   onMount(() => theme.init());
 
   const pages: Record<string, () => Promise<{ default: unknown }>> = {
@@ -61,8 +63,9 @@
 <AdminShell activePath={path} title={titles[path] ?? "Admin"} eyebrow={path === "/admin/dashboard" ? "Overview" : "Administration"}>
   {#snippet actions()}
     {#if path === "/admin/dashboard"}
-      <div class="dashboard-range-control" aria-label="Dashboard time range">
-        {#each (["24h", "7d", "30d", "total"] as DashboardRange[]) as range}
+      <div class="dashboard-range-control" style="--range-index: {Math.max(0, dashboardRanges.indexOf($dashboardRange))}" aria-label="Dashboard time range">
+        <span class="range-thumb" aria-hidden="true"></span>
+        {#each dashboardRanges as range}
           <button type="button" aria-pressed={$dashboardRange === range} onclick={() => dashboardRange.set(range)}>{range === "total" ? "Total" : range}</button>
         {/each}
       </div>
@@ -104,14 +107,33 @@
 <style>
   .page-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 16px; }
   .stats-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 20px; background: var(--primary-light); color: var(--primary-dark); font-size: 13px; white-space: nowrap; }
+  /* Equal grid tracks, so the thumb below travels in exact 100% steps. */
   .dashboard-range-control {
-    display: inline-flex;
+    position: relative;
+    display: inline-grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
     padding: 3px;
     border: 1px solid var(--border-color);
     border-radius: 9px;
     background: var(--bg-secondary);
   }
+  /* The selected background is one element that slides rather than a class that
+     moves between buttons. Percentages resolve against the control's padding
+     box, so subtracting its 3px inset on both sides gives exactly one track. */
+  .range-thumb {
+    position: absolute;
+    z-index: 0;
+    inset: 3px auto 3px 3px;
+    width: calc((100% - 6px) / 4);
+    border-radius: 6px;
+    background: var(--primary);
+    transform: translateX(calc(var(--range-index, 0) * 100%));
+    transition: transform .32s cubic-bezier(.22, 1, .36, 1);
+  }
   .dashboard-range-control button {
+    position: relative;
+    z-index: 1;
     min-height: 34px;
     padding: 6px 12px;
     border: 0;
@@ -119,14 +141,14 @@
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
+    /* One weight for every state: the tracks size to the widest label, so
+       bolding the selected one would resize the track under the thumb. */
+    font-weight: 650;
+    transition: color .2s ease;
   }
-  .dashboard-range-control button[aria-pressed="true"] {
-    background: var(--primary);
-    color: #241b2d;
-    font-weight: 700;
-  }
+  .dashboard-range-control button[aria-pressed="true"] { color: #241b2d; }
   @media (max-width: 640px) {
     .dashboard-range-control { width: 100%; }
-    .dashboard-range-control button { flex: 1; padding-inline: 8px; }
+    .dashboard-range-control button { padding-inline: 8px; }
   }
 </style>

@@ -14,6 +14,9 @@
     actions,
   }: { activePath: string; title: string; eyebrow?: string; children: Snippet; actions?: Snippet } = $props();
 
+  // Pages whose widest table needs more room than the default column.
+  const widePaths = ["/admin/logs", "/admin/errors", "/admin/endpoint-stats"];
+
   // Resources, then the reporting pages, then everything operational. The groups
   // are spaced apart in the sidebar rather than ruled off, so the two rules stay
   // the only ones and keep reading as header / navigation / footer.
@@ -78,7 +81,12 @@
   </div>
 </aside>
 
-<main class="main-content" class:wide-content={activePath === "/admin/logs" || activePath === "/admin/endpoint-stats"} id="main">
+<main
+  class="main-content"
+  class:wide-content={widePaths.includes(activePath)}
+  class:viewport-fit={activePath === "/admin/dashboard"}
+  id="main"
+>
   <header class="header">
     <div>
       <p class="header-eyebrow">{eyebrow}</p>

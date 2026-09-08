@@ -87,6 +87,22 @@ a { color: inherit; }
 
 /* Layout */
 .main-content { width: min(1244px, calc(100% - 64px)); min-height: 100vh; margin-inline: auto; padding: 46px 0 80px; }
+/* Fixed-height page column. The page it carries owns exactly the viewport, and
+   one block inside it scrolls instead of the document. Guarded on both axes:
+   below 1025px the sidebar becomes a bar above the content, so the viewport is
+   no longer the main column's to fill, and below 700px tall there is not enough
+   room left under the summary blocks for a scroll region worth having. */
+@media (min-width: 1025px) and (min-height: 700px) {
+  .main-content.viewport-fit {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    min-height: 0;
+    padding-bottom: 34px;
+    overflow: hidden;
+  }
+  .main-content.viewport-fit > .header { flex: 0 0 auto; margin-bottom: 26px; }
+}
 .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 36px; }
 .header h1, h1 { color: var(--text-primary); font: 500 clamp(30px,4vw,44px)/1.08 Georgia,"Times New Roman",serif; letter-spacing: -.025em; }
 .header-eyebrow { margin: 0 0 8px; color: var(--primary-dark); font: 800 10px/1.2 Inter,sans-serif; letter-spacing: .12em; text-transform: uppercase; }

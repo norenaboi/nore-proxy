@@ -20,46 +20,27 @@
     ranges: Record<string, { summary: RangeSummary; api_keys: ApiKeyUsage[] }>;
   }
 
-  interface Request {
-    id: number; timestamp: number; name: string; apiKey: string; model: string;
-    endpointName: string; inputTokens: number; outputTokens: number;
-    cacheWriteTokens: number; cacheReadTokens: number; duration: number;
-    estimatedCost: number; status: string;
-  }
-
   let data = $state<DashboardData | null>(null);
   let loading = $state(true);
   let errorMsg = $state("");
   let range = $state<DashboardRange>("24h");
+  let keyQuery = $state("");
 
   $effect(() => {
     const unsubscribe = dashboardRange.subscribe((value) => { range = value; });
     return unsubscribe;
   });
 
-  let requests = $state<Request[]>([]);
-  let requestsLoading = $state(false);
-  let requestsState = $state("");
-  let requestsExpanded = $state(false);
-  let cursor = $state<string | null>(null);
-  let hasMore = $state(true);
-  let seen = new Set<number>();
-  let generation = 0;
-  let filtersLoaded = false;
-
-  let apiKeyFilter = $state("");
-  let modelFilter = $state("");
-  let statusFilter = $state("");
-  let timeFilter = $state("");
-  let apiKeyOptions = $state<{ value: string; label: string }[]>([]);
-  let modelOptions = $state<string[]>([]);
-
-  let sentinel = $state<HTMLElement>();
-  let observer: IntersectionObserver;
-
   const rangeLabels: Record<DashboardRange, string> = {
     "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", total: "All time",
   };
+
+  const rangeData = $derived(data?.ranges?.[range] ?? null);
+  const allKeys = $derived(rangeData?.api_keys ?? []);
+  const visibleKeys = $derived.by(() => {
+    const needle = keyQuery.trim().toLowerCase();
+    return needle ? allKeys.filter((key) => (key.name ?? "").toLowerCase().includes(needle)) : allKeys;
+  });
 
   async function load() {
     if (document.hidden) return;
@@ -72,92 +53,24 @@
     }
   }
 
-  function buildUrl() {
-    const p = new URLSearchParams({ limit: "50" });
-    if (cursor) p.set("cursor", cursor);
-    if (apiKeyFilter) p.set("apiKey", apiKeyFilter);
-    if (modelFilter) p.set("model", modelFilter);
-    if (statusFilter) p.set("status", statusFilter);
-    if (timeFilter) {
-      const s = ({ "24h": 86400, "7d": 604800, "30d": 2592000 } as Record<string, number>)[timeFilter];
-      if (s) p.set("from", String(Math.floor(Date.now() / 1000) - s));
-    }
-    return `/api/requests?${p}`;
-  }
-
-  async function loadRequests({ reset = false } = {}) {
-    if (reset) {
-      generation++; cursor = null; hasMore = true; seen.clear(); requests = [];
-    } else if (requestsLoading || !hasMore) return;
-    const gen = generation;
-    requestsLoading = true;
-    requestsState = "Loading requests…";
-    try {
-      const d = await requestAdminJson<{ requests: Request[]; nextCursor: string; hasMore: boolean }>(buildUrl());
-      if (gen !== generation) return;
-      const fresh = d.requests.filter((r) => !seen.has(r.id));
-      fresh.forEach((r) => seen.add(r.id));
-      requests = [...requests, ...fresh];
-      cursor = d.nextCursor;
-      hasMore = Boolean(d.hasMore);
-      requestsState = seen.size === 0 ? "No requests match these filters."
-        : !hasMore ? "All matching requests are shown."
-        : "Scroll to load 50 more requests.";
-    } catch (e) {
-      if (gen === generation) requestsState = e instanceof Error ? e.message : "Error";
-    } finally {
-      if (gen === generation) requestsLoading = false;
-    }
-  }
-
-  async function loadFilters() {
-    if (filtersLoaded) return;
-    const d = await requestAdminJson<{ apiKeys: { value: string; label: string }[]; models: string[] }>("/api/requests/filters");
-    apiKeyOptions = d.apiKeys;
-    modelOptions = d.models;
-    filtersLoaded = true;
-  }
-
-  async function toggleExpanded() {
-    requestsExpanded = !requestsExpanded;
-    if (requestsExpanded) {
-      await loadFilters().catch(() => {});
-      observer?.observe(sentinel);
-    } else {
-      observer?.disconnect();
-    }
-  }
-
-  function resetFilters() {
-    apiKeyFilter = ""; modelFilter = ""; statusFilter = ""; timeFilter = "";
-    loadRequests({ reset: true });
-  }
-
   function fmt(n: number) { return Number(n || 0).toLocaleString(); }
   function cost(n: number) { return `$${Number(n || 0).toFixed(4)}`; }
-  function fmtTime(ts: number) { const d = new Date(ts * 1000); return `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`; }
-  function requestStatus(status: string) { return ["success", "failed"].includes(status) ? status : "unknown"; }
 
   onMount(() => {
     load();
-    loadRequests({ reset: true });
     const interval = setInterval(load, 30000);
     const vis = () => { if (!document.hidden) load(); };
     document.addEventListener("visibilitychange", vis);
-    observer = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting) && requestsExpanded) loadRequests();
-    }, { rootMargin: "300px" });
     return () => {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", vis);
-      observer.disconnect();
     };
   });
 </script>
 
 {#if loading}
   <!-- Stands in for the loaded layout below: three summary cells, four token
-       cells, then the two table cards. -->
+       cells, then the single table card. -->
   <section class="summary-strip skeleton" aria-hidden="true">
     {#each Array(3) as _}
       <article>
@@ -180,34 +93,30 @@
       </article>
     {/each}
   </section>
-  <div class="tables-grid">
-    {#each [5, 6] as rows}
-      <section class="table-card skeleton" aria-hidden="true">
-        <div class="skeleton-head">
-          <span class="skeleton-block skeleton-eyebrow"></span>
-          <span class="skeleton-block skeleton-heading"></span>
+  <section class="table-card usage-table-card skeleton" aria-hidden="true">
+    <div class="skeleton-head">
+      <span class="skeleton-block skeleton-eyebrow"></span>
+      <span class="skeleton-block skeleton-heading"></span>
+    </div>
+    <div class="skeleton-rows">
+      {#each Array(6) as _}
+        <div class="skeleton-row">
+          <span class="skeleton-block skeleton-cell wide"></span>
+          <span class="skeleton-block skeleton-cell"></span>
+          <span class="skeleton-block skeleton-cell"></span>
+          <span class="skeleton-block skeleton-cell narrow"></span>
         </div>
-        <div class="skeleton-rows">
-          {#each Array(rows) as _}
-            <div class="skeleton-row">
-              <span class="skeleton-block skeleton-cell wide"></span>
-              <span class="skeleton-block skeleton-cell"></span>
-              <span class="skeleton-block skeleton-cell"></span>
-              <span class="skeleton-block skeleton-cell narrow"></span>
-            </div>
-          {/each}
-        </div>
-      </section>
-    {/each}
-  </div>
+      {/each}
+    </div>
+  </section>
   <span class="sr-only" role="status">Loading dashboard data…</span>
 {:else if errorMsg && !data}
   <div class="page-error" role="alert">{errorMsg}</div>
 {:else if data}
-  {@const rd = data.ranges?.[range]}
-  {#if !rd}
+  {#if !rangeData}
     <div class="page-error" role="alert">Dashboard range data unavailable. Restart the server with the matching frontend and backend update.</div>
   {:else}
+    {@const rd = rangeData}
     <section class="summary-strip" aria-label="Traffic summary">
       <article>
         <span>Requests</span>
@@ -233,77 +142,45 @@
       <article><span>Cache read</span><strong>{fmt(rd.summary.cache_read_tokens)}</strong><small>{cost(rd.summary.cache_read_cost)}</small></article>
     </section>
 
-    <div class="tables-grid">
-      <section class="table-card usage-table-card">
-        <header class="table-header">
-          <div><p class="eyebrow">API keys</p><h2>API Keys Usage</h2></div>
-          <span><strong>{rangeLabels[range]}</strong> · {fmt(rd.api_keys.length)} keys</span>
-        </header>
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <div class="table-scroll" role="region" tabindex="0" aria-label="API key usage table">
-          <table>
-            <caption class="visually-hidden">API key usage for selected period</caption>
-            <thead><tr><th>Name</th><th class="numeric-cell">Requests</th><th class="numeric-cell">Input</th><th class="numeric-cell">Output</th><th class="numeric-cell">Cache Write</th><th class="numeric-cell">Cache Read</th><th class="numeric-cell">Estimated Cost</th></tr></thead>
-            <tbody>
-              {#each rd.api_keys as key}
-                <tr>
-                  <td><strong>{key.name}</strong></td>
-                  <td class="numeric-cell">{fmt(key.requests)}</td>
-                  <td class="numeric-cell">{fmt(key.input_tokens)}</td>
-                  <td class="numeric-cell">{fmt(key.output_tokens)}</td>
-                  <td class="numeric-cell">{fmt(key.cache_write_tokens)}</td>
-                  <td class="numeric-cell">{fmt(key.cache_read_tokens)}</td>
-                  <td class="numeric-cell">${Number(key.estimated_cost || 0).toFixed(2)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+    <section class="table-card usage-table-card">
+      <header class="table-header">
+        <div><p class="eyebrow">API keys</p><h2>API Keys Usage</h2></div>
+        <div class="table-tools">
+          <label class="key-search" aria-label="Search API keys">
+            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+            <input type="search" bind:value={keyQuery} placeholder="Search API keys…" autocomplete="off" />
+            {#if keyQuery}
+              <button type="button" aria-label="Clear search" onclick={() => keyQuery = ""}><i class="fa-solid fa-xmark"></i></button>
+            {/if}
+          </label>
+          <span class="table-meta"><strong>{rangeLabels[range]}</strong> · {keyQuery ? `${fmt(visibleKeys.length)} of ${fmt(allKeys.length)}` : fmt(allKeys.length)} keys</span>
         </div>
-      </section>
-
-      <section class="table-card request-history-card">
-        <header class="table-header">
-          <div><p class="eyebrow">Recent traffic</p><h2>Recent Requests</h2></div>
-          <button class="request-history-toggle" type="button" aria-expanded={requestsExpanded} aria-controls="request-history-filters" onclick={toggleExpanded}>
-            Browse all requests <i class={`fa-solid fa-chevron-${requestsExpanded ? "up" : "down"}`}></i>
-          </button>
-        </header>
-        {#if requestsExpanded}
-          <div id="request-history-filters" class="request-history-filters">
-            <label>API key<select bind:value={apiKeyFilter} onchange={() => loadRequests({ reset: true })}><option value="">All API keys</option>{#each apiKeyOptions as o}<option value={o.value}>{o.label}</option>{/each}</select></label>
-            <label>Model<select bind:value={modelFilter} onchange={() => loadRequests({ reset: true })}><option value="">All models</option>{#each modelOptions as m}<option value={m}>{m}</option>{/each}</select></label>
-            <label>Status<select bind:value={statusFilter} onchange={() => loadRequests({ reset: true })}><option value="">All statuses</option><option value="success">Success</option><option value="failed">Failed</option></select></label>
-            <label>Time range<select bind:value={timeFilter} onchange={() => loadRequests({ reset: true })}><option value="">All time</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
-            <button type="button" onclick={resetFilters}>Reset filters</button>
-          </div>
-        {/if}
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <div class="request-table-scroll" role="region" tabindex="0" aria-label="Recent requests table">
-          <table>
-            <caption class="visually-hidden">Recent API request metadata</caption>
-            <thead><tr><th>Time</th><th>Name</th><th>Model</th><th class="numeric-cell">Input Tokens</th><th class="numeric-cell">Output Tokens</th><th class="numeric-cell">Cache Write</th><th class="numeric-cell">Cache Read</th><th class="numeric-cell">Duration</th><th class="numeric-cell">Est. Cost</th><th>Status</th></tr></thead>
-            <tbody>
-              {#each requests as req (req.id)}
-                <tr>
-                  <td class="timestamp">{fmtTime(req.timestamp)}</td>
-                  <td>{req.name || req.apiKey || "Unknown"}</td>
-                  <td class="request-model">{req.model || "Unknown"}</td>
-                  <td class="numeric-cell">{fmt(req.inputTokens)}</td>
-                  <td class="numeric-cell">{fmt(req.outputTokens)}</td>
-                  <td class="numeric-cell">{fmt(req.cacheWriteTokens)}</td>
-                  <td class="numeric-cell">{fmt(req.cacheReadTokens)}</td>
-                  <td class="numeric-cell">{Number(req.duration || 0).toFixed(2)}s</td>
-                  <td class="numeric-cell">${Number(req.estimatedCost || 0).toFixed(4)}</td>
-                  <td><span class="request-status {requestStatus(req.status)}">{requestStatus(req.status)}</span></td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <div class:error={requestsState && !requestsLoading && requestsState !== "No requests match these filters." && !requestsState.startsWith("All matching") && !requestsState.startsWith("Scroll to load")} class="request-history-state" role="status" aria-live="polite">{requestsState}</div>
-        <div class="request-history-sentinel" bind:this={sentinel} aria-hidden="true"></div>
-      </section>
-    </div>
+      </header>
+      <!-- The only scroll container on the dashboard: the shell holds the page at
+           viewport height, so the key list scrolls here rather than the document. -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="table-scroll" role="region" tabindex="0" aria-label="API key usage table">
+        <table>
+          <caption class="visually-hidden">API key usage for selected period</caption>
+          <thead><tr><th>Name</th><th class="numeric-cell">Requests</th><th class="numeric-cell">Input</th><th class="numeric-cell">Output</th><th class="numeric-cell">Cache Write</th><th class="numeric-cell">Cache Read</th><th class="numeric-cell">Estimated Cost</th></tr></thead>
+          <tbody>
+            {#each visibleKeys as key}
+              <tr>
+                <td><strong>{key.name}</strong></td>
+                <td class="numeric-cell">{fmt(key.requests)}</td>
+                <td class="numeric-cell">{fmt(key.input_tokens)}</td>
+                <td class="numeric-cell">{fmt(key.output_tokens)}</td>
+                <td class="numeric-cell">{fmt(key.cache_write_tokens)}</td>
+                <td class="numeric-cell">{fmt(key.cache_read_tokens)}</td>
+                <td class="numeric-cell">${Number(key.estimated_cost || 0).toFixed(2)}</td>
+              </tr>
+            {:else}
+              <tr><td class="table-state" colspan="7">{allKeys.length === 0 ? "No API key usage recorded for this period." : "No API keys match your search."}</td></tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </section>
   {/if}
 {/if}
 
@@ -311,14 +188,15 @@
   .summary-strip {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    margin-bottom: 18px;
+    flex: 0 0 auto;
+    margin-bottom: 16px;
     overflow: hidden;
     border: 1px solid var(--border-color);
     border-radius: 10px;
     background: var(--card-bg);
   }
   .summary-strip article {
-    padding: 25px 28px;
+    padding: 21px 26px;
     border-right: 1px solid var(--border-color);
   }
   .summary-strip article:last-child { border-right: 0; }
@@ -326,8 +204,8 @@
   .token-ledger span { color: var(--text-secondary); }
   .summary-strip strong {
     display: block;
-    margin: 12px 0 4px;
-    font: 500 38px/1 Georgia, serif;
+    margin: 10px 0 4px;
+    font: 500 34px/1 Georgia, serif;
     font-variant-numeric: tabular-nums;
   }
   .summary-strip small,
@@ -335,99 +213,94 @@
   .token-ledger {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    margin-bottom: 36px;
+    flex: 0 0 auto;
+    margin-bottom: 20px;
     border-block: 1px solid var(--border-color);
   }
-  .token-ledger article { padding: 20px 22px; }
+  .token-ledger article { padding: 16px 22px; }
   .token-ledger strong {
     display: block;
-    margin: 7px 0;
-    font: 500 22px/1.2 Georgia, serif;
+    margin: 6px 0;
+    font: 500 21px/1.2 Georgia, serif;
     font-variant-numeric: tabular-nums;
   }
-  .tables-grid { display: grid; gap: 18px; }
-  .table-card { overflow: hidden; }
+  /* Column flex so the table region below the header takes whatever height the
+     shell has left, and `min-height: 0` so it may also give height back rather
+     than pushing the card past the viewport. */
+  .usage-table-card {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 180px;
+    overflow: hidden;
+  }
   .table-header {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: flex-end;
+    flex: 0 0 auto;
     gap: 20px;
-    padding: 24px 26px;
+    padding: 20px 26px;
     border-bottom: 1px solid var(--border-color);
   }
   .table-header h2 { font: 500 23px/1.2 Georgia, serif; }
-  .table-header > span { color: var(--text-secondary); font-size: 12px; }
-  .table-header > span strong { color: var(--primary-dark); }
-  .table-scroll,
-  .request-table-scroll { overflow-x: auto; }
+  .table-tools { display: flex; align-items: center; gap: 14px; }
+  .table-meta { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+  .table-meta strong { color: var(--primary-dark); }
+  .key-search {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: min(300px, 42vw);
+    height: 38px;
+    padding: 0 12px;
+    border: 1px solid var(--input-border);
+    border-radius: 9px;
+    background: var(--input-bg);
+    color: var(--text-secondary);
+    transition: border-color .2s ease, box-shadow .2s ease;
+  }
+  .key-search:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-alpha-012); }
+  .key-search input {
+    width: 100%;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 13px;
+  }
+  .key-search button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .key-search button:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+  .table-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
   .usage-table-card table { min-width: 820px; }
-  .request-table-scroll table { min-width: 1180px; }
+  /* The header row stays readable while the body scrolls. `border-collapse:
+     collapse` hands the cell border to the table, which does not travel with a
+     sticky cell, so the rule is repainted as an inset shadow. */
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--card-bg);
+    box-shadow: inset 0 -1px 0 var(--border-color);
+  }
   th,
   td { padding: 12px 14px; white-space: nowrap; }
   .numeric-cell { text-align: right; font-variant-numeric: tabular-nums; }
-  .timestamp { font-size: 12px; }
-  .request-model {
-    color: var(--primary-dark);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 12px;
-  }
-  .request-history-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 40px;
-    padding: 8px 13px;
-    border: 1px solid var(--primary);
-    background: var(--primary-light);
-    color: var(--primary-dark);
-    cursor: pointer;
-    font-weight: 700;
-  }
-  .request-history-toggle:hover { border-color: var(--primary-dark); }
-  .request-history-filters {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(145px, 1fr)) auto;
-    gap: 12px;
-    align-items: end;
-    padding: 18px 26px;
-    border-bottom: 1px solid var(--border-color);
-    background: var(--primary-light);
-  }
-  .request-history-filters label {
-    display: grid;
-    gap: 6px;
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-weight: 700;
-  }
-  .request-history-filters select,
-  .request-history-filters button { min-width: 0; min-height: 40px; padding: 8px 10px; }
-  .request-history-filters button {
-    border: 1px solid var(--input-border);
-    background: var(--input-bg);
-    color: var(--primary-dark);
-    cursor: pointer;
-    font-weight: 700;
-  }
-  .request-status {
-    display: inline-flex;
-    padding: 4px 9px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: capitalize;
-  }
-  .request-status.success { background: var(--success-alpha-01); color: var(--success-dark); }
-  .request-status.failed { background: var(--danger-alpha-01); color: var(--danger-dark); }
-  .request-status.unknown { background: var(--bg-tertiary); color: var(--text-secondary); }
-  .request-history-state {
-    min-height: 42px;
-    padding: 12px 24px;
-    color: var(--text-secondary);
-    font-size: 12px;
-  }
-  .request-history-state.error { color: var(--danger-dark); }
-  .request-history-sentinel { height: 1px; }
+  .table-state { padding: 40px 14px; color: var(--text-secondary); text-align: center; }
   .visually-hidden {
     position: absolute;
     width: 1px;
@@ -439,18 +312,16 @@
     white-space: nowrap;
     border: 0;
   }
-  @media (max-width: 900px) {
-    .request-history-filters { grid-template-columns: 1fr 1fr; }
-  }
   @media (max-width: 720px) {
     .summary-strip { grid-template-columns: 1fr; }
     .summary-strip article { border-right: 0; border-bottom: 1px solid var(--border-color); }
     .summary-strip article:last-child { border-bottom: 0; }
     .token-ledger { grid-template-columns: 1fr 1fr; }
-    .table-header { display: grid; }
+    .table-header { display: grid; justify-items: stretch; }
+    .table-tools { flex-wrap: wrap; }
+    .key-search { width: 100%; }
   }
   @media (max-width: 520px) {
-    .token-ledger,
-    .request-history-filters { grid-template-columns: 1fr; }
+    .token-ledger { grid-template-columns: 1fr; }
   }
 </style>
