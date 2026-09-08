@@ -102,6 +102,12 @@ a { color: inherit; }
     overflow: hidden;
   }
   .main-content.viewport-fit > .header { flex: 0 0 auto; margin-bottom: 26px; }
+  /* The one block on a fitted page that takes the height the header and any
+     fixed summary blocks leave over. `min-height: 0` lets it give height back
+     too, so a long table shortens the block instead of pushing the page past
+     the viewport. Applied from here rather than from each page so the guard
+     above stays the single definition of when a page fits the viewport. */
+  .main-content.viewport-fit > .fit-fill { flex: 1 1 auto; min-height: 0; }
 }
 .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 36px; }
 .header h1, h1 { color: var(--text-primary); font: 500 clamp(30px,4vw,44px)/1.08 Georgia,"Times New Roman",serif; letter-spacing: -.025em; }

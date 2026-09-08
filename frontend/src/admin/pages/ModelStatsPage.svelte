@@ -18,6 +18,7 @@
   let errorMsg = $state("");
   let sortCol = $state<SortCol>("total_tokens");
   let sortDir = $state<"asc" | "desc">("desc");
+  let query = $state("");
   let openActions = $state<string | null>(null);
   let actionPopoverStyle = $state("");
   let dialogMode = $state<DialogMode | null>(null);
@@ -37,6 +38,13 @@
     if (sortCol === "model") return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
     return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
   }));
+  // Rank is taken from the full sorted list before the search narrows it, so a
+  // filtered row keeps the position it holds among every model.
+  const ranked = $derived(sorted.map((row, index) => ({ row, rank: index })));
+  const visible = $derived.by(() => {
+    const needle = query.trim().toLowerCase();
+    return needle ? ranked.filter((entry) => entry.row.model.toLowerCase().includes(needle)) : ranked;
+  });
   const maxTotalTokens = $derived(Math.max(0, ...data.map((row) => row.total_tokens)));
   const conjoinTargets = $derived(data.map((row) => row.model).filter((name) => name !== selectedModel).sort((a, b) => a.localeCompare(b)));
   const canSubmit = $derived(
@@ -168,6 +176,13 @@
     if (openActions && !(event.target as Element | null)?.closest("[data-stats-actions]")) closeActions();
   }
 
+  // The popover is placed against the trigger's viewport box, so it has to go
+  // when the trigger moves. Captured, because the table body scrolls rather
+  // than the document and a scroll event there does not bubble.
+  function onDocumentScroll() {
+    if (openActions) closeActions();
+  }
+
   function onDocumentKeydown(event: KeyboardEvent) {
     if (event.key === "Tab" && dialogMode && dialog) {
       const focusable = [...dialog.querySelectorAll<HTMLElement>("button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])")];
@@ -190,18 +205,20 @@
   onMount(() => {
     document.addEventListener("click", onDocumentClick);
     document.addEventListener("keydown", onDocumentKeydown);
+    document.addEventListener("scroll", onDocumentScroll, true);
     void load().catch((error) => {
       errorMsg = error instanceof Error ? error.message : "Failed to load";
     }).finally(() => { loading = false; });
     return () => {
       document.removeEventListener("click", onDocumentClick);
       document.removeEventListener("keydown", onDocumentKeydown);
+      document.removeEventListener("scroll", onDocumentScroll, true);
     };
   });
 </script>
 
 {#if loading}
-  <section class="models-table-card skeleton" aria-hidden="true">
+  <section class="models-table-card fit-fill skeleton" aria-hidden="true">
     <div class="skeleton-head">
       <span class="skeleton-block skeleton-eyebrow"></span>
       <span class="skeleton-block skeleton-heading"></span>
@@ -222,18 +239,30 @@
 {:else if errorMsg}
   <div class="page-error" role="alert">{errorMsg}</div>
 {:else}
-  <section class="models-table-card">
-    <div class="table-header"><h2><i class="fa-solid fa-chart-bar"></i> Models by Stats</h2></div>
+  <section class="models-table-card fit-fill">
+    <div class="table-header">
+      <h2><i class="fa-solid fa-chart-bar"></i> Models by Stats</h2>
+      <div class="table-tools">
+        <label class="model-search">
+          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+          <input type="search" placeholder="Search models…" aria-label="Search models" autocomplete="off" bind:value={query} />
+          {#if query}<button type="button" aria-label="Clear model search" onclick={() => { query = ""; }}><i class="fa-solid fa-xmark"></i></button>{/if}
+        </label>
+        <span class="table-meta" aria-live="polite">{query ? `${visible.length} of ${data.length}` : data.length} {data.length === 1 ? "model" : "models"}</span>
+      </div>
+    </div>
+    <!-- The shell holds the page at viewport height, so the rows scroll here
+         rather than the document. -->
     <div class="table-scroll">
       <table>
         <thead><tr><th class="rank-column">Rank</th>{#each ([['model','Model'],['requests','Requests'],['input_tokens','Input Tokens'],['output_tokens','Output Tokens'],['cache_tokens','Cache Tokens'],['total_tokens','Total Tokens'],['cost','Cost'],['errors','Errors']] as [string,string][]) as [col, label]}<th class="sortable {sortCol === col ? `sorted-${sortDir}` : ''}" onclick={() => sort(col as SortCol)}>{label}</th>{/each}<th class="actions-column"><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
-          {#if sorted.length === 0}
-            <tr><td colspan="10"><div class="empty-state"><i class="fa-solid fa-inbox"></i><p>No model stats data available</p></div></td></tr>
+          {#if visible.length === 0}
+            <tr><td colspan="10"><div class="empty-state"><i class="fa-solid {data.length === 0 ? 'fa-inbox' : 'fa-magnifying-glass'}"></i><p>{data.length === 0 ? "No model stats data available" : "No models match your search"}</p></div></td></tr>
           {:else}
-            {#each sorted as row, i (row.model)}
+            {#each visible as { row, rank } (row.model)}
               <tr>
-                <td><span class="rank-badge {rankClass(i)}">{i + 1}</span></td>
+                <td><span class="rank-badge {rankClass(rank)}">{rank + 1}</span></td>
                 <td><span class="model-name">{row.model}</span></td>
                 <td><span class="metric-value requests">{row.requests.toLocaleString()}</span></td>
                 <td><span class="metric-value tokens">{formatNumber(row.input_tokens)}</span></td>
@@ -322,13 +351,27 @@
 {/if}
 
 <style>
-  .models-table-card { overflow: visible; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); box-shadow: none; }
-  .table-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--border-color); }
+  /* Column flex so the rows below the header take whatever height the shell has
+     left, and `min-height: 0` so the card may also give height back rather than
+     growing past the viewport. The row actions sit in a fixed-position popover,
+     which the viewport contains rather than this card, so clipping here is safe. */
+  .models-table-card { display: flex; flex-direction: column; min-height: 220px; overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); box-shadow: none; }
+  .table-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 24px; border-bottom: 1px solid var(--border-color); }
   .table-header h2 { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--text-primary); font: 500 18px/1.2 Georgia, "Times New Roman", serif; }
-  .table-header i { color: var(--primary-dark); }
-  .table-scroll { overflow-x: auto; overflow-y: visible; }
+  .table-header h2 i { color: var(--primary-dark); }
+  .table-tools { display: flex; align-items: center; gap: 14px; }
+  .table-meta { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .model-search { display: flex; align-items: center; gap: 9px; width: min(300px, 42vw); height: 38px; padding: 0 12px; border: 1px solid var(--input-border); border-radius: 9px; background: var(--input-bg); color: var(--text-secondary); transition: border-color .2s ease, box-shadow .2s ease; }
+  .model-search:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-alpha-012); }
+  .model-search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font-size: 13px; }
+  .model-search button { display: inline-flex; width: 24px; height: 24px; flex-shrink: 0; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+  .model-search button:hover { background: var(--bg-secondary); color: var(--text-primary); }
+  .table-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
   table { width: 100%; min-width: 940px; border-collapse: collapse; }
-  th { padding: 14px 20px; border-bottom: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-secondary); text-align: left; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  /* The header row stays put while the body scrolls. `border-collapse: collapse`
+     hands the cell border to the table, which does not travel with a sticky
+     cell, so the rule is repainted as an inset shadow. */
+  th { position: sticky; top: 0; z-index: 2; padding: 14px 20px; border-bottom: 0; background: var(--bg-secondary); box-shadow: inset 0 -1px 0 var(--border-color); color: var(--text-secondary); text-align: left; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
   th.sortable { cursor: pointer; user-select: none; } th.sortable::after { content: " ⇅"; opacity: .3; } th.sorted-asc::after { content: " ↑"; opacity: 1; } th.sorted-desc::after { content: " ↓"; opacity: 1; }
   .rank-column { width: 60px; } .actions-column { width: 56px; }
   td { padding: 16px 20px; border-bottom: 1px solid var(--border-color); color: var(--text-secondary); font-size: 14px; } tbody tr:last-child td { border-bottom: 0; } tbody tr:hover { background: var(--bg-secondary); }
@@ -353,5 +396,5 @@
   .danger-notice { display: flex; align-items: flex-start; gap: 12px; padding: 14px; border: 1px solid var(--danger-alpha-02); border-radius: 10px; background: var(--danger-alpha-01); color: var(--danger-dark); }
   .danger-notice > i { margin-top: 3px; } .danger-notice p { margin: 5px 0 0; color: var(--text-secondary); line-height: 1.55; }
   .dialog-error { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--danger-alpha-02); border-radius: 8px; background: var(--danger-alpha-01); color: var(--danger-dark); font-size: 13px; }
-  @media (max-width: 768px) { th, td { padding: 12px 16px; } .stats-modal { max-width: calc(100vw - 32px); } }
+  @media (max-width: 768px) { th, td { padding: 12px 16px; } .stats-modal { max-width: calc(100vw - 32px); } .table-header { align-items: stretch; flex-direction: column; gap: 14px; } .model-search { width: 100%; } }
 </style>

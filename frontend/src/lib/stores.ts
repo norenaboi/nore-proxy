@@ -30,6 +30,12 @@ export interface PageHeaderActions {
 }
 export const pageHeaderActions = writable<PageHeaderActions | null>(null);
 
+// Whether the shell should hold the page at exactly the viewport height so a
+// block inside it scrolls instead of the document. Most pages that do this are
+// known from their path alone, but API key stats only fits the viewport in its
+// detail view, so the page itself has to say.
+export const viewportFit = writable(false);
+
 function createThemeStore() {
   const saved = typeof localStorage !== "undefined" ? (localStorage.getItem("admin-theme") ?? "light") : "light";
   if (typeof document !== "undefined") document.documentElement.setAttribute("data-theme", saved);

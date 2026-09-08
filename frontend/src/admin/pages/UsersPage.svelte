@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { requestAdminJson, formatNumber } from "$frontend/lib/api/admin";
+  import { viewportFit } from "$frontend/lib/stores";
 
   interface User { id: string; name: string; api_key: string; }
   interface UserDetail {
@@ -32,6 +33,28 @@
     ? users.filter((u) => [u.name, u.api_key].some((v) => v.toLowerCase().includes(query.toLowerCase())))
     : users);
 
+  // Only the detail view owns the viewport; the key grid keeps the ordinary
+  // document scroll it already had.
+  $effect(() => { viewportFit.set(detail !== null); });
+  onDestroy(() => viewportFit.set(false));
+
+  // Six metrics per row, so a column means the same thing in the total row and
+  // the daily row below it.
+  const metrics = $derived(detail === null ? [] : [
+    ["Total Requests", detail.total_requests.toLocaleString(), ""],
+    ["Total Input Tokens", formatNumber(detail.total_input_tokens), `$${detail.total_input_cost.toFixed(4)}`],
+    ["Total Output Tokens", formatNumber(detail.total_output_tokens), `$${detail.total_output_cost.toFixed(4)}`],
+    ["Total Cache Write", formatNumber(detail.total_cache_write_tokens || 0), `$${(detail.total_cache_write_cost || 0).toFixed(4)}`],
+    ["Total Cache Read", formatNumber(detail.total_cache_read_tokens || 0), `$${(detail.total_cache_read_cost || 0).toFixed(4)}`],
+    ["Total Estimated Cost", `$${detail.total_cost.toFixed(2)}`, ""],
+    ["Daily Requests", detail.daily_requests.toLocaleString(), ""],
+    ["Daily Input Tokens", formatNumber(detail.daily_input_tokens), `$${detail.daily_input_cost.toFixed(4)}`],
+    ["Daily Output Tokens", formatNumber(detail.daily_output_tokens), `$${detail.daily_output_cost.toFixed(4)}`],
+    ["Daily Cache Write", formatNumber(detail.daily_cache_write_tokens || 0), `$${(detail.daily_cache_write_cost || 0).toFixed(4)}`],
+    ["Daily Cache Read", formatNumber(detail.daily_cache_read_tokens || 0), `$${(detail.daily_cache_read_cost || 0).toFixed(4)}`],
+    ["Daily Estimated Cost", `$${detail.daily_cost.toFixed(2)}`, ""],
+  ]);
+
   async function loadUsers() {
     try {
       const d = await requestAdminJson<{ users: User[] }>("/api/users");
@@ -57,36 +80,32 @@
 </script>
 
 {#if detail}
-  <div class="detail-header">
-    <div>
-      <h1>{detail.name}</h1>
-      <div class="user-key detail-key">{detail.api_key}</div>
+  <!-- One slim identity strip instead of a page title block: the shell header
+       above already names the page, and the room it saves goes to the request
+       list below. -->
+  <div class="detail-bar">
+    <button class="back-btn" type="button" onclick={() => detail = null}><i class="fa-solid fa-arrow-left"></i> Back</button>
+    <div class="detail-identity">
+      <h2>{detail.name}</h2>
+      <span class="detail-key">{detail.api_key}</span>
     </div>
-    <button class="back-btn" type="button" onclick={() => detail = null}><i class="fa-solid fa-arrow-left"></i> Back to API Key Stats</button>
   </div>
 
-  <div class="summary-cards">
-    {#each [
-      ["Total Requests", detail.total_requests.toLocaleString(), ""],
-      ["Total Input Tokens", formatNumber(detail.total_input_tokens), `$${detail.total_input_cost.toFixed(4)}`],
-      ["Total Output Tokens", formatNumber(detail.total_output_tokens), `$${detail.total_output_cost.toFixed(4)}`],
-      ["Total Estimated Cost", `$${detail.total_cost.toFixed(2)}`, ""],
-      ["Daily Requests", detail.daily_requests.toLocaleString(), ""],
-      ["Daily Input Tokens", formatNumber(detail.daily_input_tokens), `$${detail.daily_input_cost.toFixed(4)}`],
-      ["Daily Output Tokens", formatNumber(detail.daily_output_tokens), `$${detail.daily_output_cost.toFixed(4)}`],
-      ["Daily Estimated Cost", `$${detail.daily_cost.toFixed(2)}`, ""],
-      ["Total Cache Write", formatNumber(detail.total_cache_write_tokens || 0), `$${(detail.total_cache_write_cost || 0).toFixed(4)}`],
-      ["Total Cache Read", formatNumber(detail.total_cache_read_tokens || 0), `$${(detail.total_cache_read_cost || 0).toFixed(4)}`],
-      ["Daily Cache Write", formatNumber(detail.daily_cache_write_tokens || 0), `$${(detail.daily_cache_write_cost || 0).toFixed(4)}`],
-      ["Daily Cache Read", formatNumber(detail.daily_cache_read_tokens || 0), `$${(detail.daily_cache_read_cost || 0).toFixed(4)}`],
-    ] as metric}
-      <div class="summary-card"><h3>{metric[0]}</h3><div class="value">{metric[1]}</div>{#if metric[2]}<div class="cost-caption">{metric[2]}</div>{/if}</div>
+  <section class="metric-grid" aria-label="Usage totals">
+    {#each metrics as metric}
+      <article class="metric"><h3>{metric[0]}</h3><div class="value">{metric[1]}</div>{#if metric[2]}<div class="cost-caption">{metric[2]}</div>{/if}</article>
     {/each}
-  </div>
+  </section>
 
-  <section class="table-card">
-    <div class="table-header"><h2><i class="fa-solid fa-clock-rotate-left"></i> Recent Requests</h2></div>
-    <div class="table-scroll">
+  <section class="table-card requests-card fit-fill">
+    <div class="table-header">
+      <h2><i class="fa-solid fa-clock-rotate-left"></i> Recent Requests</h2>
+      <span class="table-meta">{detail.recent_requests.length.toLocaleString()} {detail.recent_requests.length === 1 ? "request" : "requests"}</span>
+    </div>
+    <!-- The shell holds the page at viewport height, so the rows scroll here
+         rather than the document. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div class="table-scroll" role="region" tabindex="0" aria-label="Recent requests for this API key">
       <table>
         <thead><tr><th>Time</th><th>Model</th><th>Input Tokens</th><th>Output Tokens</th><th>Cache Write</th><th>Cache Read</th><th>Total Tokens</th><th>Duration</th><th>Est. Cost</th></tr></thead>
         <tbody>
@@ -163,29 +182,37 @@
   .skeleton-copy { display: flex; flex: 1; flex-direction: column; gap: 9px; }
   .skeleton-name { width: min(150px, 70%); height: 18px; }
   .skeleton-key { width: min(220px, 90%); height: 13px; }
-  .detail-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 32px; padding-bottom: 18px; border-bottom: 1px solid var(--border-color); }
-  .detail-header h1 { margin: 0; color: var(--text-primary); font: 500 clamp(30px, 4vw, 44px)/1.08 Georgia, "Times New Roman", serif; }
-  .detail-header h1::before { content: "API key stats"; display: block; margin-bottom: 8px; color: var(--primary-dark); font: 800 10px/1.2 Inter, sans-serif; letter-spacing: .12em; text-transform: uppercase; }
-  .detail-key { margin-top: 8px; }
-  .back-btn { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); color: var(--primary-dark); cursor: pointer; font: 14px inherit; }
-  .summary-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin-bottom: 24px; overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); }
-  .summary-card { min-height: 128px; padding: 22px; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); background: var(--card-bg); }
-  .summary-card:nth-child(4n) { border-right: 0; } .summary-card:nth-last-child(-n + 4) { border-bottom: 0; }
-  .summary-card h3 { margin: 0 0 8px; color: var(--text-secondary); font-size: 13px; letter-spacing: .05em; text-transform: uppercase; }
-  .summary-card .value { color: var(--text-primary); font: 500 28px/1 Georgia, "Times New Roman", serif; font-variant-numeric: tabular-nums; }
-  .cost-caption { margin-top: 7px; color: var(--text-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; }
-  .table-card { overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); }
-  .table-header { padding: 20px 24px; border-bottom: 1px solid var(--border-color); }
+  .detail-bar { display: flex; flex: 0 0 auto; align-items: center; gap: 16px; margin-bottom: 16px; }
+  .detail-identity { display: flex; min-width: 0; align-items: baseline; gap: 12px; }
+  .detail-identity h2 { margin: 0; color: var(--text-primary); font: 500 22px/1.2 Georgia, "Times New Roman", serif; }
+  .detail-key { color: var(--text-secondary); font: 13px/1.4 monospace; overflow-wrap: anywhere; }
+  .back-btn { display: flex; flex-shrink: 0; align-items: center; gap: 8px; padding: 8px 14px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); color: var(--primary-dark); cursor: pointer; font: 14px inherit; }
+  .back-btn:hover { border-color: var(--primary); }
+  .metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); flex: 0 0 auto; gap: 0; margin-bottom: 16px; overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); }
+  .metric { padding: 14px 16px; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+  .metric:nth-child(6n) { border-right: 0; } .metric:nth-last-child(-n + 6) { border-bottom: 0; }
+  .metric h3 { margin: 0 0 8px; color: var(--text-secondary); font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  .metric .value { color: var(--text-primary); font: 500 22px/1 Georgia, "Times New Roman", serif; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .cost-caption { margin-top: 6px; color: var(--text-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; }
+  /* Column flex so the rows below the card header take whatever height the two
+     blocks above leave, and `min-height: 0` so the card gives height back
+     instead of growing past the viewport. */
+  .requests-card { display: flex; flex-direction: column; min-height: 200px; overflow: hidden; }
+  .table-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--border-color); }
   .table-header h2 { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--text-primary); font: 500 18px Georgia, "Times New Roman", serif; }
   .table-header h2 i { color: var(--primary-dark); }
-  .table-scroll { overflow-x: auto; } table { width: 100%; min-width: 1000px; border-collapse: collapse; }
-  th { padding: 14px 20px; border-bottom: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-secondary); text-align: left; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-  td { padding: 16px 20px; border-bottom: 1px solid var(--border-color); color: var(--text-secondary); font-size: 14px; } tbody tr:last-child td { border-bottom: 0; } tbody tr:hover { background: var(--bg-secondary); }
+  .table-meta { flex-shrink: 0; color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .table-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } table { width: 100%; min-width: 1000px; border-collapse: collapse; }
+  /* The header row stays put while the body scrolls. `border-collapse: collapse`
+     hands the cell border to the table, which does not travel with a sticky
+     cell, so the rule is repainted as an inset shadow. */
+  th { position: sticky; top: 0; z-index: 1; padding: 13px 20px; border-bottom: 0; background: var(--bg-secondary); box-shadow: inset 0 -1px 0 var(--border-color); color: var(--text-secondary); text-align: left; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  td { padding: 13px 20px; border-bottom: 1px solid var(--border-color); color: var(--text-secondary); font-size: 14px; } tbody tr:last-child td { border-bottom: 0; } tbody tr:hover { background: var(--bg-secondary); }
   .model-badge { display: inline-block; padding: 4px 12px; border-radius: 6px; background: var(--violet-lighter); color: var(--violet); font-size: 12px; font-weight: 500; }
   .timestamp { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
   .token-value { font: 600 14px monospace; font-variant-numeric: tabular-nums; } .token-value.input { color: var(--primary); } .token-value.output { color: var(--success); }
   .empty-state.compact { padding: 32px; }
-  @media (max-width: 1050px) { .summary-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .summary-card:nth-child(4n) { border-right: 1px solid var(--border-color); } .summary-card:nth-child(2n) { border-right: 0; } .summary-card:nth-last-child(-n + 4) { border-bottom: 1px solid var(--border-color); } .summary-card:nth-last-child(-n + 2) { border-bottom: 0; } }
-  @media (max-width: 768px) { .users-toolbar, .detail-header { align-items: stretch; flex-direction: column; } .users-grid { grid-template-columns: 1fr; } .back-btn { align-self: flex-start; } }
-  @media (max-width: 520px) { .summary-cards { grid-template-columns: 1fr; } .summary-card, .summary-card:nth-child(2n), .summary-card:nth-child(4n) { border-right: 0; border-bottom: 1px solid var(--border-color); } .summary-card:last-child { border-bottom: 0; } }
+  @media (max-width: 1250px) { .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .metric:nth-child(6n) { border-right: 1px solid var(--border-color); } .metric:nth-child(3n) { border-right: 0; } .metric:nth-last-child(-n + 6) { border-bottom: 1px solid var(--border-color); } .metric:nth-last-child(-n + 3) { border-bottom: 0; } }
+  @media (max-width: 768px) { .users-toolbar { align-items: stretch; flex-direction: column; } .users-grid { grid-template-columns: 1fr; } .detail-bar { align-items: flex-start; flex-direction: column; gap: 10px; } .detail-identity { flex-direction: column; align-items: flex-start; gap: 4px; } }
+  @media (max-width: 620px) { .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .metric:nth-child(3n) { border-right: 1px solid var(--border-color); } .metric:nth-child(2n) { border-right: 0; } .metric:nth-last-child(-n + 3) { border-bottom: 1px solid var(--border-color); } .metric:nth-last-child(-n + 2) { border-bottom: 0; } }
 </style>

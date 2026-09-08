@@ -3,7 +3,7 @@
   import { fly } from "svelte/transition";
   import { logout } from "$frontend/lib/api/admin";
   import { motionDuration } from "$frontend/lib/motion";
-  import { toast, theme } from "$frontend/lib/stores";
+  import { toast, theme, viewportFit } from "$frontend/lib/stores";
   import ThemeTogglePill from "../ThemeTogglePill.svelte";
 
   let {
@@ -16,6 +16,11 @@
 
   // Pages whose widest table needs more room than the default column.
   const widePaths = ["/admin/logs", "/admin/errors", "/admin/endpoint-stats"];
+
+  // Pages that own exactly the viewport and scroll one block inside themselves.
+  // API key stats is absent because only its detail view does; that page opts in
+  // through the `viewportFit` store instead.
+  const fitPaths = ["/admin/dashboard", "/admin/endpoint-stats", "/admin/model-stats"];
 
   // Resources, then the reporting pages, then everything operational. The groups
   // are spaced apart in the sidebar rather than ruled off, so the two rules stay
@@ -84,7 +89,7 @@
 <main
   class="main-content"
   class:wide-content={widePaths.includes(activePath)}
-  class:viewport-fit={activePath === "/admin/dashboard"}
+  class:viewport-fit={fitPaths.includes(activePath) || $viewportFit}
   id="main"
 >
   <header class="header">
