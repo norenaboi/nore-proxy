@@ -684,7 +684,7 @@ export class LogManager {
   }
 
   aggregateRequests(filters: any = {}) {
-    const fullDay = filters.from == null && filters.to == null && !filters.cursor && !filters.status && !filters.endpoint;
+    const fullDay = filters.from == null && filters.to == null && !filters.status && !filters.endpoint;
     const source = fullDay ? "request_daily_rollups" : "request_logs";
     const clauses = fullDay ? ["1=1"] : ["type = 'request_end'", "projection_version >= 2"];
     const params = { apiKey: filters.apiKey ?? null, legacyMask: filters.legacyMask ?? filters.apiKeyMask ?? "", model: filters.model ?? null, status: filters.status ?? null, from: filters.from ?? null, to: filters.to ?? null };
@@ -1190,7 +1190,6 @@ export class LogManager {
   buildRequestWhere(filters: any = {}) {
     const clauses = ["type = 'request_end'", "projection_version >= 2"];
     const params: Record<string, unknown> = {};
-    if (filters.cursor) { clauses.push("id < @cursor"); params.cursor = filters.cursor; }
     if (filters.model) { clauses.push("request_model = @model"); params.model = filters.model; }
     if (filters.apiKey) {
       clauses.push("(api_key_id = @apiKey OR (legacy_key = 1 AND api_key_masked = @legacyMask))");
@@ -1206,6 +1205,7 @@ export class LogManager {
 
   getRequestHistory(filters: any = {}) {
     const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 50);
+    const offset = Math.max(Number(filters.offset) || 0, 0);
     const { clause, params } = this.buildRequestWhere(filters);
     const rows = this.db
       .prepare(
@@ -1216,19 +1216,25 @@ export class LogManager {
          FROM request_logs
          WHERE ${clause}
          ORDER BY id DESC
-         LIMIT @queryLimit`,
+         LIMIT @queryLimit OFFSET @queryOffset`,
       )
-      .all({ ...params, queryLimit: limit + 1 });
-    const hasMore = rows.length > limit;
-    const visibleRows = rows.slice(0, limit);
-    const requests = visibleRows.map(normalizeRequestRow);
+      .all({ ...params, queryLimit: limit, queryOffset: offset });
 
     return {
-      requests,
-      hasMore,
-      nextCursor:
-        hasMore && requests.length ? requests[requests.length - 1].id : null,
+      requests: rows.map(normalizeRequestRow),
+      total: this.getRequestHistoryCount(filters),
     };
+  }
+
+  getRequestHistoryCount(filters: any = {}) {
+    const { clause, params } = this.buildRequestWhere(filters);
+    const statement = this.db.prepare(
+      `SELECT COUNT(*) AS count FROM request_logs WHERE ${clause}`,
+    );
+    // An unfiltered count binds nothing, and the driver rejects an empty
+    // parameter object against a statement that declares no placeholders.
+    const row = Object.keys(params).length ? statement.get(params) : statement.get();
+    return Number(row?.count || 0);
   }
 
   getRequestHistoryById(id: unknown) {
@@ -1858,19 +1864,24 @@ export class PostgresLogManager {
     return Number(row?.id);
   }
 
-  private async requestRows(filters: any = {}, limit?: number) {
+  private requestWhere(filters: any = {}) {
     const clauses = ["type = 'request_end'", "projection_version >= 2"];
     const values: unknown[] = [];
     const add = (sql: string, value: unknown) => { values.push(value); clauses.push(sql.replace("?", `$${values.length}`)); };
-    if (filters.cursor) add("id < ?", filters.cursor);
     if (filters.model) add("request_model = ?", filters.model);
     if (filters.apiKey) { values.push(filters.apiKey, filters.legacyMask ?? filters.apiKeyMask ?? ""); clauses.push(`(api_key_id = $${values.length - 1} OR (legacy_key = 1 AND api_key_masked = $${values.length}))`); }
     if (filters.status) add("status = ?", filters.status);
     if (filters.endpoint) add("endpoint_name = ?", filters.endpoint);
     if (filters.from != null) add("occurred_at >= ?", filters.from);
     if (filters.to != null) add("occurred_at <= ?", filters.to);
-    let sql = `SELECT * FROM request_logs WHERE ${clauses.join(" AND ")} ORDER BY id DESC`;
+    return { clause: clauses.join(" AND "), values };
+  }
+
+  private async requestRows(filters: any = {}, limit?: number, offset = 0) {
+    const { clause, values } = this.requestWhere(filters);
+    let sql = `SELECT * FROM request_logs WHERE ${clause} ORDER BY id DESC`;
     if (limit != null) { values.push(limit); sql += ` LIMIT $${values.length}`; }
+    if (offset > 0) { values.push(offset); sql += ` OFFSET $${values.length}`; }
     return this.db.all(sql.replace(/\$\$(\d+)/g, "$$1"), values);
   }
 
@@ -1946,12 +1957,13 @@ export class PostgresLogManager {
     return { ...result, rollups };
   }
   async getDashboardRequestLogs() { return (await this.requestRows()).map(normalizeRequestRow); }
-  async getRequestHistory(filters: any = {}) { const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 50); const rows = await this.requestRows(filters, limit + 1); const visible = rows.slice(0, limit).map(normalizeRequestRow); return { requests: visible, hasMore: rows.length > limit, nextCursor: rows.length > limit && visible.length ? visible.at(-1)?.id : null }; }
+  async getRequestHistory(filters: any = {}) { const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 50); const offset = Math.max(Number(filters.offset) || 0, 0); const [rows, total] = await Promise.all([this.requestRows(filters, limit, offset), this.getRequestHistoryCount(filters)]); return { requests: rows.map(normalizeRequestRow), total }; }
+  async getRequestHistoryCount(filters: any = {}) { const { clause, values } = this.requestWhere(filters); return Number((await this.db.get<{ count: number }>(`SELECT COUNT(*)::int AS count FROM request_logs WHERE ${clause}`, values))?.count || 0); }
   async getRequestHistoryById(id: unknown) { return normalizeRequestDetail(await this.db.get("SELECT * FROM request_logs WHERE id = ? AND type = 'request_end'", [id])); }
   async getRequestHistoryFilters() { const models = await this.db.all("SELECT DISTINCT request_model AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND request_model IS NOT NULL AND request_model != '' ORDER BY value"); const endpoints = await this.db.all("SELECT DISTINCT endpoint_name AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND endpoint_name IS NOT NULL AND endpoint_name != '' ORDER BY value"); const apiKeys = await this.db.all("SELECT api_key_id, api_key_masked, key_name FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND api_key_id IS NOT NULL GROUP BY api_key_id, api_key_masked, key_name ORDER BY key_name, api_key_masked"); return { models: models.map((r: any) => r.value), endpoints: endpoints.map((r: any) => r.value), apiKeys: apiKeys.map((r: any) => ({ value: r.api_key_id, label: r.key_name ? `${r.key_name} · ${r.api_key_masked}` : r.api_key_masked })), statuses: ["success", "failed"] }; }
 
   private useRollups(filters: any = {}) {
-    return filters.from == null && filters.to == null && !filters.status && !filters.endpoint && !filters.cursor;
+    return filters.from == null && filters.to == null && !filters.status && !filters.endpoint;
   }
   private async rollupRows(filters: any = {}) {
     const clauses: string[] = [];

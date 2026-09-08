@@ -145,8 +145,8 @@ export interface ErrorLogRecord {
 }
 
 export interface RequestLogFilters {
-  cursor?: number | string | null;
   limit?: number;
+  offset?: number;
   model?: string | null;
   apiKey?: string | null;
   apiKeyMask?: string | null;
@@ -189,8 +189,7 @@ export interface RequestLogSummary {
 
 export interface RequestHistory {
   requests: RequestLogSummary[];
-  hasMore: boolean;
-  nextCursor: number | null;
+  total: number;
 }
 
 export interface LogFiltersResponse {

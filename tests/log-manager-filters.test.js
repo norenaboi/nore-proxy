@@ -102,3 +102,43 @@ test(
     assert.equal(none.requests.length, 0);
   },
 );
+
+test(
+  "getRequestHistory pages by offset and reports the filtered total",
+  { skip: !sqliteAvailable },
+  async (t) => {
+    const manager = await createManager();
+    t.after(() => manager.close());
+
+    for (let i = 0; i < 7; i++) {
+      manager.writeRequestLog(
+        requestEnd(i % 2 ? "Aurora" : "Mistral", { model: `model-${i}` }),
+      );
+    }
+
+    const first = manager.getRequestHistory({ limit: 3 });
+    assert.equal(first.total, 7);
+    assert.equal(first.requests.length, 3);
+
+    const second = manager.getRequestHistory({ limit: 3, offset: 3 });
+    assert.equal(second.total, 7);
+    assert.equal(second.requests.length, 3);
+
+    const last = manager.getRequestHistory({ limit: 3, offset: 6 });
+    assert.equal(last.requests.length, 1);
+    assert.equal(manager.getRequestHistory({ limit: 3, offset: 7 }).requests.length, 0);
+
+    // Pages must neither repeat nor skip a row.
+    const paged = [...first.requests, ...second.requests, ...last.requests].map((r) => r.id);
+    assert.equal(new Set(paged).size, 7);
+    assert.deepEqual(paged, [...paged].sort((a, b) => b - a));
+
+    const filtered = manager.getRequestHistory({ endpoint: "Aurora", limit: 2 });
+    assert.equal(filtered.total, 3);
+    assert.equal(filtered.requests.length, 2);
+    assert.equal(
+      manager.getRequestHistory({ endpoint: "Aurora", limit: 2, offset: 2 }).requests.length,
+      1,
+    );
+  },
+);

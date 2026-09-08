@@ -267,13 +267,13 @@ router.get("/api/requests/filters", verifySession, async (_req: any, res: any) =
 
 router.get("/api/requests", verifySession, async (req: any, res: any) => {
   const limit = parseRequestInteger(req.query.limit, 50, 1, 50);
-  const cursor = parseRequestInteger(
-    req.query.cursor,
-    null,
-    1,
+  const offset = parseRequestInteger(
+    req.query.offset,
+    0,
+    0,
     Number.MAX_SAFE_INTEGER,
   );
-  if (limit === null || (req.query.cursor !== undefined && cursor === null)) {
+  if (limit === null || offset === null) {
     return res.status(400).json({ error: "Invalid pagination values" });
   }
 
@@ -311,7 +311,7 @@ router.get("/api/requests", verifySession, async (req: any, res: any) => {
   try {
     const result = await logManager.getRequestHistory({
       limit,
-      cursor,
+      offset,
       apiKey: (req.query.apiKey as QueryValue)?.trim() || null,
       model: (req.query.model as QueryValue)?.trim() || null,
       endpoint: (req.query.endpoint as QueryValue)?.trim() || null,
@@ -341,11 +341,7 @@ router.get("/api/requests", verifySession, async (req: any, res: any) => {
       };
     });
 
-    return res.json({
-      requests,
-      nextCursor: result.nextCursor,
-      hasMore: result.hasMore,
-    });
+    return res.json({ requests, total: result.total, limit, offset });
   } catch (error: any) {
     console.error("Error loading request history:", error);
     return res.status(500).json({ error: "Internal server error" });

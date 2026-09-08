@@ -25,11 +25,11 @@
   let detailOpen = $state(false);
   let detailLoading = $state(false);
   let detailError = $state("");
-  let stateMsg = $state("");
+  let listError = $state("");
   let loading = $state(false);
-  let cursor = $state<string | null>(null);
-  let hasMore = $state(true);
-  let seen = new Set<number>();
+  let total = $state(0);
+  let offset = $state(0);
+  const limit = 50;
   let generation = 0;
   let filtersLoaded = $state(false);
 
@@ -41,15 +41,11 @@
   let apiKeyOptions = $state<{ value: string; label: string }[]>([]);
   let modelOptions = $state<string[]>([]);
   let endpointOptions = $state<string[]>([]);
-  let count = $state(0);
 
-  let sentinel: HTMLElement;
-  let observer: IntersectionObserver;
   let previousBodyOverflow: string | null = null;
 
-  function buildUrl() {
-    const p = new URLSearchParams({ limit: "50" });
-    if (cursor) p.set("cursor", cursor);
+  function buildUrl(requestedOffset = offset) {
+    const p = new URLSearchParams({ limit: String(limit), offset: String(requestedOffset) });
     if (apiKeyFilter) p.set("apiKey", apiKeyFilter);
     if (modelFilter) p.set("model", modelFilter);
     if (endpointFilter) p.set("endpoint", endpointFilter);
@@ -61,27 +57,28 @@
     return `/api/requests?${p}`;
   }
 
-  async function loadPage({ reset = false } = {}) {
-    if (reset) {
-      generation++; cursor = null; hasMore = true; seen.clear(); requests = []; count = 0;
-    } else if (loading || !hasMore) return;
-    const gen = generation;
+  // New traffic keeps arriving, so a page that was in range when it was
+  // requested can fall past the end; step back to the last populated page.
+  // A filter change can also land mid-flight, so only the newest load wins.
+  async function loadRequests(requestedOffset = offset) {
+    const gen = ++generation;
     loading = true;
-    stateMsg = "Loading requests…";
+    listError = "";
     try {
-      const d = await requestAdminJson<{ requests: Request[]; nextCursor: string; hasMore: boolean }>(buildUrl());
+      let d = await requestAdminJson<{ requests: Request[]; total: number }>(buildUrl(requestedOffset));
       if (gen !== generation) return;
-      const fresh = d.requests.filter((r) => !seen.has(r.id));
-      fresh.forEach((r) => seen.add(r.id));
-      requests = [...requests, ...fresh];
-      count = seen.size;
-      cursor = d.nextCursor;
-      hasMore = Boolean(d.hasMore);
-      stateMsg = count === 0 ? "No requests match these filters."
-        : !hasMore ? "All matching requests are shown."
-        : "Scroll to load 50 more requests.";
+      let nextOffset = requestedOffset;
+      const nextTotal = d.total ?? 0;
+      if (nextOffset >= nextTotal && nextOffset > 0) {
+        nextOffset = Math.max(0, Math.floor(Math.max(nextTotal - 1, 0) / limit) * limit);
+        d = await requestAdminJson<{ requests: Request[]; total: number }>(buildUrl(nextOffset));
+        if (gen !== generation) return;
+      }
+      offset = nextOffset;
+      total = d.total ?? 0;
+      requests = d.requests ?? [];
     } catch (e) {
-      if (gen === generation) stateMsg = e instanceof Error ? e.message : "Error";
+      if (gen === generation) listError = e instanceof Error ? e.message : "Could not load request history.";
     } finally {
       if (gen === generation) loading = false;
     }
@@ -158,7 +155,7 @@
 
   function resetFilters() {
     apiKeyFilter = ""; modelFilter = ""; endpointFilter = ""; statusFilter = ""; timeFilter = "";
-    loadPage({ reset: true });
+    void loadRequests(0);
   }
 
   onMount(() => {
@@ -168,21 +165,19 @@
 
     void (async () => {
       await loadFilters().catch(() => {});
-      await loadPage({ reset: true });
       if (disposed) return;
-      observer = new IntersectionObserver((entries) => {
-        if (entries.some((e) => e.isIntersecting)) loadPage();
-      }, { rootMargin: "300px" });
-      observer.observe(sentinel);
+      await loadRequests(0);
     })();
 
     return () => {
       disposed = true;
-      observer?.disconnect();
       document.removeEventListener("keydown", onKey);
       restoreBodyScroll();
     };
   });
+
+  const start = $derived(total === 0 ? 0 : offset + 1);
+  const end = $derived(Math.min(offset + limit, total));
 </script>
 
 <section class="toolbar" aria-label="Request filters">
@@ -192,7 +187,7 @@
       <SelectMenu
         options={apiKeyMenuOptions}
         value={apiKeyFilter}
-        onSelect={(value) => { apiKeyFilter = value; loadPage({ reset: true }); }}
+        onSelect={(value) => { apiKeyFilter = value; loadRequests(0); }}
         panelId="logs-api-key-filter-menu"
         panelLabel="API key filter"
         labelledBy="apiKeyFilterLabel"
@@ -206,7 +201,7 @@
       <SelectMenu
         options={modelMenuOptions}
         value={modelFilter}
-        onSelect={(value) => { modelFilter = value; loadPage({ reset: true }); }}
+        onSelect={(value) => { modelFilter = value; loadRequests(0); }}
         panelId="logs-model-filter-menu"
         panelLabel="Model filter"
         labelledBy="modelFilterLabel"
@@ -220,7 +215,7 @@
       <SelectMenu
         options={endpointMenuOptions}
         value={endpointFilter}
-        onSelect={(value) => { endpointFilter = value; loadPage({ reset: true }); }}
+        onSelect={(value) => { endpointFilter = value; loadRequests(0); }}
         panelId="logs-endpoint-filter-menu"
         panelLabel="Endpoint filter"
         labelledBy="endpointFilterLabel"
@@ -234,7 +229,7 @@
       <SelectMenu
         options={statusMenuOptions}
         value={statusFilter}
-        onSelect={(value) => { statusFilter = value; loadPage({ reset: true }); }}
+        onSelect={(value) => { statusFilter = value; loadRequests(0); }}
         panelId="logs-status-filter-menu"
         panelLabel="Status filter"
         labelledBy="statusFilterLabel"
@@ -245,7 +240,7 @@
       <SelectMenu
         options={timeMenuOptions}
         value={timeFilter}
-        onSelect={(value) => { timeFilter = value; loadPage({ reset: true }); }}
+        onSelect={(value) => { timeFilter = value; loadRequests(0); }}
         panelId="logs-time-filter-menu"
         panelLabel="Time range filter"
         labelledBy="timeFilterLabel"
@@ -255,20 +250,20 @@
   </div>
   <div class="toolbar-actions">
     <button class="btn btn-secondary" type="button" onclick={resetFilters}><i class="fa-solid fa-filter-circle-xmark"></i> Reset</button>
-    <button class="btn btn-primary" type="button" onclick={() => loadPage({ reset: true })}><i class="fa-solid fa-rotate"></i> Refresh</button>
+    <button class="btn btn-primary" type="button" onclick={() => loadRequests(0)}><i class="fa-solid fa-rotate"></i> Refresh</button>
   </div>
 </section>
 
 <section class="logs-card">
   <div class="card-header">
     <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Completed requests</div>
-    <span class="count-pill">{count.toLocaleString()} loaded</span>
+    <span class="count-pill">{total.toLocaleString()} {total === 1 ? "request" : "requests"}</span>
   </div>
   <div class="table-scroll">
     <table>
       <thead><tr><th>Time</th><th>Name</th><th>Model</th><th>Endpoint</th><th class="numeric-cell">Input</th><th class="numeric-cell">Output</th><th class="numeric-cell">Cache W</th><th class="numeric-cell">Cache R</th><th class="numeric-cell">Duration</th><th class="numeric-cell">Cost</th><th>Status</th></tr></thead>
       <tbody>
-        {#if loading && requests.length === 0}
+        {#if loading}
           {#each Array(6) as _}
             <tr class="skeleton" aria-hidden="true">
               {#each Array(11) as __}
@@ -276,27 +271,37 @@
               {/each}
             </tr>
           {/each}
+        {:else if listError}
+          <tr><td colspan="11" class="table-state table-state-error"><span role="alert">{listError}</span></td></tr>
+        {:else if requests.length === 0}
+          <tr><td colspan="11" class="table-state">No requests match these filters.</td></tr>
+        {:else}
+          {#each requests as req (req.id)}
+            <tr tabindex="0" style="cursor:pointer;" onclick={() => openDetail(req.id)} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(req.id); } }}>
+              <td class="timestamp">{fmtTime(req.timestamp)}</td>
+              <td class="primary-cell">{req.name || req.apiKey || "Unknown"}</td>
+              <td class="secondary-cell">{req.model || "Unknown"}</td>
+              <td class="secondary-cell">{req.endpointName ?? "—"}</td>
+              <td class="numeric-cell">{Number(req.inputTokens || 0).toLocaleString()}</td>
+              <td class="numeric-cell">{Number(req.outputTokens || 0).toLocaleString()}</td>
+              <td class="numeric-cell">{Number(req.cacheWriteTokens || 0).toLocaleString()}</td>
+              <td class="numeric-cell">{Number(req.cacheReadTokens || 0).toLocaleString()}</td>
+              <td class="numeric-cell">{Number(req.duration || 0).toFixed(2)}s</td>
+              <td class="numeric-cell">${Number(req.estimatedCost || 0).toFixed(6)}</td>
+              <td><span class="status-badge {["success","failed"].includes(req.status) ? req.status : "unknown"}">{req.status}</span></td>
+            </tr>
+          {/each}
         {/if}
-        {#each requests as req (req.id)}
-          <tr tabindex="0" style="cursor:pointer;" onclick={() => openDetail(req.id)} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(req.id); } }}>
-            <td class="timestamp">{fmtTime(req.timestamp)}</td>
-            <td class="primary-cell">{req.name || req.apiKey || "Unknown"}</td>
-            <td class="secondary-cell">{req.model || "Unknown"}</td>
-            <td class="secondary-cell">{req.endpointName ?? "—"}</td>
-            <td class="numeric-cell">{Number(req.inputTokens || 0).toLocaleString()}</td>
-            <td class="numeric-cell">{Number(req.outputTokens || 0).toLocaleString()}</td>
-            <td class="numeric-cell">{Number(req.cacheWriteTokens || 0).toLocaleString()}</td>
-            <td class="numeric-cell">{Number(req.cacheReadTokens || 0).toLocaleString()}</td>
-            <td class="numeric-cell">{Number(req.duration || 0).toFixed(2)}s</td>
-            <td class="numeric-cell">${Number(req.estimatedCost || 0).toFixed(6)}</td>
-            <td><span class="status-badge {["success","failed"].includes(req.status) ? req.status : "unknown"}">{req.status}</span></td>
-          </tr>
-        {/each}
       </tbody>
     </table>
   </div>
-  <div class="request-history-state" role="status" aria-live="polite">{stateMsg}</div>
-  <div bind:this={sentinel} aria-hidden="true"></div>
+  <div class="pagination">
+    <span role="status" aria-live="polite">{total === 0 ? "Showing 0 requests" : `Showing ${start}–${end} of ${total.toLocaleString()}`}</span>
+    <div class="pagination-actions">
+      <button class="btn btn-secondary" type="button" disabled={loading || offset === 0} onclick={() => loadRequests(Math.max(0, offset - limit))}><i class="fa-solid fa-chevron-left"></i> Previous</button>
+      <button class="btn btn-secondary" type="button" disabled={loading || offset + limit >= total} onclick={() => loadRequests(offset + limit)}>Next <i class="fa-solid fa-chevron-right"></i></button>
+    </div>
+  </div>
 </section>
 
 <!-- Detail drawer -->
@@ -388,6 +393,7 @@
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 10px 15px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 650; }
   .btn-primary { border-color: var(--primary-dark); background: var(--primary-dark); color: white; }
   .btn-secondary { border-color: var(--border-color); background: var(--bg-secondary); color: var(--primary-dark); }
+  .btn:disabled { cursor: not-allowed; opacity: .45; }
   .logs-card { overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); }
   .card-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 19px 22px; border-bottom: 1px solid var(--border-color); }
   .card-title { display: flex; align-items: center; gap: 10px; color: var(--text-primary); font-family: Georgia, "Times New Roman", serif; font-size: 17px; font-weight: 500; }
@@ -399,6 +405,9 @@
   td { padding: 14px; border-bottom: 1px solid var(--border-color); color: var(--text-secondary); font-size: 13px; }
   tbody tr { cursor: pointer; transition: background .15s ease; }
   tbody tr:hover, tbody tr:focus { background: var(--bg-tertiary); outline: none; }
+  tbody tr:last-child td { border-bottom: none; }
+  .table-state { padding: 32px; color: var(--text-secondary); text-align: center; }
+  .table-state-error { color: var(--danger); }
   .primary-cell { max-width: 190px; overflow: hidden; color: var(--text-primary); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
   .secondary-cell { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .numeric-cell, .timestamp { font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -407,7 +416,8 @@
   .status-badge.success { background: var(--success-alpha-01); color: var(--success); }
   .status-badge.failed { background: var(--danger-alpha-01); color: var(--danger); }
   .status-badge.unknown { background: var(--bg-tertiary); color: var(--text-secondary); }
-  .request-history-state { padding: 24px; color: var(--text-tertiary); text-align: center; }
+  .pagination { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 20px; border-top: 1px solid var(--border-color); color: var(--text-secondary); font-size: 13px; }
+  .pagination-actions { display: flex; gap: 8px; }
   .detail-backdrop { position: fixed; z-index: 1000; inset: 0; display: none; align-items: center; justify-content: center; padding: 28px; background: rgba(24,17,31,.58); backdrop-filter: blur(3px); }
   .detail-backdrop.open { display: flex; }
   .detail-panel { display: flex; flex-direction: column; width: min(1080px,100%); max-height: calc(100vh - 56px); overflow: hidden; border: 1px solid var(--border-color); border-radius: 11px; background: var(--card-bg); box-shadow: 0 24px 70px rgba(25,15,35,.24); }
@@ -424,5 +434,5 @@
   .detail-value { display: block; overflow-wrap: anywhere; color: var(--text-primary); font-size: 13px; font-weight: 550; }
   .detail-pre { width: 100%; max-height: 300px; overflow: auto; margin-top: 8px; padding: 15px; border: 1px solid var(--border-color); border-radius: 10px; background: #19151e; color: #eee8f3; font: 12px/1.55 "SF Mono", Monaco, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
   @media (max-width: 1100px) { .toolbar { align-items: stretch; flex-direction: column; } .detail-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
-  @media (max-width: 700px) { .filters,.detail-grid { grid-template-columns: 1fr; } .toolbar-actions .btn { flex: 1; } .detail-backdrop { padding: 10px; } .detail-panel { max-height: calc(100vh - 20px); } }
+  @media (max-width: 700px) { .filters,.detail-grid { grid-template-columns: 1fr; } .toolbar-actions .btn,.pagination-actions .btn { flex: 1; } .detail-backdrop { padding: 10px; } .detail-panel { max-height: calc(100vh - 20px); } .pagination { align-items: stretch; flex-direction: column; } }
 </style>
