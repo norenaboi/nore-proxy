@@ -127,6 +127,41 @@ export function formatPrice(value: number): string {
   return `$${Number.parseFloat(value.toPrecision(2))}`;
 }
 
+export interface ModelRate {
+  key: keyof Required<PublicModelPricing>;
+  /** Column heading. Abbreviated where the full name cannot fit a quarter of the narrowest card. */
+  label: string;
+  /** Full name of an abbreviated heading, carried as the column's tooltip. */
+  title?: string;
+  /** Fixed 1-based grid column, so one rate occupies the same column on every card. */
+  column: number;
+  amount: number;
+}
+
+const RATE_COLUMNS: ReadonlyArray<Omit<ModelRate, "amount">> = [
+  { key: "input", label: "Input", column: 1 },
+  { key: "output", label: "Output", column: 2 },
+  { key: "cache_write", label: "Cache W", title: "Cache write", column: 3 },
+  { key: "cache_read", label: "Cache R", title: "Cache read", column: 4 },
+];
+
+/**
+ * The rates a model actually charges, in column order.
+ *
+ * The public feed reports 0 both for a rate a model has no concept of — the
+ * cache pair on an image or embedding model, output on an embedding model, the
+ * cache pair on a text model served by an endpoint without prompt caching — and
+ * for a model the catalog never priced. Neither is a rate of zero dollars, so a
+ * zero is dropped rather than printed as "$0.00", and a model with nothing
+ * priced yields an empty array.
+ */
+export function modelRates(pricing: Required<PublicModelPricing>): ModelRate[] {
+  return RATE_COLUMNS.filter((column) => pricing[column.key] > 0).map((column) => ({
+    ...column,
+    amount: pricing[column.key],
+  }));
+}
+
 function normalizePricing(pricing: PublicModelPricing | null | undefined): Required<PublicModelPricing> {
   return {
     input: Number(pricing?.input) || 0,

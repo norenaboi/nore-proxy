@@ -8,6 +8,7 @@
     formatModelName,
     formatPrice,
     getProviderIcon,
+    modelRates,
     normalizeModels,
     readModelCache,
     writeModelCache,
@@ -364,6 +365,7 @@
     </div>
   {:else}
     {#each filteredModels as model (model.id)}
+      {@const rates = modelRates(model.pricing)}
       <div
         class="model-card panel"
         tabindex="0"
@@ -380,13 +382,21 @@
           </div>
         </div>
         <button class="card-copy" type="button" aria-label={`Copy ${model.id}`} onclick={(event) => handleCopyClick(event, model.id)}>Copy</button>
-        <div class="price-grid">
-          {#each [["Input", model.pricing.input], ["Output", model.pricing.output], ["Cache Write", model.pricing.cache_write], ["Cache Read", model.pricing.cache_read]] as [label, value]}
-            <div class="price-item">
-              <span class="label">{label}</span>
-              <span class="value">{formatPrice(Number(value))} <small>/M</small></span>
+        <div class="rate-grid">
+          <p class:unpriced={rates.length === 0} class="rate-unit">per 1M tokens</p>
+          {#if rates.length === 0}
+            <div class="rate" style="grid-column: 1 / -1">
+              <span class="label">Pricing</span>
+              <span class="value">Not published</span>
             </div>
-          {/each}
+          {:else}
+            {#each rates as rate (rate.key)}
+              <div class="rate" style={`grid-column: ${rate.column}`}>
+                <span class="label" title={rate.title}>{rate.label}</span>
+                <span class="value">{formatPrice(rate.amount)}</span>
+              </div>
+            {/each}
+          {/if}
         </div>
       </div>
     {/each}
@@ -600,11 +610,46 @@
   .card-copy:focus-visible { opacity: 1; }
   .card-copy:hover { border-color: var(--accent-ink); color: var(--accent-ink); }
 
-  .price-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
-  .price-item { display: grid; gap: 1px; }
-  .price-item .label { color: var(--muted); font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-  .price-item .value { font: 600 15px ui-monospace, monospace; }
-  .price-item .value small { color: var(--muted); font-size: 10px; font-weight: 400; }
+  /*
+   * Every card carries the same two rows — a unit caption and one row of rate
+   * columns — whatever the model charges for, so a model without cache rates is
+   * exactly as tall as one with them and the grid stays a clean matrix.
+   *
+   * The four columns are fixed rather than packed left: a rate keeps its own
+   * column, so Input sits under Input across neighbouring cards even when one
+   * charges two rates and the next charges four, and a model priced for cache
+   * reads but not cache writes still shows that rate in the cache-read column.
+   *
+   * Carrying the unit once in the caption is what fits four columns inside the
+   * 300px card the auto-fill grid produces at its narrowest: a per-value "/M"
+   * costs roughly 16px a column, and at that width the fourth column's suffix
+   * collides with the third column's value.
+   */
+  .rate-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 3px 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+
+  .rate-unit {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: var(--muted);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-align: right;
+    text-transform: uppercase;
+  }
+
+  /* An unpriced model keeps the caption's box so its card matches the others,
+     while hiding a unit that no longer describes anything below it. */
+  .rate-unit.unpriced { visibility: hidden; }
+  .rate { display: grid; gap: 1px; min-width: 0; }
+  .rate .label { color: var(--muted); font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+  .rate .value { font: 600 14px ui-monospace, monospace; }
   .loading, .no-results { grid-column: 1 / -1; padding: 60px 20px; text-align: center; }
   .copy-notification { bottom: 28px; padding: 10px 18px; }
 

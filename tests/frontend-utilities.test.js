@@ -20,6 +20,7 @@ import {
   formatModelName,
   formatPrice,
   getProvider,
+  modelRates,
   normalizeModels,
   readModelCache,
   writeModelCache,
@@ -122,6 +123,25 @@ test("model catalog classifies, normalizes, caches, and formats models", () => {
   assert.equal(formatModelName("claude-3-7-sonnet-20250219"), "Claude 3.7 Sonnet 20250219");
   assert.equal(formatModelName("gpt-4-32k"), "GPT 4 32k");
   assert.equal(formatPrice(0.003), "$0.003");
+
+  // A rate of 0 is an absent rate, not a free one: the public feed reports 0 for
+  // the cache pair on an uncached model and for output on an embedding model.
+  assert.deepEqual(
+    modelRates({ input: 3, output: 15, cache_write: 3.75, cache_read: 0.3 }).map((rate) => [rate.key, rate.column]),
+    [["input", 1], ["output", 2], ["cache_write", 3], ["cache_read", 4]],
+  );
+  assert.deepEqual(
+    modelRates({ input: 0.13, output: 0, cache_write: 0, cache_read: 0 }).map((rate) => rate.key),
+    ["input"],
+  );
+
+  // Each rate keeps its own column, so a model priced for cache reads but not
+  // cache writes still lands its read rate under the cache-read heading.
+  assert.deepEqual(
+    modelRates({ input: 1, output: 2, cache_write: 0, cache_read: 0.1 }).map((rate) => [rate.key, rate.column]),
+    [["input", 1], ["output", 2], ["cache_read", 4]],
+  );
+  assert.deepEqual(modelRates(models[1].pricing), []);
 });
 
 test("status helpers roll up categories and group filtered models without mutating input", () => {
