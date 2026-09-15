@@ -385,6 +385,21 @@ function mapErrorRow(row: any) {
   };
 }
 
+/**
+ * The API key filter's menu entries, one per key id. A key that was renamed —
+ * or whose mask was recorded differently — leaves rows under the same id, and
+ * the picker keys its options by value, so each id may appear only once here.
+ * The label comes from the key's most recent name and mask.
+ */
+function apiKeyFilterOptions(rows: any[]) {
+  return rows
+    .map((row: any) => {
+      const mask = row.api_key_masked || "Unknown";
+      return { value: String(row.api_key_id), label: row.key_name ? `${row.key_name} · ${mask}` : mask };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
 function firstPresent(row: Record<string, any>, legacyData: Record<string, any>, ...keys: string[]): any {
   for (const key of keys) {
     if (row[key] !== undefined && row[key] !== null) return row[key];
@@ -1293,12 +1308,12 @@ export class LogManager {
       WHERE type = 'request_end' AND projection_version >= 2 AND request_model IS NOT NULL AND request_model != '' ORDER BY value`).all().map((row: { value: unknown }) => row.value);
     const endpoints = this.db.prepare(`SELECT DISTINCT endpoint_name AS value FROM request_logs
       WHERE type = 'request_end' AND projection_version >= 2 AND endpoint_name IS NOT NULL AND endpoint_name != '' ORDER BY value`).all().map((row: { value: unknown }) => row.value);
-    const apiKeys = this.db.prepare(`SELECT api_key_id, api_key_masked, key_name FROM request_logs
-      WHERE type = 'request_end' AND projection_version >= 2 AND api_key_id IS NOT NULL
-      GROUP BY api_key_id, api_key_masked, key_name ORDER BY key_name, api_key_masked`).all().map((row: any) => ({
-        value: row.api_key_id,
-        label: row.key_name ? `${row.key_name} · ${row.api_key_masked}` : row.api_key_masked,
-      }));
+    // Grouped by id alone: max(occurred_at) makes SQLite read the bare columns
+    // off the key's most recent row, so a rename lists the key once, by its
+    // current name, rather than once per name it has carried.
+    const apiKeys = apiKeyFilterOptions(this.db.prepare(`SELECT api_key_id, api_key_masked, key_name, MAX(occurred_at) FROM request_logs
+      WHERE type = 'request_end' AND projection_version >= 2 AND api_key_id IS NOT NULL AND api_key_id != ''
+      GROUP BY api_key_id`).all());
     return { models, endpoints, apiKeys, statuses: ["success", "failed"] };
   }
 
@@ -1960,7 +1975,10 @@ export class PostgresLogManager {
   async getRequestHistory(filters: any = {}) { const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 50); const offset = Math.max(Number(filters.offset) || 0, 0); const [rows, total] = await Promise.all([this.requestRows(filters, limit, offset), this.getRequestHistoryCount(filters)]); return { requests: rows.map(normalizeRequestRow), total }; }
   async getRequestHistoryCount(filters: any = {}) { const { clause, values } = this.requestWhere(filters); return Number((await this.db.get<{ count: number }>(`SELECT COUNT(*)::int AS count FROM request_logs WHERE ${clause}`, values))?.count || 0); }
   async getRequestHistoryById(id: unknown) { return normalizeRequestDetail(await this.db.get("SELECT * FROM request_logs WHERE id = ? AND type = 'request_end'", [id])); }
-  async getRequestHistoryFilters() { const models = await this.db.all("SELECT DISTINCT request_model AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND request_model IS NOT NULL AND request_model != '' ORDER BY value"); const endpoints = await this.db.all("SELECT DISTINCT endpoint_name AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND endpoint_name IS NOT NULL AND endpoint_name != '' ORDER BY value"); const apiKeys = await this.db.all("SELECT api_key_id, api_key_masked, key_name FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND api_key_id IS NOT NULL GROUP BY api_key_id, api_key_masked, key_name ORDER BY key_name, api_key_masked"); return { models: models.map((r: any) => r.value), endpoints: endpoints.map((r: any) => r.value), apiKeys: apiKeys.map((r: any) => ({ value: r.api_key_id, label: r.key_name ? `${r.key_name} · ${r.api_key_masked}` : r.api_key_masked })), statuses: ["success", "failed"] }; }
+  // DISTINCT ON keeps one row per key id, the key's most recent: a rename must
+  // not list the key once per name it has carried, because the picker keys its
+  // options by value and would reject the repeat.
+  async getRequestHistoryFilters() { const models = await this.db.all("SELECT DISTINCT request_model AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND request_model IS NOT NULL AND request_model != '' ORDER BY value"); const endpoints = await this.db.all("SELECT DISTINCT endpoint_name AS value FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND endpoint_name IS NOT NULL AND endpoint_name != '' ORDER BY value"); const apiKeys = await this.db.all("SELECT DISTINCT ON (api_key_id) api_key_id, api_key_masked, key_name FROM request_logs WHERE type = 'request_end' AND projection_version >= 2 AND api_key_id IS NOT NULL AND api_key_id <> '' ORDER BY api_key_id, occurred_at DESC NULLS LAST"); return { models: models.map((r: any) => r.value), endpoints: endpoints.map((r: any) => r.value), apiKeys: apiKeyFilterOptions(apiKeys), statuses: ["success", "failed"] }; }
 
   private useRollups(filters: any = {}) {
     return filters.from == null && filters.to == null && !filters.status && !filters.endpoint;

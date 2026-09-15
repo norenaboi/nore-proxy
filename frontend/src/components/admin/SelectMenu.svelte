@@ -107,13 +107,27 @@
   let panel: HTMLDivElement | undefined = $state();
   let panelStyle = $state("");
 
-  const selected = $derived(options.find((option) => option.value === value));
-  const showSearch = $derived(options.length > searchThreshold);
+  /**
+   * One row per value, first occurrence winning. The panel keys its rows by
+   * value, so a caller that hands the same value twice would otherwise take the
+   * whole menu down — and a repeated value has no meaning in a single-select.
+   */
+  const uniqueOptions = $derived.by(() => {
+    const seen = new Set<string>();
+    return options.filter((option) => {
+      if (seen.has(option.value)) return false;
+      seen.add(option.value);
+      return true;
+    });
+  });
+
+  const selected = $derived(uniqueOptions.find((option) => option.value === value));
+  const showSearch = $derived(uniqueOptions.length > searchThreshold);
 
   const matches = $derived.by(() => {
     const needle = searchQuery.trim().toLowerCase();
-    if (!needle) return options;
-    return options.filter((option) =>
+    if (!needle) return uniqueOptions;
+    return uniqueOptions.filter((option) =>
       [option.value, option.label, option.note, option.meta].some(
         (field) => String(field ?? "").toLowerCase().includes(needle),
       ),
@@ -186,7 +200,7 @@
 
   function toggle(): void {
     if (open) close({ restoreFocus: true });
-    else openMenu(Math.max(options.findIndex((option) => option.value === value), 0));
+    else openMenu(Math.max(uniqueOptions.findIndex((option) => option.value === value), 0));
   }
 
   function choose(next: string): void {

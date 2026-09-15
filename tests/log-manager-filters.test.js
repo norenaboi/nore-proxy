@@ -84,6 +84,35 @@ test(
 );
 
 test(
+  "getRequestHistoryFilters lists each API key once, under its latest name",
+  { skip: !sqliteAvailable },
+  async (t) => {
+    const manager = await createManager();
+    t.after(() => manager.close());
+
+    // The same key logged before and after a rename. Both rows carry one id, so
+    // the filter must offer one option: the menu keys its rows by value and
+    // throws on a repeat.
+    const key = { api_key_id: "key-id-renamed", api_key: "sk-abcdefghijklmnop" };
+    manager.writeRequestLog(requestEnd("Aurora", { ...key, key_name: "old-name", timestamp: 1000 }));
+    manager.writeRequestLog(requestEnd("Aurora", { ...key, key_name: "new-name", timestamp: 2000 }));
+    // A second key, to prove the grouping does not collapse distinct ids.
+    manager.writeRequestLog(requestEnd("Aurora", {
+      api_key_id: "key-id-other", api_key: "sk-zyxwvutsrqponml", key_name: "other", timestamp: 1500,
+    }));
+    // Legacy rows carry no id and belong to no option.
+    manager.writeRequestLog(requestEnd("Aurora", { api_key: "sk-nonononononono", key_name: "legacy" }));
+
+    const { apiKeys } = manager.getRequestHistoryFilters();
+    assert.equal(new Set(apiKeys.map((option) => option.value)).size, apiKeys.length);
+    assert.deepEqual(apiKeys, [
+      { value: "key-id-renamed", label: "new-name · sk-ab...nop" },
+      { value: "key-id-other", label: "other · sk-zy...nml" },
+    ].sort((a, b) => a.label.localeCompare(b.label)));
+  },
+);
+
+test(
   "getRequestHistory filters persisted rows by endpoint name",
   { skip: !sqliteAvailable },
   async (t) => {
