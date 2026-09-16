@@ -5,11 +5,11 @@ import type {
   PublicModelsResponse,
 } from "$contracts/models";
 import { normalizeModality } from "$contracts/models";
+import { apiFormatSpec, type ImageApiFormat } from "$contracts/apiFormats";
 
 export const MODEL_CACHE_KEY = "nore-proxy:model-catalog:v1";
-// Bumped when a cached entry gains a field: a v1 cache carries no modality,
-// and reading it back would file every model under "text".
-const MODEL_CACHE_VERSION = 2;
+// Older caches omit the endpoint format used by image playground controls.
+const MODEL_CACHE_VERSION = 3;
 const MODEL_NAME_ABBREVIATIONS = new Set(["gpt", "glm"]);
 const MODEL_VERSION_SEGMENT = /^\d+(?:\.\d+)*$/;
 
@@ -25,6 +25,7 @@ export type Provider =
   | "Others";
 
 export interface CatalogModel {
+  image_api_format?: ImageApiFormat;
   id: string;
   provider: Provider;
   modality: ModelModality;
@@ -33,7 +34,7 @@ export interface CatalogModel {
 
 interface CachedCatalog {
   version: number;
-  models: Array<Pick<CatalogModel, "id" | "modality" | "pricing">>;
+  models: Array<Pick<CatalogModel, "id" | "modality" | "pricing" | "image_api_format">>;
 }
 
 /**
@@ -174,7 +175,9 @@ function normalizePricing(pricing: PublicModelPricing | null | undefined): Requi
 function normalizeModel(model: PublicModelDto | string): CatalogModel | null {
   const id = typeof model === "string" ? model : model?.id;
   if (typeof id !== "string" || id.length === 0) return null;
+  const format = apiFormatSpec(typeof model === "string" ? null : model.image_api_format);
   return {
+    ...(format?.category === "image" ? { image_api_format: format.value as ImageApiFormat } : {}),
     id,
     provider: getProvider(id),
     modality: normalizeModality(typeof model === "string" ? null : model.modality),
@@ -210,7 +213,7 @@ export function readModelCache(storage: Storage): CatalogModel[] | null {
 export function writeModelCache(storage: Storage, models: CatalogModel[]): void {
   const cached: CachedCatalog = {
     version: MODEL_CACHE_VERSION,
-    models: models.map(({ id, modality, pricing }) => ({ id, modality, pricing })),
+    models: models.map(({ id, modality, pricing, image_api_format }) => ({ id, modality, pricing, image_api_format })),
   };
   storage.setItem(MODEL_CACHE_KEY, JSON.stringify(cached));
 }

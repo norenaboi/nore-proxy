@@ -18,10 +18,8 @@
  * image surface, so it is not subject to the JPEG limitation of the
  * OpenAI-compat shim.
  *
- * The proxy sends the documented minimum body. Output-format controls
- * (`response_format`, `generation_config`) are not synthesized here; an
- * endpoint that needs `{"type":"image","image_size":"2K"}` sets it through its
- * custom body params, which run last on the wire body.
+ * Optional aspect_ratio and image_size controls map to response_format.
+ * Endpoint custom body params run last and can override this output format.
  */
 
 import { imagePromptOf, type ImageContext } from "./images.js";
@@ -59,6 +57,13 @@ export function transformImageRequest(clientReq: any, actualModel: string): Json
   return {
     model: actualModel,
     input: buildInteractionInput(clientReq),
+    ...(clientReq.aspect_ratio || clientReq.image_size ? {
+      response_format: {
+        type: "image",
+        ...(clientReq.aspect_ratio ? { aspect_ratio: clientReq.aspect_ratio } : {}),
+        ...(clientReq.image_size ? { image_size: clientReq.image_size } : {}),
+      },
+    } : {}),
   };
 }
 

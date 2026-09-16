@@ -95,8 +95,9 @@ function readImageUrl(url: string): StreamImage | null {
  * normalizes them, so every documented shape is accepted: an OpenAI image part,
  * a bare URL, or raw base64 with a separate media type. Anything that is not a
  * usable image reference is dropped rather than rendered as a broken image.
+ * Exported because the /v1/images `data` array carries the same shapes.
  */
-function readImages(value: unknown): StreamImage[] {
+export function readImages(value: unknown): StreamImage[] {
   if (!Array.isArray(value)) return [];
   const images: StreamImage[] = [];
 

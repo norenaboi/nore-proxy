@@ -108,6 +108,7 @@ export type AdminModelRecord =
     };
 
 export interface PublicModel {
+  image_api_format?: import("../shared/contracts/apiFormats.js").ImageApiFormat;
   id: string;
   object: "model";
   created: number;

@@ -43,6 +43,7 @@ export function clientRouteForModality(value: unknown): string {
 }
 
 export interface PublicModelDto {
+  image_api_format?: import("./apiFormats.js").ImageApiFormat;
   id: string;
   object: "model";
   created: number;

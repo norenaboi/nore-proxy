@@ -4,6 +4,7 @@
   import Composer from "$frontend/components/playground/Composer.svelte";
   import ConversationSidebar from "$frontend/components/playground/ConversationSidebar.svelte";
   import ErrorToast from "$frontend/components/playground/ErrorToast.svelte";
+  import ImageStage from "$frontend/components/playground/ImageStage.svelte";
   import ModelDropdown from "$frontend/components/playground/ModelDropdown.svelte";
   import SettingsModal from "$frontend/components/playground/SettingsModal.svelte";
   import Transcript from "$frontend/components/playground/Transcript.svelte";
@@ -12,6 +13,7 @@
   import { collectGarbage, readPayloads, writePayload } from "$frontend/lib/playground/attachmentStore";
   import { AttachmentError, readAttachment } from "$frontend/lib/playground/attachments";
   import { createMessageId } from "$frontend/lib/playground/ids";
+  import { ImageGenerationError, generateImages } from "$frontend/lib/playground/images";
   import { buildChatRequest } from "$frontend/lib/playground/request";
   import {
     clearApiKey,
@@ -24,7 +26,7 @@
     writeApiKey,
     writeWorkspace,
   } from "$frontend/lib/playground/storage";
-  import { ChatStreamError, streamChatCompletion } from "$frontend/lib/playground/stream";
+  import { ChatStreamError, streamChatCompletion, type StreamImage } from "$frontend/lib/playground/stream";
   import type {
     PlaygroundAttachment,
     PlaygroundMessage,
@@ -36,7 +38,6 @@
   let draft = $state("");
   let pendingAttachments = $state<PlaygroundAttachment[]>([]);
   let models = $state<CatalogModel[]>([]);
-  let chatModelIds = $state<Set<string> | null>(null);
   let modelsLoading = $state(true);
   let modelsError = $state("");
   let streaming = $state(false);
@@ -47,6 +48,11 @@
   let hydrated = $state(false);
   let settingsOpen = $state(false);
   let sidebarOpen = $state(false);
+  // Image-mode output is display-only and deliberately unpersisted: one prompt
+  // in, the finished images out, replaced by the next generation.
+  let imageResults = $state<StreamImage[]>([]);
+  let imagePrompt = $state("");
+  let imageSettings = $state({ aspectRatio: "", imageSize: "", size: "", quality: "" });
 
   let controller: AbortController | null = null;
   let persistTimer: ReturnType<typeof setTimeout> | undefined;
@@ -101,17 +107,19 @@
     void collectGarbage(referencedPayloadIds(workspace));
   }
 
-  // Image models cannot answer a chat request, but the cached catalog has no
-  // type, so the filter only applies once the live response arrives.
-  const selectableModels = $derived(
-    chatModelIds === null ? models : models.filter((model) => chatModelIds?.has(model.id) ?? true),
-  );
+  // Embedding models answer no playground request. Text and image models are
+  // both selectable; picking an image model switches the page into image mode.
+  const selectableModels = $derived(models.filter((model) => model.modality !== "embedding"));
   const active = $derived(
     workspace.conversations.find((conversation) => conversation.id === workspace.activeId) ??
       workspace.conversations[0],
   );
   const messages = $derived(active?.messages ?? []);
   const activeModelId = $derived(active?.modelId || workspace.settings.modelId);
+  const imageFormat = $derived(models.find((model) => model.id === activeModelId)?.image_api_format);
+  const isImageModel = $derived(
+    models.find((model) => model.id === activeModelId)?.modality === "image",
+  );
 
   function persist(): void {
     if (persistenceFailed || !hydrated) return;
@@ -156,6 +164,8 @@
     if (active) active.modelId = modelId;
     workspace.settings.modelId = modelId;
     errorMessage = "";
+    // An image prompt carries no files, so pending chat attachments are dropped.
+    if (models.find((model) => model.id === modelId)?.modality === "image") pendingAttachments = [];
     schedulePersist();
   }
 
@@ -298,6 +308,59 @@
     }
   }
 
+  /** Image mode has no transcript: one prompt in, the finished images out. */
+  async function runImageTurn(prompt: string): Promise<void> {
+    errorMessage = "";
+    statusMessage = "Generating image…";
+    streaming = true;
+    controller = new AbortController();
+    imagePrompt = prompt;
+
+    try {
+      const images = await generateImages(apiKey, activeModelId, prompt, controller.signal, imageSettings, imageFormat);
+      imageResults = images;
+      if (images.length === 0) {
+        statusMessage = "The model returned no image.";
+        errorMessage = "The model returned no image.";
+      } else {
+        statusMessage = images.length === 1 ? "Image ready." : `${images.length} images ready.`;
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        statusMessage = "Stopped.";
+      } else {
+        const message = error instanceof Error ? error.message : "The request failed.";
+        statusMessage = "The request failed.";
+        errorMessage = message;
+
+        if (error instanceof ImageGenerationError) {
+          if (error.status === 401) {
+            errorMessage = `${message} Check the key and try again.`;
+            forgetKey();
+            openSettings();
+            void tick().then(() => settingsModal?.focusKeyInput());
+          }
+          if (error.status === 404) {
+            if (active) active.modelId = "";
+            workspace.settings.modelId = "";
+            persist();
+          }
+        }
+      }
+    } finally {
+      streaming = false;
+      controller = null;
+    }
+  }
+
+  function sendImagePrompt(): void {
+    // Unlike chat, the draft is kept so the prompt can be tweaked and re-sent.
+    const prompt = draft.trim();
+    if (!prompt || streaming) return;
+    if (!readyToSend()) return;
+    void runImageTurn(prompt);
+  }
+
   /** Returns false and explains what is missing instead of silently refusing. */
   function readyToSend(): boolean {
     if (!apiKey) {
@@ -316,6 +379,10 @@
   }
 
   function send(): void {
+    if (isImageModel) {
+      sendImagePrompt();
+      return;
+    }
     const content = draft.trim();
     const attachments = pendingAttachments;
     if ((!content && attachments.length === 0) || streaming || !active) return;
@@ -455,9 +522,6 @@
     })
       .then((response) => {
         const fresh = normalizeModels(response);
-        chatModelIds = new Set(
-          (response.data ?? []).filter((model) => (model.type ?? "chat") === "chat").map((model) => model.id),
-        );
         if (fresh.length === 0) {
           models = [];
           modelsError = "No models are currently available.";
@@ -502,31 +566,91 @@
   });
 </script>
 
-<div class="playground">
-  <div class:open={sidebarOpen} class="side">
-    <ConversationSidebar
-      conversations={workspace.conversations}
-      activeId={workspace.activeId}
-      disabled={streaming}
-      keyMissing={!apiKey}
-      onSelect={selectConversation}
-      onCreate={newConversation}
-      onRename={renameConversation}
-      onDelete={deleteConversation}
-      onOpenSettings={openSettings}
-    />
-  </div>
+<div class:image-mode={isImageModel} class="playground">
+  {#if isImageModel}
+    <aside class="image-input" aria-label="Image generation controls">
+      <Composer
+        bind:this={composer}
+        bind:value={draft}
+        attachments={[]}
+        {streaming}
+        sidebar
+        allowAttachments={false}
+        placeholder="Describe the image to generate…"
+        onOpenSettings={openSettings}
+        onSend={send}
+        onStop={stop}
+        onAttach={addAttachments}
+        onRemoveAttachment={removeAttachment}
+      >
+        {#snippet controls()}
+          {#if imageFormat}
+          <fieldset class="image-settings" disabled={streaming}>
+            <legend>Image settings</legend>
+            {#if imageFormat === "gemini-interactions"}
+            <label for="image-ratio">Aspect ratio</label>
+            <select id="image-ratio" bind:value={imageSettings.aspectRatio}>
+              <option value="">Model default</option>
+              {#each ["1:1", "3:2", "2:3", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"] as ratio}
+                <option value={ratio}>{ratio}</option>
+              {/each}
+            </select>
+            <label for="image-size">Resolution</label>
+            <select id="image-size" bind:value={imageSettings.imageSize}>
+              <option value="">Model default</option>
+              {#each ["1K", "2K", "4K"] as size}
+                <option value={size}>{size}</option>
+              {/each}
+            </select>
+            {:else}
+              <label for="image-pixel-size">Size</label>
+              <input id="image-pixel-size" list="image-sizes" bind:value={imageSettings.size} placeholder="Model default" autocomplete="off" />
+              <datalist id="image-sizes">
+                {#each ["1024x1024", "1536x1024", "1024x1536", "1792x1024", "1024x1792", "512x512", "256x256"] as size}
+                  <option value={size}></option>
+                {/each}
+              </datalist>
+              <label for="image-quality">Quality</label>
+              <select id="image-quality" bind:value={imageSettings.quality}>
+                <option value="">Model default</option>
+                {#each ["low", "medium", "high", "standard", "hd"] as quality}
+                  <option value={quality}>{quality}</option>
+                {/each}
+              </select>
+            {/if}
+          </fieldset>
+          {/if}
+        {/snippet}
+      </Composer>
+    </aside>
+  {:else}
+    <div class:open={sidebarOpen} class="side">
+      <ConversationSidebar
+        conversations={workspace.conversations}
+        activeId={workspace.activeId}
+        disabled={streaming}
+        keyMissing={!apiKey}
+        onSelect={selectConversation}
+        onCreate={newConversation}
+        onRename={renameConversation}
+        onDelete={deleteConversation}
+        onOpenSettings={openSettings}
+      />
+    </div>
+  {/if}
 
   <section class="chat">
     <header class="bar">
-      <button
-        class="drawer-toggle"
-        type="button"
-        aria-expanded={sidebarOpen}
-        onclick={() => (sidebarOpen = !sidebarOpen)}
-      >
-        Chats
-      </button>
+      {#if !isImageModel}
+        <button
+          class="drawer-toggle"
+          type="button"
+          aria-expanded={sidebarOpen}
+          onclick={() => (sidebarOpen = !sidebarOpen)}
+        >
+          Chats
+        </button>
+      {/if}
       <ModelDropdown
         models={selectableModels}
         selectedId={activeModelId}
@@ -534,7 +658,9 @@
         errorMessage={modelsError}
         onSelect={selectModel}
       />
-      <h1 class="chat-title">{active ? conversationTitle(active) : "New chat"}</h1>
+      <h1 class="chat-title">
+        {isImageModel ? "Image generation" : active ? conversationTitle(active) : "New chat"}
+      </h1>
     </header>
 
     {#if persistenceFailed}
@@ -543,15 +669,20 @@
       <div class="notice">Older chats were dropped from storage to stay within the browser's limit.</div>
     {/if}
 
-    <Transcript
-      {messages}
-      {streaming}
-      {statusMessage}
-      onEdit={editMessage}
-      onDelete={deleteMessage}
-      onResend={resend}
-    />
+    {#if isImageModel}
+      <ImageStage images={imageResults} prompt={imagePrompt} generating={streaming} {statusMessage} />
+    {:else}
+      <Transcript
+        {messages}
+        {streaming}
+        {statusMessage}
+        onEdit={editMessage}
+        onDelete={deleteMessage}
+        onResend={resend}
+      />
+    {/if}
 
+    {#if !isImageModel}
     <Composer
       bind:this={composer}
       bind:value={draft}
@@ -562,6 +693,7 @@
       onAttach={addAttachments}
       onRemoveAttachment={removeAttachment}
     />
+    {/if}
   </section>
 </div>
 
@@ -589,6 +721,12 @@
     /* The page itself never scrolls; only the transcript and the chat list do. */
     overflow: hidden;
   }
+
+  .image-input { display: flex; min-width: 0; min-height: 0; }
+  .image-settings { display: grid; gap: 8px; margin: 0; padding: 12px 0 0; border: 0; border-top: 1px solid var(--line); min-width: 0; }
+  .image-settings legend { padding: 0 6px 0 0; color: var(--muted); font-size: 12px; }
+  .image-settings label { font-size: 12px; color: var(--muted); }
+  .image-settings select, .image-settings input { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
 
   .side { min-height: 0; min-width: 0; display: flex; }
 
@@ -645,6 +783,8 @@
 
   @media (max-width: 900px) {
     .playground { grid-template-columns: minmax(0, 1fr); }
+    .playground.image-mode { overflow-y: auto; grid-template-rows: auto minmax(360px, 1fr); }
+    .image-input { min-height: 440px; }
     .drawer-toggle { display: inline-flex; }
     /* The sidebar becomes a disclosure above the chat rather than a column. */
     .side { display: none; }

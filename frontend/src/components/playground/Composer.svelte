@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, type Snippet } from "svelte";
   import { ATTACHMENT_ACCEPT } from "$frontend/lib/playground/attachments";
   import type { PlaygroundAttachment } from "$frontend/lib/playground/types";
 
@@ -7,6 +7,11 @@
     value = $bindable(),
     attachments,
     streaming,
+    placeholder = "Send a message… (Enter to send, Shift+Enter for a new line)",
+    allowAttachments = true,
+    sidebar = false,
+    controls,
+    onOpenSettings,
     onSend,
     onStop,
     onAttach,
@@ -15,6 +20,12 @@
     value: string;
     attachments: PlaygroundAttachment[];
     streaming: boolean;
+    placeholder?: string;
+    /** Image prompts carry no files, so image mode removes every attach path. */
+    allowAttachments?: boolean;
+    sidebar?: boolean;
+    controls?: Snippet;
+    onOpenSettings?: () => void;
     onSend: () => void;
     onStop: () => void;
     onAttach: (files: File[]) => void;
@@ -35,7 +46,7 @@
   }
 
   function autoGrow(): void {
-    if (!textarea) return;
+    if (!textarea || sidebar) return;
     // Height must collapse before scrollHeight is read, or it only ever grows.
     textarea.style.height = "auto";
     textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
@@ -70,13 +81,13 @@
   }
 
   function handleDragEnter(event: DragEvent): void {
-    if (streaming || !event.dataTransfer?.types.includes("Files")) return;
+    if (!allowAttachments || streaming || !event.dataTransfer?.types.includes("Files")) return;
     dragDepth += 1;
     dragging = true;
   }
 
   function handleDragOver(event: DragEvent): void {
-    if (streaming || !event.dataTransfer?.types.includes("Files")) return;
+    if (!allowAttachments || streaming || !event.dataTransfer?.types.includes("Files")) return;
     // Without this the browser navigates to the dropped file instead.
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
@@ -90,7 +101,7 @@
   function handleDrop(event: DragEvent): void {
     dragDepth = 0;
     dragging = false;
-    if (streaming) return;
+    if (!allowAttachments || streaming) return;
     const files = [...(event.dataTransfer?.files ?? [])];
     if (files.length === 0) return;
     event.preventDefault();
@@ -99,7 +110,7 @@
 
   /** Pasted screenshots arrive as files; pasted text is left to the textarea. */
   function handlePaste(event: ClipboardEvent): void {
-    if (streaming) return;
+    if (!allowAttachments || streaming) return;
     const files = [...(event.clipboardData?.items ?? [])]
       .filter((item) => item.kind === "file")
       .map((item) => item.getAsFile())
@@ -115,6 +126,7 @@
      control cluster an identity so the handlers are not on an anonymous div. -->
 <div
   class:dragging
+  class:sidebar
   class="composer panel"
   role="group"
   aria-label="Message composer"
@@ -147,45 +159,51 @@
   {/if}
 
   <div class="row">
-    <label class="visually-hidden" for="playground-composer">Message</label>
+    <label class:visually-hidden={!sidebar} for="playground-composer">{sidebar ? "Image prompt" : "Message"}</label>
     <textarea
       bind:this={textarea}
       bind:value
       id="playground-composer"
       class="composer-input"
       rows="2"
-      placeholder="Send a message… (Enter to send, Shift+Enter for a new line)"
+      {placeholder}
       oninput={autoGrow}
       onkeydown={handleKeydown}
       onpaste={handlePaste}
     ></textarea>
+    {#if controls}{@render controls()}{/if}
     <div class="composer-actions">
-      <input
-        bind:this={fileInput}
-        class="visually-hidden"
-        type="file"
-        multiple
-        accept={ATTACHMENT_ACCEPT}
-        onchange={handleFileInput}
-      />
-      <button
-        class="composer-attach"
-        type="button"
-        disabled={streaming}
-        aria-label="Attach files"
-        title="Attach text files or images"
-        onclick={pickFiles}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path
-            d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.67 3.67 0 0 1 5.18 5.18l-8.49 8.49a1.83 1.83 0 0 1-2.6-2.6l7.79-7.78"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-        </svg>
-      </button>
+      {#if onOpenSettings}
+        <button class="key-settings" type="button" onclick={onOpenSettings}>Settings</button>
+      {/if}
+      {#if allowAttachments}
+        <input
+          bind:this={fileInput}
+          class="visually-hidden"
+          type="file"
+          multiple
+          accept={ATTACHMENT_ACCEPT}
+          onchange={handleFileInput}
+        />
+        <button
+          class="composer-attach"
+          type="button"
+          disabled={streaming}
+          aria-label="Attach files"
+          title="Attach text files or images"
+          onclick={pickFiles}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.67 3.67 0 0 1 5.18 5.18l-8.49 8.49a1.83 1.83 0 0 1-2.6-2.6l7.79-7.78"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+      {/if}
       {#if streaming}
         <button class="composer-stop" type="button" onclick={onStop}>Stop</button>
       {:else}
@@ -207,6 +225,28 @@
     gap: 10px;
     padding: 14px;
   }
+
+  .composer.sidebar { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; border-radius: 10px; }
+  .sidebar .row { display: flex; flex-direction: column; align-items: stretch; min-height: 0; }
+  .sidebar label { color: var(--ink); font-size: 13px; font-weight: 600; }
+  .sidebar .composer-input { flex: 1; min-height: 120px; max-height: none; }
+  .sidebar .composer-actions { justify-content: flex-end; flex-wrap: wrap; }
+  .key-settings {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-right: auto;
+    min-height: 38px;
+    padding: 9px 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .key-settings:hover { border-color: var(--accent-ink); color: var(--accent-ink); }
 
   .composer.dragging { border-color: var(--accent-ink); background: var(--accent-soft); }
 
