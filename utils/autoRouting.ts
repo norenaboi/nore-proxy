@@ -336,6 +336,27 @@ export function markStreamOutputStarted(state: RoutingState) {
   state.streamOutputStarted = true;
 }
 
+// Google's Generative Language API rejects a bad API key with 400
+// INVALID_ARGUMENT (ErrorInfo reason API_KEY_INVALID) instead of 401. Taken at
+// face value that 400 is a terminal client error: no key hop, and the dead key
+// is never sidelined. Reporting it as 401 hands it to the existing
+// actionable-code handling.
+export function effectiveUpstreamStatus(
+  statusCode: number | null | undefined,
+  error: { responseBody?: unknown; response?: { data?: unknown } } | null = null,
+): number | null | undefined {
+  if (Number(statusCode) !== 400) return statusCode;
+  const body = error?.responseBody ?? error?.response?.data;
+  if (!body) return statusCode;
+  let text: string;
+  try {
+    text = typeof body === "string" ? body : JSON.stringify(body);
+  } catch {
+    return statusCode;
+  }
+  return text.includes("API_KEY_INVALID") || /api key not valid/i.test(text) ? 401 : statusCode;
+}
+
 export function classifyUpstreamFailure({
   statusCode = null,
   error = null,

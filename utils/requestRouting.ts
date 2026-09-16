@@ -18,6 +18,7 @@ import {
   attemptedKeyHashes,
   classifyUpstreamFailure,
   createRoutingState,
+  effectiveUpstreamStatus,
   nextTarget,
   recordRoutingAttempt,
 } from "./autoRouting.js";
@@ -141,7 +142,7 @@ export async function executeRouting(requestId: string, requestedModel: string, 
         } catch (error: any) {
           if (error.clientAbort) throw error;
           lastError = error;
-          const status = statusOf(error);
+          const status = effectiveUpstreamStatus(statusOf(error), error);
           decision = classifyUpstreamFailure({ statusCode: status, error, streamOutputStarted: state.streamOutputStarted });
           const retrying = decision.retrySame && retryAttempt < maxRetries;
           noteAttempt(state, endpoint, keyAttempt, retrying ? "retry" : "failure", decision, status, retryAttempt);

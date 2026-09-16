@@ -38,6 +38,7 @@ import {
   attemptedKeyHashes,
   classifyUpstreamFailure,
   createRoutingState,
+  effectiveUpstreamStatus,
   markStreamOutputStarted,
   nextTarget,
   recordRoutingAttempt,
@@ -366,7 +367,7 @@ async function executeMessagesRouting(requestId: string, requestedModel: string,
         } catch (error: any) {
           if (error.clientAbort) throw error;
           lastError = error;
-          const statusCode = statusOf(error);
+          const statusCode = effectiveUpstreamStatus(statusOf(error), error);
           decision = classifyUpstreamFailure({
             statusCode,
             error,
