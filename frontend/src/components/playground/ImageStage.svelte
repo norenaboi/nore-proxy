@@ -4,38 +4,44 @@
 
   let {
     slots,
-    prompt,
     generating,
     statusMessage,
-    remaining = 0,
-    onContinue,
+    onRetry,
   }: {
     slots: ImageSlot[];
-    /** The prompt that produced the current images, used as their alt text. */
-    prompt: string;
     generating: boolean;
     statusMessage: string;
-    remaining?: number;
-    onContinue?: () => void;
+    onRetry?: (slotId: string) => void;
   } = $props();
 
-  // Completed images lead the grid while unfinished positions retain its shape.
-  const displaySlots = $derived([
-    ...slots.filter((slot) => slot.state === "ready"),
-    ...slots.filter((slot) => slot.state !== "ready"),
-  ]);
-  const images = $derived(
-    displaySlots.flatMap((slot) => slot.state === "ready" && slot.image ? [slot.image] : []),
+  const batches = $derived.by(() => {
+    const grouped: Array<{ id: string; layout: ImageSlot["layout"]; slots: ImageSlot[] }> = [];
+    for (const slot of slots) {
+      const current = grouped.at(-1);
+      if (current?.id === slot.batchId) current.slots.push(slot);
+      else grouped.push({ id: slot.batchId, layout: slot.layout, slots: [slot] });
+    }
+    return grouped;
+  });
+  const readySlots = $derived(
+    slots.filter((slot): slot is ImageSlot & { image: StreamImage } => slot.state === "ready" && Boolean(slot.image)),
   );
 
-  /** Index of the image shown full-size, or null for the grid. */
-  let inspected = $state<number | null>(null);
+  /** Stable id of the image shown full-size, or null for the grid. */
+  let inspectedId = $state<string | null>(null);
   let slideDirection = $state<-1 | 0 | 1>(0);
+  let lastBatchId: string | undefined;
+  const inspectedIndex = $derived(readySlots.findIndex((slot) => slot.id === inspectedId));
+  const inspectedSlot = $derived(inspectedIndex >= 0 ? readySlots[inspectedIndex] : undefined);
 
-  // A new slot collection starts a batch, so a stale inspect view never survives.
   $effect(() => {
-    void slots;
-    inspected = null;
+    const newestBatchId = slots[0]?.batchId;
+    if (lastBatchId !== undefined && newestBatchId !== lastBatchId) inspectedId = null;
+    lastBatchId = newestBatchId;
+  });
+
+  $effect(() => {
+    if (inspectedId !== null && inspectedIndex === -1) inspectedId = null;
   });
 
   function extensionFor(mimeType: string): string {
@@ -44,51 +50,48 @@
   }
 
   function downloadName(image: StreamImage, index: number): string {
-    const suffix = images.length > 1 ? `-${index + 1}` : "";
+    const suffix = readySlots.length > 1 ? `-${index + 1}` : "";
     return `generated-image${suffix}.${extensionFor(image.mimeType)}`;
   }
 
-  function altFor(index: number): string {
-    const base = prompt || "Generated image";
-    return images.length > 1 ? `${base} (${index + 1} of ${images.length})` : base;
+  function altFor(slot: ImageSlot, index: number): string {
+    const base = slot.prompt || "Generated image";
+    return readySlots.length > 1 ? `${base} (${index + 1} of ${readySlots.length})` : base;
   }
 
-  function imageIndex(image: StreamImage): number {
-    return images.indexOf(image);
-  }
-
-  function inspect(index: number, direction: -1 | 0 | 1 = 0): void {
+  function inspect(id: string, direction: -1 | 0 | 1 = 0): void {
     slideDirection = direction;
-    inspected = index;
+    inspectedId = id;
   }
 
   function moveInspection(direction: -1 | 1): void {
-    if (inspected === null || images.length < 2) return;
-    inspect((inspected + direction + images.length) % images.length, direction);
+    if (inspectedIndex < 0 || readySlots.length < 2) return;
+    const next = (inspectedIndex + direction + readySlots.length) % readySlots.length;
+    inspect(readySlots[next].id, direction);
   }
 </script>
 
 <svelte:window
   onkeydown={(event) => {
-    if (event.key === "Escape" && inspected !== null) inspected = null;
-    if (event.key === "ArrowLeft" && inspected !== null) moveInspection(-1);
-    if (event.key === "ArrowRight" && inspected !== null) moveInspection(1);
+    if (event.key === "Escape" && inspectedId !== null) inspectedId = null;
+    if (event.key === "ArrowLeft" && inspectedId !== null) moveInspection(-1);
+    if (event.key === "ArrowRight" && inspectedId !== null) moveInspection(1);
   }}
 />
 
-<div class="stage" aria-label="Generated images">
+<div class:has-results={slots.length > 0} class="stage" data-image-stage aria-label="Generated images">
   {#if slots.length === 0}
     <p class="empty">Describe the image you want in the box below and press Send.</p>
-  {:else if inspected !== null && images[inspected]}
+  {:else if inspectedSlot?.image}
     <div class="inspect">
-      <button class="back" type="button" onclick={() => (inspected = null)}>
+      <button class="back" type="button" onclick={() => (inspectedId = null)}>
         <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M9.5 3.5 5 8l4.5 4.5" />
         </svg>
         Back
       </button>
       <div class="viewer">
-        {#if images.length > 1}
+        {#if readySlots.length > 1}
           <button class="previous navigation" type="button" onclick={() => moveInspection(-1)} aria-label="Previous image" title="Previous image">
             <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M10 3 5 8l5 5" />
@@ -96,19 +99,19 @@
           </button>
         {/if}
         <div class="frame">
-          {#key inspected}
+          {#key inspectedSlot.id}
             <img
               class:slide-left={slideDirection < 0}
               class:slide-right={slideDirection > 0}
               class="full"
-              src={images[inspected].dataUrl}
-              alt={altFor(inspected)}
+              src={inspectedSlot.image.dataUrl}
+              alt={altFor(inspectedSlot, inspectedIndex)}
             />
           {/key}
           <a
             class="download"
-            href={images[inspected].dataUrl}
-            download={downloadName(images[inspected], inspected)}
+            href={inspectedSlot.image.dataUrl}
+            download={downloadName(inspectedSlot.image, inspectedIndex)}
             aria-label="Download image"
             title="Download"
           >
@@ -117,7 +120,7 @@
             </svg>
           </a>
         </div>
-        {#if images.length > 1}
+        {#if readySlots.length > 1}
           <button class="next navigation" type="button" onclick={() => moveInspection(1)} aria-label="Next image" title="Next image">
             <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="m6 3 5 5-5 5" />
@@ -125,55 +128,61 @@
           </button>
         {/if}
       </div>
-      {#if images.length > 1}
-        <p class="position">{inspected + 1} / {images.length}</p>
+      {#if readySlots.length > 1}
+        <p class="position">{inspectedIndex + 1} / {readySlots.length}</p>
       {/if}
     </div>
   {:else}
-    <div
-      class:multi={displaySlots.length > 1}
-      class:pair={displaySlots.length === 2}
-      class:quad={displaySlots.length >= 3}
-      class="results"
-    >
-      {#each displaySlots as slot, index (index)}
-        <figure class="result">
-          {#if slot.state === "ready" && slot.image}
-            <div class="frame">
-              <button
-                class="zoom"
-                type="button"
-                onclick={() => inspect(imageIndex(slot.image))}
-                aria-label={`Inspect image ${imageIndex(slot.image) + 1} of ${images.length}`}
-              >
-                <img src={slot.image.dataUrl} alt={altFor(imageIndex(slot.image))} />
-              </button>
-              <a
-                class="download"
-                href={slot.image.dataUrl}
-                download={downloadName(slot.image, imageIndex(slot.image))}
-                aria-label="Download image"
-                title="Download"
-              >
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M8 2.5v8m0 0 3-3m-3 3-3-3M3 13.5h10" />
-                </svg>
-              </a>
-            </div>
-          {:else}
-            <div class:failed={slot.state === "failed"} class="placeholder" aria-label={slot.state === "failed" ? "Image generation failed" : "Image generating"}>
-              <span aria-hidden="true"></span>
-              <small>{slot.state === "failed" ? "Not generated" : "Generating…"}</small>
-            </div>
-          {/if}
-        </figure>
+    <div class="gallery">
+      {#each batches as batch (batch.id)}
+        <div
+          class:single={batch.slots.length === 1}
+          class:portrait={batch.layout === "portrait"}
+          class:landscape={batch.layout === "landscape"}
+          class="results"
+        >
+          {#each batch.slots as slot (slot.id)}
+            <figure class="result">
+              {#if slot.state === "ready" && slot.image}
+                {@const index = readySlots.findIndex((candidate) => candidate.id === slot.id)}
+                <div class="frame">
+                  <button
+                    class="zoom"
+                    type="button"
+                    onclick={() => inspect(slot.id)}
+                    aria-label={`Inspect image ${index + 1} of ${readySlots.length}`}
+                  >
+                    <img src={slot.image.dataUrl} alt={altFor(slot, index)} />
+                  </button>
+                  <a
+                    class="download"
+                    href={slot.image.dataUrl}
+                    download={downloadName(slot.image, index)}
+                    aria-label="Download image"
+                    title="Download"
+                  >
+                    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M8 2.5v8m0 0 3-3m-3 3-3-3M3 13.5h10" />
+                    </svg>
+                  </a>
+                </div>
+              {:else if slot.state === "failed"}
+                <div class="placeholder failed" aria-label="Image generation failed">
+                  <button type="button" onclick={() => onRetry?.(slot.id)} disabled={generating || !onRetry}>
+                    Regenerate image
+                  </button>
+                </div>
+              {:else}
+                <div class="placeholder" aria-label="Image generating">
+                  <span aria-hidden="true"></span>
+                  <small>Generating…</small>
+                </div>
+              {/if}
+            </figure>
+          {/each}
+        </div>
       {/each}
     </div>
-    {#if remaining > 0 && !generating && onContinue}
-      <button class="continue" type="button" onclick={onContinue}>
-        Continue generating {remaining === 1 ? "1 image" : `${remaining} images`}
-      </button>
-    {/if}
   {/if}
 </div>
 
@@ -197,6 +206,8 @@
     background: var(--surface);
   }
 
+  .stage.has-results { align-content: start; }
+
   .empty {
     margin: 0;
     max-width: 46ch;
@@ -206,26 +217,26 @@
     line-height: 1.7;
   }
 
-  .results {
+  .gallery {
     display: grid;
-    gap: 16px;
-    justify-content: center;
+    gap: 18px;
     width: 100%;
-    max-width: 100%;
     min-height: 0;
   }
 
-  .results.pair {
+  .results {
+    display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    width: 100%;
+    min-height: 0;
   }
 
-  .results.quad {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  .results.portrait { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .results.single { grid-template-columns: minmax(0, 1fr); }
 
   .result {
     display: grid;
-    gap: 8px;
     margin: 0;
     min-width: 0;
     max-width: 100%;
@@ -250,12 +261,15 @@
 
   .result img {
     display: block;
+    width: auto;
     max-width: 100%;
-    max-height: min(62vh, 640px);
+    max-height: min(38vh, 380px);
     border: 1px solid var(--line);
     border-radius: 10px;
     object-fit: contain;
   }
+
+  .results.single .result img { max-height: min(62vh, 640px); }
 
   .placeholder {
     position: relative;
@@ -280,16 +294,12 @@
     animation: loading-sweep 1.5s ease-in-out infinite;
   }
 
-  .placeholder.failed span { display: none; }
   .placeholder small { position: relative; font-size: 12px; }
 
-  @keyframes loading-sweep {
-    to { transform: translateX(100%); }
-  }
-
-  .continue {
+  .placeholder button {
+    position: relative;
     min-height: 38px;
-    padding: 9px 15px;
+    padding: 9px 14px;
     border: 1px solid var(--accent-ink);
     border-radius: 8px;
     background: var(--accent-soft);
@@ -298,18 +308,10 @@
     cursor: pointer;
   }
 
-  /* Several results share the stage, so each thumbnail stays inside its grid cell. */
-  .results.multi .result {
-    width: 100%;
-  }
+  .placeholder button:disabled { cursor: not-allowed; opacity: 0.55; }
 
-  .results.multi .frame {
-    width: fit-content;
-  }
-
-  .results.multi .result img {
-    width: auto;
-    max-height: min(38vh, 380px);
+  @keyframes loading-sweep {
+    to { transform: translateX(100%); }
   }
 
   .inspect {
@@ -317,7 +319,6 @@
     justify-items: center;
     min-width: 0;
     max-width: 100%;
-    /* Clears the back button pinned to the stage's top-left corner. */
     padding-top: 34px;
   }
 
@@ -330,9 +331,7 @@
     max-width: 100%;
   }
 
-  .inspect .frame {
-    overflow: hidden;
-  }
+  .inspect .frame { overflow: hidden; }
 
   .inspect .full {
     display: block;
@@ -380,23 +379,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  @media (max-width: 560px) {
-    .viewer {
-      grid-template-columns: repeat(2, auto);
-      justify-content: center;
-    }
-
-    .viewer .frame {
-      grid-column: 1 / -1;
-      grid-row: 1;
-    }
-
-    .navigation {
-      grid-row: 2;
-      margin-top: 2px;
-    }
-  }
-
   .back {
     position: absolute;
     top: 10px;
@@ -416,9 +398,7 @@
   }
 
   .back:hover,
-  .back:focus-visible {
-    color: var(--ink);
-  }
+  .back:focus-visible { color: var(--ink); }
 
   .download {
     position: absolute;
@@ -437,14 +417,37 @@
 
   .frame:hover .download,
   .download:hover,
-  .download:focus-visible {
-    opacity: 1;
+  .download:focus-visible { opacity: 1; }
+
+  @media (max-width: 760px) {
+    .results.portrait { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  @media (max-width: 560px) {
+    .results,
+    .results.portrait { grid-template-columns: minmax(0, 1fr); }
+
+    .viewer {
+      grid-template-columns: repeat(2, auto);
+      justify-content: center;
+    }
+
+    .viewer .frame {
+      grid-column: 1 / -1;
+      grid-row: 1;
+    }
+
+    .navigation {
+      grid-row: 2;
+      margin-top: 2px;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .download { transition: none; }
     .slide-left,
     .slide-right { animation: none; }
+    .placeholder span { animation: none; transform: none; opacity: 0.45; }
   }
 
   .visually-hidden {
@@ -454,9 +457,5 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .placeholder span { animation: none; transform: none; opacity: 0.45; }
   }
 </style>

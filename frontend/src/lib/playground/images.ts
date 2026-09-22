@@ -24,15 +24,15 @@ export interface ImageSettings {
   imageSize: string;
   size?: string;
   quality?: string;
-  /** How many images to generate, "1" through "4"; blank means one. */
+  /** How many images to generate, "1" through "8"; blank means one. */
   count?: string;
 }
 
-/** The requested image count clamped to the 1–4 range the picker offers. */
+/** The requested image count clamped to the 1–8 range the picker offers. */
 export function imageCountOf(settings?: ImageSettings): number {
   const parsed = Number.parseInt(settings?.count ?? "", 10);
   if (!Number.isFinite(parsed)) return 1;
-  return Math.min(4, Math.max(1, parsed));
+  return Math.min(8, Math.max(1, parsed));
 }
 
 export function buildImageRequest(
@@ -119,6 +119,10 @@ export interface ImageBatchResult {
 }
 
 export interface ImageSlot {
+  id: string;
+  batchId: string;
+  prompt: string;
+  layout: "portrait" | "landscape" | "default";
   state: "loading" | "ready" | "failed";
   image?: StreamImage;
 }

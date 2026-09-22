@@ -18,13 +18,14 @@ test("requests include only controls belonging to the selected endpoint format",
   assert.deepEqual(buildImageRequest("m", "p", allSettings), { model: "m", prompt: "p" });
 });
 
-test("the requested image count is clamped to the picker's 1-4 range", () => {
+test("the requested image count is clamped to the picker's 1-8 range", () => {
   assert.equal(imageCountOf(undefined), 1);
   assert.equal(imageCountOf({ aspectRatio: "", imageSize: "" }), 1);
   assert.equal(imageCountOf({ aspectRatio: "", imageSize: "", count: "" }), 1);
   assert.equal(imageCountOf({ aspectRatio: "", imageSize: "", count: "3" }), 3);
+  assert.equal(imageCountOf({ aspectRatio: "", imageSize: "", count: "8" }), 8);
   assert.equal(imageCountOf({ aspectRatio: "", imageSize: "", count: "0" }), 1);
-  assert.equal(imageCountOf({ aspectRatio: "", imageSize: "", count: "9" }), 4);
+  assert.equal(imageCountOf({ aspectRatio: "", imageSize: "", count: "9" }), 8);
   assert.equal(imageCountOf({ aspectRatio: "", imageSize: "", count: "junk" }), 1);
 });
 
@@ -32,6 +33,7 @@ test("the count rides as `n` on OpenAI-shaped requests and never on Interactions
   const settings = { ...allSettings, count: "3" };
   for (const format of ["openai-images", "openai-images-generations"]) {
     assert.equal(buildImageRequest("m", "p", settings, format).n, 3);
+    assert.equal(buildImageRequest("m", "p", { ...allSettings, count: "8" }, format).n, 8);
   }
   // A single image needs no explicit count.
   assert.equal(buildImageRequest("m", "p", { ...allSettings, count: "1" }, "openai-images").n, undefined);
