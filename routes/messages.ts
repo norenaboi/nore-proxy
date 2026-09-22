@@ -118,6 +118,11 @@ function anthropicToOpenAIMessages(anthropicReq: any) {
             tool_call_id: block.tool_use_id,
             content: toolResultText(block.content),
           });
+        } else if (block.type === "thinking" || block.type === "redacted_thinking") {
+          // Clients replay prior-turn thinking blocks in the history. OpenAI
+          // chat content parts have no equivalent and strict upstreams reject
+          // the unknown variant, so they are dropped rather than forwarded.
+          continue;
         } else {
           openaiBlocks.push(block);
         }
