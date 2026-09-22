@@ -188,7 +188,7 @@
     min-width: 0;
     overflow-y: auto;
     display: grid;
-    align-content: center;
+    align-content: safe center;
     justify-items: center;
     gap: 14px;
     padding: 14px;
@@ -221,8 +221,6 @@
 
   .results.quad {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: repeat(2, minmax(0, 1fr));
-    height: 100%;
   }
 
   .result {
@@ -301,23 +299,17 @@
   }
 
   /* Several results share the stage, so each thumbnail stays inside its grid cell. */
-  .results.multi .result,
-  .results.multi .frame,
-  .results.multi .zoom {
+  .results.multi .result {
     width: 100%;
+  }
+
+  .results.multi .frame {
+    width: fit-content;
   }
 
   .results.multi .result img {
-    width: 100%;
+    width: auto;
     max-height: min(38vh, 380px);
-  }
-
-  .results.quad .result,
-  .results.quad .frame,
-  .results.quad .zoom,
-  .results.quad .result img {
-    height: 100%;
-    max-height: 100%;
   }
 
   .inspect {
