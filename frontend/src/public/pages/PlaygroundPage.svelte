@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import type { ImageApiFormat } from "$contracts/apiFormats";
   import type { PublicModelsResponse } from "$contracts/models";
   import Composer from "$frontend/components/playground/Composer.svelte";
   import ConversationSidebar from "$frontend/components/playground/ConversationSidebar.svelte";
@@ -13,7 +14,13 @@
   import { collectGarbage, readPayloads, writePayload } from "$frontend/lib/playground/attachmentStore";
   import { AttachmentError, readAttachment } from "$frontend/lib/playground/attachments";
   import { createMessageId } from "$frontend/lib/playground/ids";
-  import { ImageGenerationError, generateImageBatch } from "$frontend/lib/playground/images";
+  import {
+    ImageGenerationError,
+    generateImageBatch,
+    imageCountOf,
+    type ImageSettings,
+    type ImageSlot,
+  } from "$frontend/lib/playground/images";
   import { buildChatRequest } from "$frontend/lib/playground/request";
   import {
     clearApiKey,
@@ -37,6 +44,7 @@
   let workspace = $state<PlaygroundWorkspace>(createWorkspace());
   let draft = $state("");
   let pendingAttachments = $state<PlaygroundAttachment[]>([]);
+  let pendingImageAttachments = $state<PlaygroundAttachment[]>([]);
   let models = $state<CatalogModel[]>([]);
   let modelsLoading = $state(true);
   let modelsError = $state("");
@@ -48,11 +56,20 @@
   let hydrated = $state(false);
   let settingsOpen = $state(false);
   let sidebarOpen = $state(false);
-  // Image-mode output is display-only and deliberately unpersisted: one prompt
-  // in, the finished images out, replaced by the next generation.
-  let imageResults = $state<StreamImage[]>([]);
+  // Image-mode output and references are deliberately unpersisted.
+  let imageSlots = $state<ImageSlot[]>([]);
   let imagePrompt = $state("");
-  let imageSettings = $state({ aspectRatio: "", imageSize: "", size: "", quality: "", count: "1" });
+  let imageSettings = $state<ImageSettings>({ aspectRatio: "", imageSize: "", size: "", quality: "", count: "1" });
+
+  interface ImageRunSnapshot {
+    prompt: string;
+    modelId: string;
+    format?: ImageApiFormat;
+    settings: ImageSettings;
+    references: PlaygroundAttachment[];
+  }
+
+  let imageContinuation = $state<{ snapshot: ImageRunSnapshot; failedSlots: number[] } | null>(null);
 
   let controller: AbortController | null = null;
   let persistTimer: ReturnType<typeof setTimeout> | undefined;
@@ -164,8 +181,7 @@
     if (active) active.modelId = modelId;
     workspace.settings.modelId = modelId;
     errorMessage = "";
-    // An image prompt carries no files, so pending chat attachments are dropped.
-    if (models.find((model) => model.id === modelId)?.modality === "image") pendingAttachments = [];
+    imageContinuation = null;
     schedulePersist();
   }
 
@@ -308,44 +324,97 @@
     }
   }
 
-  /** Image mode has no transcript: one prompt in, the finished images out. */
-  async function runImageTurn(prompt: string): Promise<void> {
+  function readyImageCount(): number {
+    return imageSlots.filter((slot) => slot.state === "ready").length;
+  }
+
+  /** Runs a new image batch or refills only the failed slots of its snapshot. */
+  async function runImageTurn(snapshot: ImageRunSnapshot, targetSlots: number[]): Promise<void> {
     errorMessage = "";
-    statusMessage = "Generating image…";
+    statusMessage = targetSlots.length === 1 ? "Generating image…" : `Generating ${targetSlots.length} images…`;
     streaming = true;
     controller = new AbortController();
-    imagePrompt = prompt;
+    imagePrompt = snapshot.prompt;
+    for (const index of targetSlots) imageSlots[index] = { state: "loading" };
+
+    const unfilled = [...targetSlots];
+    const publishImages = (images: StreamImage[]): void => {
+      for (const image of images) {
+        const index = unfilled.shift();
+        if (index === undefined) break;
+        imageSlots[index] = { state: "ready", image };
+      }
+      const ready = readyImageCount();
+      statusMessage = ready === 1 ? "1 image ready; generating the rest…" : `${ready} images ready; generating the rest…`;
+    };
 
     try {
-      const { images, failed } = await generateImageBatch(apiKey, activeModelId, prompt, controller.signal, imageSettings, imageFormat);
-      imageResults = images;
-      if (images.length === 0) {
+      const { images, failed } = await generateImageBatch(
+        apiKey,
+        snapshot.modelId,
+        snapshot.prompt,
+        controller.signal,
+        snapshot.settings,
+        snapshot.format,
+        {
+          references: snapshot.references,
+          count: targetSlots.length,
+          onImages: publishImages,
+        },
+      );
+      // The callback publishes normal responses. This fallback also makes a
+      // custom batch implementation that skips callbacks safe to display.
+      if (unfilled.length === targetSlots.length && images.length > 0) publishImages(images);
+
+      const failedSlots = targetSlots.filter((index) => imageSlots[index]?.state !== "ready");
+      if (images.length === 0 && failed === 0) {
+        for (const index of failedSlots) imageSlots[index] = { state: "failed" };
+        imageContinuation = null;
         statusMessage = "The model returned no image.";
         errorMessage = "The model returned no image.";
+      } else if (failed > 0) {
+        for (const index of failedSlots) imageSlots[index] = { state: "failed" };
+        // Empty successful responses are not retried as caught failures. Normally
+        // failedSlots and failed are equal; slice keeps that distinction explicit.
+        const retrySlots = failedSlots.slice(0, failed);
+        imageContinuation = retrySlots.length > 0 ? { snapshot, failedSlots: retrySlots } : null;
+        statusMessage = `${readyImageCount()} of ${imageSlots.length} images ready.`;
+        errorMessage = failed === 1
+          ? "One generation failed; showing the finished images first."
+          : `${failed} generations failed; showing the finished images first.`;
+      } else if (failedSlots.length > 0) {
+        for (const index of failedSlots) imageSlots[index] = { state: "failed" };
+        imageContinuation = null;
+        statusMessage = `${readyImageCount()} of ${imageSlots.length} images ready.`;
+        errorMessage = "The model returned fewer images than requested.";
       } else {
-        statusMessage = images.length === 1 ? "Image ready." : `${images.length} images ready.`;
-        if (failed > 0) {
-          errorMessage = failed === 1
-            ? "One generation failed; showing the rest."
-            : `${failed} generations failed; showing the rest.`;
-        }
+        imageContinuation = null;
+        const ready = readyImageCount();
+        statusMessage = ready === 1 ? "Image ready." : `${ready} images ready.`;
       }
     } catch (error) {
+      const failedSlots = targetSlots.filter((index) => imageSlots[index]?.state !== "ready");
+      for (const index of failedSlots) imageSlots[index] = { state: "failed" };
+
       if (error instanceof DOMException && error.name === "AbortError") {
-        statusMessage = "Stopped.";
+        imageContinuation = null;
+        statusMessage = readyImageCount() > 0 ? "Stopped; showing finished images." : "Stopped.";
       } else {
         const message = error instanceof Error ? error.message : "The request failed.";
-        statusMessage = "The request failed.";
+        statusMessage = readyImageCount() > 0 ? `${readyImageCount()} images ready; the rest failed.` : "The request failed.";
         errorMessage = message;
+        imageContinuation = failedSlots.length > 0 ? { snapshot, failedSlots } : null;
 
         if (error instanceof ImageGenerationError) {
           if (error.status === 401) {
+            imageContinuation = null;
             errorMessage = `${message} Check the key and try again.`;
             forgetKey();
             openSettings();
             void tick().then(() => settingsModal?.focusKeyInput());
           }
           if (error.status === 404) {
+            imageContinuation = null;
             if (active) active.modelId = "";
             workspace.settings.modelId = "";
             persist();
@@ -359,11 +428,29 @@
   }
 
   function sendImagePrompt(): void {
-    // Unlike chat, the draft is kept so the prompt can be tweaked and re-sent.
+    // Unlike chat, the draft and references stay available for adjustments.
     const prompt = draft.trim();
     if (!prompt || streaming) return;
     if (!readyToSend()) return;
-    void runImageTurn(prompt);
+    const settings = { ...imageSettings };
+    const snapshot: ImageRunSnapshot = {
+      prompt,
+      modelId: activeModelId,
+      format: imageFormat,
+      settings,
+      references: pendingImageAttachments.map((attachment) => ({ ...attachment })),
+    };
+    const count = imageCountOf(settings);
+    imageSlots = Array.from({ length: count }, () => ({ state: "loading" }));
+    imageContinuation = null;
+    void runImageTurn(snapshot, Array.from({ length: count }, (_, index) => index));
+  }
+
+  function continueImageGeneration(): void {
+    if (streaming || !imageContinuation || !readyToSend()) return;
+    const { snapshot, failedSlots } = imageContinuation;
+    imageContinuation = null;
+    void runImageTurn(snapshot, failedSlots);
   }
 
   /** Returns false and explains what is missing instead of silently refusing. */
@@ -424,6 +511,27 @@
 
   function removeAttachment(id: string): void {
     pendingAttachments = pendingAttachments.filter((attachment) => attachment.id !== id);
+  }
+
+  async function addImageAttachments(files: File[]): Promise<void> {
+    const added: PlaygroundAttachment[] = [];
+    for (const file of files) {
+      try {
+        const attachment = await readAttachment(file);
+        if (attachment.type !== "image") {
+          errorMessage = `${file.name || "That file"} is not an image.`;
+          continue;
+        }
+        added.push(attachment);
+      } catch (error) {
+        errorMessage = error instanceof AttachmentError ? error.message : `Could not read ${file.name}.`;
+      }
+    }
+    if (added.length > 0) pendingImageAttachments = [...pendingImageAttachments, ...added];
+  }
+
+  function removeImageAttachment(id: string): void {
+    pendingImageAttachments = pendingImageAttachments.filter((attachment) => attachment.id !== id);
   }
 
   function stop(): void {
@@ -577,16 +685,20 @@
       <Composer
         bind:this={composer}
         bind:value={draft}
-        attachments={[]}
+        attachments={pendingImageAttachments}
         {streaming}
         sidebar
-        allowAttachments={false}
+        allowAttachments
+        attachmentAccept="image/*"
+        attachmentLabel="Add reference images"
+        attachmentTitle="Add one or more reference images"
+        requireText
         placeholder="Describe the image to generate…"
         onOpenSettings={openSettings}
         onSend={send}
         onStop={stop}
-        onAttach={addAttachments}
-        onRemoveAttachment={removeAttachment}
+        onAttach={addImageAttachments}
+        onRemoveAttachment={removeImageAttachment}
       >
         {#snippet controls()}
           {#if imageFormat}
@@ -631,6 +743,11 @@
             {/if}
           </fieldset>
           {/if}
+          <p class="reference-help">
+            {imageFormat === "gemini-interactions"
+              ? "Reference images are sent directly as Gemini image input."
+              : "Reference images use input_references; support depends on the provider and model."}
+          </p>
         {/snippet}
       </Composer>
     </aside>
@@ -681,7 +798,14 @@
     {/if}
 
     {#if isImageModel}
-      <ImageStage images={imageResults} prompt={imagePrompt} generating={streaming} {statusMessage} />
+      <ImageStage
+        slots={imageSlots}
+        prompt={imagePrompt}
+        generating={streaming}
+        {statusMessage}
+        remaining={imageContinuation?.failedSlots.length ?? 0}
+        onContinue={continueImageGeneration}
+      />
     {:else}
       <Transcript
         {messages}
@@ -738,6 +862,7 @@
   .image-settings legend { padding: 0 6px 0 0; color: var(--muted); font-size: 12px; }
   .image-settings label { font-size: 12px; color: var(--muted); }
   .image-settings select, .image-settings input { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
+  .reference-help { margin: 2px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.5; }
 
   .side { min-height: 0; min-width: 0; display: flex; }
 

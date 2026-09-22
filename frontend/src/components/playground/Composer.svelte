@@ -9,6 +9,10 @@
     streaming,
     placeholder = "Send a message… (Enter to send, Shift+Enter for a new line)",
     allowAttachments = true,
+    attachmentAccept = ATTACHMENT_ACCEPT,
+    attachmentLabel = "Attach files",
+    attachmentTitle = "Attach text files or images",
+    requireText = false,
     sidebar = false,
     controls,
     onOpenSettings,
@@ -21,8 +25,12 @@
     attachments: PlaygroundAttachment[];
     streaming: boolean;
     placeholder?: string;
-    /** Image prompts carry no files, so image mode removes every attach path. */
     allowAttachments?: boolean;
+    attachmentAccept?: string;
+    attachmentLabel?: string;
+    attachmentTitle?: string;
+    /** Image generation still requires a prompt even when references are attached. */
+    requireText?: boolean;
     sidebar?: boolean;
     controls?: Snippet;
     onOpenSettings?: () => void;
@@ -39,7 +47,7 @@
   // is counted rather than toggling a flag on every event.
   let dragDepth = 0;
 
-  const canSend = $derived(value.trim().length > 0 || attachments.length > 0);
+  const canSend = $derived(requireText ? value.trim().length > 0 : value.trim().length > 0 || attachments.length > 0);
 
   export function focusComposer(): void {
     textarea?.focus();
@@ -182,15 +190,15 @@
           class="visually-hidden"
           type="file"
           multiple
-          accept={ATTACHMENT_ACCEPT}
+          accept={attachmentAccept}
           onchange={handleFileInput}
         />
         <button
           class="composer-attach"
           type="button"
           disabled={streaming}
-          aria-label="Attach files"
-          title="Attach text files or images"
+          aria-label={attachmentLabel}
+          title={attachmentTitle}
           onclick={pickFiles}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">

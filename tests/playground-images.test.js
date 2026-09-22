@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildImageRequest, imageCountOf } from "../frontend/src/lib/playground/images.ts";
+import { buildImageRequest, generateImageBatch, imageCountOf } from "../frontend/src/lib/playground/images.ts";
 import { transformImageRequest } from "../utils/adapters/gemini-interactions.ts";
 import { imageModelFormat } from "../utils/imageModelFormat.ts";
 
@@ -40,6 +40,49 @@ test("the count rides as `n` on OpenAI-shaped requests and never on Interactions
     model: "m", prompt: "p", aspect_ratio: "16:9", image_size: "2K",
   });
   assert.deepEqual(buildImageRequest("m", "p", settings), { model: "m", prompt: "p" });
+});
+
+test("image requests include ordered valid reference images", () => {
+  const references = [
+    { id: "a", type: "image", name: "a.png", mimeType: "image/png", value: "data:image/png;base64,AAA" },
+    { id: "t", type: "text", name: "notes.txt", mimeType: "text/plain", value: "ignore" },
+    { id: "empty", type: "image", name: "empty.png", mimeType: "image/png", value: "" },
+    { id: "b", type: "image", name: "b.jpg", mimeType: "image/jpeg", value: "data:image/jpeg;base64,BBB" },
+  ];
+  const request = buildImageRequest("m", "p", { ...allSettings, count: "3" }, "openai-images", references);
+  assert.equal(request.n, 3);
+  assert.deepEqual(request.input_references, [
+    { type: "image_url", image_url: { url: references[0].value } },
+    { type: "image_url", image_url: { url: references[3].value } },
+  ]);
+  assert.equal(buildImageRequest("m", "p", allSettings, "gemini-interactions").input_references, undefined);
+});
+
+test("Gemini batches publish each image before slower siblings settle", async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  const resolvers = [];
+  globalThis.fetch = () => new Promise((resolve) => resolvers.push(resolve));
+  const published = [];
+  const batch = generateImageBatch(
+    "key", "m", "p", new AbortController().signal,
+    { aspectRatio: "", imageSize: "", count: "2" },
+    "gemini-interactions",
+    { onImages: (images) => published.push(images[0].dataUrl) },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  resolvers[1](new Response(JSON.stringify({ data: [{ b64_json: "BBB" }] }), { status: 200 }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(published.length, 1);
+  resolvers[0](new Response(JSON.stringify({ data: [{ b64_json: "AAA" }] }), { status: 200 }));
+  const result = await batch;
+  assert.equal(result.failed, 0);
+  assert.equal(published.length, 2);
+});
+
+test("an explicit retry count controls OpenAI n", () => {
+  const request = buildImageRequest("m", "p", { ...allSettings, count: "4" }, "openai-images", [], 2);
+  assert.equal(request.n, 2);
 });
 
 test("image format comes from endpoint configuration and compatible automatic targets", () => {

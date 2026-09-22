@@ -7,6 +7,7 @@
 import type { ImageApiFormat } from "$contracts/apiFormats";
 import { extractApiErrorMessage } from "./request.js";
 import { readImages, type StreamImage } from "./stream.js";
+import type { PlaygroundAttachment } from "./types.js";
 
 export class ImageGenerationError extends Error {
   constructor(
@@ -39,8 +40,14 @@ export function buildImageRequest(
   prompt: string,
   settings?: ImageSettings,
   format?: ImageApiFormat,
+  references: PlaygroundAttachment[] = [],
+  countOverride?: number,
 ) {
-  const body: Record<string, string | number> = { model, prompt };
+  const body: Record<string, unknown> = { model, prompt };
+  const inputReferences = references
+    .filter((reference) => reference.type === "image" && reference.value.startsWith("data:image/"))
+    .map((reference) => ({ type: "image_url", image_url: { url: reference.value } }));
+  if (inputReferences.length > 0) body.input_references = inputReferences;
   if (format === "gemini-interactions") {
     if (settings?.aspectRatio) body.aspect_ratio = settings.aspectRatio;
     if (settings?.imageSize) body.image_size = settings.imageSize;
@@ -50,7 +57,7 @@ export function buildImageRequest(
     // OpenAI-shaped providers take the count natively and the adapters forward
     // it untouched. The Interactions request never carries a count: its batch
     // is generateImageBatch's parallel fan-out.
-    const count = imageCountOf(settings);
+    const count = countOverride ?? imageCountOf(settings);
     if (count > 1) body.n = count;
   }
   return body;
@@ -63,6 +70,8 @@ export async function generateImages(
   signal: AbortSignal,
   settings?: ImageSettings,
   format?: ImageApiFormat,
+  references: PlaygroundAttachment[] = [],
+  countOverride?: number,
 ): Promise<StreamImage[]> {
   let response: Response;
   try {
@@ -75,7 +84,7 @@ export async function generateImages(
         Accept: "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify(buildImageRequest(modelId, prompt, settings, format)),
+      body: JSON.stringify(buildImageRequest(modelId, prompt, settings, format, references, countOverride)),
     });
   } catch (error) {
     // An abort must stay an abort so the caller can tell it from a failure.
@@ -109,6 +118,19 @@ export interface ImageBatchResult {
   failed: number;
 }
 
+export interface ImageSlot {
+  state: "loading" | "ready" | "failed";
+  image?: StreamImage;
+}
+
+export interface ImageBatchOptions {
+  references?: PlaygroundAttachment[];
+  /** Overrides the settings count when retrying only unfinished slots. */
+  count?: number;
+  /** Called as each independently requested result becomes available. */
+  onImages?: (images: StreamImage[]) => void;
+}
+
 /**
  * Runs one generation turn for the requested image count.
  *
@@ -126,14 +148,25 @@ export async function generateImageBatch(
   signal: AbortSignal,
   settings?: ImageSettings,
   format?: ImageApiFormat,
+  options: ImageBatchOptions = {},
 ): Promise<ImageBatchResult> {
-  const count = imageCountOf(settings);
+  const count = options.count ?? imageCountOf(settings);
   if (format !== "gemini-interactions" || count <= 1) {
-    return { images: await generateImages(apiKey, modelId, prompt, signal, settings, format), failed: 0 };
+    const images = await generateImages(
+      apiKey, modelId, prompt, signal, settings, format, options.references, count,
+    );
+    options.onImages?.(images);
+    return { images, failed: 0 };
   }
 
   const outcomes = await Promise.allSettled(
-    Array.from({ length: count }, () => generateImages(apiKey, modelId, prompt, signal, settings, format)),
+    Array.from({ length: count }, async () => {
+      const images = await generateImages(
+        apiKey, modelId, prompt, signal, settings, format, options.references, 1,
+      );
+      options.onImages?.(images);
+      return images;
+    }),
   );
   const images = outcomes.flatMap((outcome) => (outcome.status === "fulfilled" ? outcome.value : []));
   const failures = outcomes.filter(
