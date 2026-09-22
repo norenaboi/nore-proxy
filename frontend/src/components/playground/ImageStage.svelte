@@ -219,17 +219,18 @@
 
   .gallery {
     display: grid;
+    align-content: start;
+    grid-auto-rows: max-content;
     gap: 18px;
     width: 100%;
-    min-height: 0;
   }
 
   .results {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: max-content;
     gap: 16px;
     width: 100%;
-    min-height: 0;
   }
 
   .results.portrait { grid-template-columns: repeat(4, minmax(0, 1fr)); }

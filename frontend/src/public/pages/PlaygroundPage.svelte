@@ -69,6 +69,10 @@
   }
 
   const imageRetrySnapshots = new Map<string, ImageRunSnapshot>();
+  const imageControllers = new Set<AbortController>();
+  let imageBatchGenerating = $state(false);
+  let activeImageOperations = $state(0);
+  let latestImageOperation = 0;
 
   let controller: AbortController | null = null;
   let persistTimer: ReturnType<typeof setTimeout> | undefined;
@@ -343,11 +347,24 @@
   }
 
   /** Runs a new image batch or regenerates selected failed slots in place. */
-  async function runImageTurn(snapshot: ImageRunSnapshot, targetSlotIds: string[]): Promise<void> {
+  async function runImageTurn(
+    snapshot: ImageRunSnapshot,
+    targetSlotIds: string[],
+    kind: "batch" | "retry",
+  ): Promise<void> {
+    const operation = ++latestImageOperation;
+    const imageController = new AbortController();
+    imageControllers.add(imageController);
+    activeImageOperations += 1;
+    if (kind === "batch") imageBatchGenerating = true;
     errorMessage = "";
     statusMessage = targetSlotIds.length === 1 ? "Generating image…" : `Generating ${targetSlotIds.length} images…`;
-    streaming = true;
-    controller = new AbortController();
+    const reportStatus = (message: string): void => {
+      if (operation === latestImageOperation) statusMessage = message;
+    };
+    const reportError = (message: string): void => {
+      if (operation === latestImageOperation) errorMessage = message;
+    };
     for (const id of targetSlotIds) {
       imageRetrySnapshots.delete(id);
       updateImageSlot(id, (slot) => ({ ...slot, state: "loading", image: undefined }));
@@ -361,9 +378,11 @@
         updateImageSlot(id, (slot) => ({ ...slot, state: "ready", image }));
       }
       const ready = readyTargetCount(targetSlotIds);
-      statusMessage = ready === targetSlotIds.length
-        ? (ready === 1 ? "Image ready." : `${ready} images ready.`)
-        : `${ready} of ${targetSlotIds.length} images ready; generating the rest…`;
+      if (operation === latestImageOperation) {
+        statusMessage = ready === targetSlotIds.length
+          ? (ready === 1 ? "Image ready." : `${ready} images ready.`)
+          : `${ready} of ${targetSlotIds.length} images ready; generating the rest…`;
+      }
     };
 
     const failSlots = (ids: string[], retryable: boolean): void => {
@@ -379,7 +398,7 @@
         apiKey,
         snapshot.modelId,
         snapshot.prompt,
-        controller.signal,
+        imageController.signal,
         snapshot.settings,
         snapshot.format,
         {
@@ -397,22 +416,22 @@
       );
       if (images.length === 0 && failed === 0) {
         failSlots(failedSlotIds, true);
-        statusMessage = "The model returned no image.";
-        errorMessage = "The model returned no image.";
+        reportStatus("The model returned no image.");
+        reportError("The model returned no image.");
       } else if (failed > 0) {
         failSlots(failedSlotIds, true);
         const ready = readyTargetCount(targetSlotIds);
-        statusMessage = `${ready} of ${targetSlotIds.length} images ready.`;
-        errorMessage = failed === 1
+        reportStatus(`${ready} of ${targetSlotIds.length} images ready.`);
+        reportError(failed === 1
           ? "One generation failed; retry it from its grid cell."
-          : `${failed} generations failed; retry them from their grid cells.`;
+          : `${failed} generations failed; retry them from their grid cells.`);
       } else if (failedSlotIds.length > 0) {
         failSlots(failedSlotIds, true);
-        statusMessage = `${readyTargetCount(targetSlotIds)} of ${targetSlotIds.length} images ready.`;
-        errorMessage = "The model returned fewer images than requested.";
+        reportStatus(`${readyTargetCount(targetSlotIds)} of ${targetSlotIds.length} images ready.`);
+        reportError("The model returned fewer images than requested.");
       } else {
         const ready = readyTargetCount(targetSlotIds);
-        statusMessage = ready === 1 ? "Image ready." : `${ready} images ready.`;
+        reportStatus(ready === 1 ? "Image ready." : `${ready} images ready.`);
       }
     } catch (error) {
       const failedSlotIds = targetSlotIds.filter(
@@ -424,15 +443,15 @@
 
       const ready = readyTargetCount(targetSlotIds);
       if (aborted) {
-        statusMessage = ready > 0 ? "Stopped; showing finished images." : "Stopped.";
+        reportStatus(ready > 0 ? "Stopped; showing finished images." : "Stopped.");
       } else {
         const message = error instanceof Error ? error.message : "The request failed.";
-        statusMessage = ready > 0 ? `${ready} of ${targetSlotIds.length} images ready; the rest failed.` : "The request failed.";
-        errorMessage = message;
+        reportStatus(ready > 0 ? `${ready} of ${targetSlotIds.length} images ready; the rest failed.` : "The request failed.");
+        reportError(message);
 
-        if (error instanceof ImageGenerationError) {
+        if (operation === latestImageOperation && error instanceof ImageGenerationError) {
           if (error.status === 401) {
-            errorMessage = `${message} Check the key and try again.`;
+            reportError(`${message} Check the key and try again.`);
             forgetKey();
             openSettings();
             void tick().then(() => settingsModal?.focusKeyInput());
@@ -445,15 +464,16 @@
         }
       }
     } finally {
-      streaming = false;
-      controller = null;
+      imageControllers.delete(imageController);
+      activeImageOperations = Math.max(0, activeImageOperations - 1);
+      if (kind === "batch") imageBatchGenerating = false;
     }
   }
 
   function sendImagePrompt(): void {
     // Unlike chat, the draft and references stay available for adjustments.
     const prompt = draft.trim();
-    if (!prompt || streaming) return;
+    if (!prompt || imageBatchGenerating) return;
     if (!readyToSend()) return;
     const settings = { ...imageSettings };
     const snapshot: ImageRunSnapshot = {
@@ -478,14 +498,15 @@
       const stage = document.querySelector<HTMLElement>("[data-image-stage]");
       if (stage) stage.scrollTop = 0;
     });
-    void runImageTurn(snapshot, newSlots.map((slot) => slot.id));
+    void runImageTurn(snapshot, newSlots.map((slot) => slot.id), "batch");
   }
 
   function retryImageSlot(slotId: string): void {
-    if (streaming || !readyToSend()) return;
+    if (!readyToSend()) return;
+    const slot = imageSlots.find((candidate) => candidate.id === slotId);
     const snapshot = imageRetrySnapshots.get(slotId);
-    if (!snapshot) return;
-    void runImageTurn(snapshot, [slotId]);
+    if (!snapshot || slot?.state !== "failed") return;
+    void runImageTurn(snapshot, [slotId], "retry");
   }
 
   /** Returns false and explains what is missing instead of silently refusing. */
@@ -571,6 +592,7 @@
 
   function stop(): void {
     controller?.abort();
+    for (const imageController of imageControllers) imageController.abort();
   }
 
   function deleteMessage(id: string): void {
@@ -694,13 +716,14 @@
 
     const handleEscape = (event: KeyboardEvent): void => {
       if (event.key !== "Escape" || settingsOpen) return;
-      if (streaming) stop();
+      if (streaming || activeImageOperations > 0) stop();
       else if (sidebarOpen) sidebarOpen = false;
     };
     window.addEventListener("keydown", handleEscape);
 
     return () => {
       controller.abort();
+      for (const imageController of imageControllers) imageController.abort();
       window.removeEventListener("keydown", handleEscape);
       if (persistTimer) clearTimeout(persistTimer);
     };
@@ -721,7 +744,8 @@
         bind:this={composer}
         bind:value={draft}
         attachments={pendingImageAttachments}
-        {streaming}
+        streaming={imageBatchGenerating}
+        stoppable={activeImageOperations > 0 && !imageBatchGenerating}
         sidebar
         allowAttachments
         attachmentAccept="image/*"
@@ -737,7 +761,7 @@
       >
         {#snippet controls()}
           {#if imageFormat}
-          <fieldset class="image-settings" disabled={streaming}>
+          <fieldset class="image-settings" disabled={imageBatchGenerating}>
             <legend>Image settings</legend>
             <label for="image-count">Images</label>
             <select id="image-count" bind:value={imageSettings.count}>
@@ -835,7 +859,7 @@
     {#if isImageModel}
       <ImageStage
         slots={imageSlots}
-        generating={streaming}
+        generating={imageBatchGenerating}
         {statusMessage}
         onRetry={retryImageSlot}
       />

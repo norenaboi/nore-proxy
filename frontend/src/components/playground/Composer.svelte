@@ -7,6 +7,7 @@
     value = $bindable(),
     attachments,
     streaming,
+    stoppable = false,
     placeholder = "Send a message… (Enter to send, Shift+Enter for a new line)",
     allowAttachments = true,
     attachmentAccept = ATTACHMENT_ACCEPT,
@@ -24,6 +25,8 @@
     value: string;
     attachments: PlaygroundAttachment[];
     streaming: boolean;
+    /** Shows a separate Stop action while Send remains available. */
+    stoppable?: boolean;
     placeholder?: string;
     allowAttachments?: boolean;
     attachmentAccept?: string;
@@ -215,6 +218,9 @@
       {#if streaming}
         <button class="composer-stop" type="button" onclick={onStop}>Stop</button>
       {:else}
+        {#if stoppable}
+          <button class="composer-stop" type="button" onclick={onStop}>Stop</button>
+        {/if}
         <button class="usage-button" type="button" disabled={!canSend} onclick={submit}>Send</button>
       {/if}
     </div>
