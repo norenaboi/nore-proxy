@@ -44,7 +44,7 @@
   }
   interface ProxyOption { id: string; name: string; type: string; host: string; port: number; }
   interface KeyState {
-    tokenHash?: string; maskedKey?: string; status?: string; disabledUntil?: number;
+    index?: number; tokenHash?: string; maskedKey?: string; status?: string; disabledUntil?: number;
     totalRequests?: number; failedRequests?: number; codeCounts?: Record<string, number>;
   }
   interface Settings {
@@ -928,7 +928,7 @@
       {:else}
         <div class="key-health-toolbar"><p class="form-hint">Per-key health and usage. Codes 401/402 disable a key; 429 times it out temporarily.</p><div><button class="btn btn-secondary btn-sm" type="button" onclick={() => keyAction("reset", { all: true }, "All keys re-enabled")}><i class="fa-solid fa-rotate-left"></i> Re-enable all</button><button class="btn btn-secondary btn-sm" type="button" onclick={() => keyAction("reset-stats", { all: true }, "All stats reset")}><i class="fa-solid fa-eraser"></i> Reset stats</button></div></div>
         <div class="key-states-list">
-          {#each keysList as k (k.tokenHash || k.maskedKey)}
+          {#each keysList as k, i (k.index ?? i)}
             {@const status = k.status || "active"}
             {@const total = k.totalRequests || 0}
             {@const failed = k.failedRequests || 0}
