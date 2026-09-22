@@ -13,7 +13,7 @@
   import { collectGarbage, readPayloads, writePayload } from "$frontend/lib/playground/attachmentStore";
   import { AttachmentError, readAttachment } from "$frontend/lib/playground/attachments";
   import { createMessageId } from "$frontend/lib/playground/ids";
-  import { ImageGenerationError, generateImages } from "$frontend/lib/playground/images";
+  import { ImageGenerationError, generateImageBatch } from "$frontend/lib/playground/images";
   import { buildChatRequest } from "$frontend/lib/playground/request";
   import {
     clearApiKey,
@@ -52,7 +52,7 @@
   // in, the finished images out, replaced by the next generation.
   let imageResults = $state<StreamImage[]>([]);
   let imagePrompt = $state("");
-  let imageSettings = $state({ aspectRatio: "", imageSize: "", size: "", quality: "" });
+  let imageSettings = $state({ aspectRatio: "", imageSize: "", size: "", quality: "", count: "1" });
 
   let controller: AbortController | null = null;
   let persistTimer: ReturnType<typeof setTimeout> | undefined;
@@ -317,13 +317,18 @@
     imagePrompt = prompt;
 
     try {
-      const images = await generateImages(apiKey, activeModelId, prompt, controller.signal, imageSettings, imageFormat);
+      const { images, failed } = await generateImageBatch(apiKey, activeModelId, prompt, controller.signal, imageSettings, imageFormat);
       imageResults = images;
       if (images.length === 0) {
         statusMessage = "The model returned no image.";
         errorMessage = "The model returned no image.";
       } else {
         statusMessage = images.length === 1 ? "Image ready." : `${images.length} images ready.`;
+        if (failed > 0) {
+          errorMessage = failed === 1
+            ? "One generation failed; showing the rest."
+            : `${failed} generations failed; showing the rest.`;
+        }
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -587,6 +592,12 @@
           {#if imageFormat}
           <fieldset class="image-settings" disabled={streaming}>
             <legend>Image settings</legend>
+            <label for="image-count">Images</label>
+            <select id="image-count" bind:value={imageSettings.count}>
+              {#each ["1", "2", "3", "4"] as option}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
             {#if imageFormat === "gemini-interactions"}
             <label for="image-ratio">Aspect ratio</label>
             <select id="image-ratio" bind:value={imageSettings.aspectRatio}>
