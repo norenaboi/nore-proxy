@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { deadTargets, effectiveModelName, filterModelNames, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, targetHealth } from "../frontend/src/admin/modelForm.js";
+import { deadTargets, effectiveModelName, filterModelNames, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, targetHealth, uniqueModelNames } from "../frontend/src/admin/modelForm.js";
 import {
   bodyParamCounts,
   extractHeaderPresets,
@@ -218,6 +218,13 @@ test("model target search filters names without changing their order", () => {  
   assert.deepEqual(filterModelNames(names, "GPT-5 M"), ["GPT-5 Mini"]);
   assert.deepEqual(filterModelNames(names, "-"), names);
   assert.deepEqual(filterModelNames(names, "missing"), []);
+});
+
+test("fetched model names discard invalid and duplicate entries", () => {
+  assert.deepEqual(
+    uniqueModelNames(["gpt-5", "claude-sonnet-5", "gpt-5", "", null, 42, "claude-sonnet-5"]),
+    ["gpt-5", "claude-sonnet-5"],
+  );
 });
 
 test("endpoint token editing skips duplicates and remaps confirmations", () => {

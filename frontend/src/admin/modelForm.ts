@@ -76,3 +76,7 @@ export function filterModelNames(names: string[], query: string): string[] {
   if (!normalizedQuery) return names;
   return names.filter((name) => name.toLowerCase().includes(normalizedQuery));
 }
+
+export function uniqueModelNames(names: unknown[]): string[] {
+  return [...new Set(names.filter((name): name is string => typeof name === "string" && name.length > 0))];
+}

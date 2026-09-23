@@ -8,7 +8,7 @@
   import FilterablePicker, { type PickerFilter, type PickerOption } from "$frontend/components/admin/FilterablePicker.svelte";
   import SelectMenu, { type SelectMenuOption } from "$frontend/components/admin/SelectMenu.svelte";
   import { getProvider, getProviderIcon, type CatalogModel, type Provider } from "$frontend/lib/models/catalog";
-  import { deadTargets, effectiveModelName, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, targetHealth, type NumericInputValue } from "$frontend/admin/modelForm";
+  import { deadTargets, effectiveModelName, isDuplicateModelName, mergeTargets, moveTargetTo, numericInputValue, targetHealth, uniqueModelNames, type NumericInputValue } from "$frontend/admin/modelForm";
   import ModalityToggle from "$frontend/components/ModalityToggle.svelte";
   import ModalityIcon from "$frontend/components/ModalityIcon.svelte";
   import type { ModelModality, ModelTestResult } from "$contracts/models";
@@ -577,8 +577,8 @@
         const d = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(d.error || "Failed to fetch models from the endpoint");
       }
-      const d = await res.json() as { models?: string[] };
-      availableModels = (d.models ?? []).filter((n): n is string => typeof n === "string" && !!n).sort(naturalSort);
+      const d = await res.json() as { models?: unknown[] };
+      availableModels = uniqueModelNames(d.models ?? []).sort(naturalSort);
       upstreamFetched = true;
       toast.show(`Fetched ${availableModels.length} model${availableModels.length === 1 ? "" : "s"}`);
     } catch (e) {
