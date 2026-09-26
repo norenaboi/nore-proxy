@@ -6,7 +6,7 @@ import { renderFrontend } from "../frontend/server/frontendHost.js";
 
 const router = express.Router();
 
-const publicPaths = ["/", "/models", "/status", "/playground", "/terms", "/privacy"] as const;
+const publicPaths = ["/", "/docs", "/models", "/status", "/playground", "/terms", "/privacy"] as const;
 for (const publicPath of publicPaths) {
   router.get(publicPath, async (req: Request, res: Response) => {
     await renderFrontend(req, res, "public.html");

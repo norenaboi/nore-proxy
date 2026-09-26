@@ -6,6 +6,7 @@
     setPublicTheme,
     type PublicTheme,
   } from "$frontend/lib/publicTheme";
+  import DocsPage from "./pages/DocsPage.svelte";
   import HomePage from "./pages/HomePage.svelte";
   import LegalPage from "./pages/LegalPage.svelte";
   import ModelsPage from "./pages/ModelsPage.svelte";
@@ -25,6 +26,7 @@
   // be set here rather than in public.html.
   const titles: Record<string, string> = {
     "/": "Unified model access",
+    "/docs": "Documentation",
     "/account": "Account",
     "/models": "Models",
     "/status": "System Status",
@@ -42,6 +44,8 @@
 <PublicShell activePath={path} {theme} onThemeChange={changeTheme}>
   {#if path === "/"}
     <HomePage />
+  {:else if path === "/docs"}
+    <DocsPage />
   {:else if path === "/account"}
     <AccountPage />
   {:else if path === "/models"}

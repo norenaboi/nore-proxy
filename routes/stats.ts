@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from "express";
 import apiKeyManager from "../services/apiKeyManager.js";
 import logManager from "../services/logManager.js";
+import { publicModelEntries } from "../utils/helpers.js";
 
 const router = express.Router();
 
@@ -35,6 +36,7 @@ router.get("/api/summary", async (_req: Request, res: Response) => {
     success_rate: daily.total > 0 ? (daily.successful / daily.total) * 100 : 0,
     uptime: Date.now() / 1000 - startupTime,
     total_api_keys: allApiKeys.length,
+    total_models: publicModelEntries().length,
   });
 });
 

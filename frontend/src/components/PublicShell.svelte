@@ -16,6 +16,7 @@
   } = $props();
 
   const isHome = $derived(activePath === "/");
+  const isDocs = $derived(activePath === "/docs");
   const isModels = $derived(activePath === "/models");
   const isAccount = $derived(activePath === "/account");
   const isStatus = $derived(activePath === "/status");
@@ -23,8 +24,8 @@
   const isTerms = $derived(activePath === "/terms");
   const isPrivacy = $derived(activePath === "/privacy");
   const isLegal = $derived(isTerms || isPrivacy);
-  const isNotFound = $derived(!isHome && !isModels && !isAccount && !isStatus && !isPlayground && !isLegal);
-  const isWide = $derived(isModels || isPlayground);
+  const isNotFound = $derived(!isHome && !isDocs && !isModels && !isAccount && !isStatus && !isPlayground && !isLegal);
+  const isWide = $derived(isDocs || isModels || isPlayground);
 </script>
 
 <div class:status-shell={isStatus} class="public-utility">
@@ -44,10 +45,11 @@
       <strong>Nore Proxy</strong>
     </a>
     <nav aria-label="Public navigation">
+      <a href="/docs" aria-current={isDocs ? "page" : undefined}>Docs</a>
       <a href="/status" aria-current={isStatus ? "page" : undefined}>Status</a>
       <a href="/playground" aria-current={isPlayground ? "page" : undefined}>Playground</a>
-      <a href="/account" aria-current={isAccount ? "page" : undefined}>Account</a>
-      <a href="/models" aria-current={isModels ? "page" : undefined}>Models</a>
+      <a href="/models" aria-current={isModels ? "page" : undefined}>Pricing</a>
+      <a href="/account" aria-current={isAccount ? "page" : undefined}>Console</a>
     </nav>
   </header>
 

@@ -60,11 +60,9 @@
 
 .public-head,
 .public-footer,
-.intro .eyebrow,
-.intro h1,
-.live-facts > div,
-.service-strip,
-.destinations > a,
+.home-hero > h1,
+.hero-actions,
+.headline-stats > div,
 .catalog-head,
 .toolbar,
 .result-meta,
@@ -110,28 +108,11 @@
 }
 
 /* Overview */
-.intro .eyebrow { --motion-delay: 0.06s; }
-.intro h1 { --motion-delay: 0.12s; }
-.live-facts > div:nth-child(1) { --motion-delay: 0.18s; }
-.live-facts > div:nth-child(2) { --motion-delay: 0.22s; }
-.live-facts > div:nth-child(3) { --motion-delay: 0.26s; }
-.live-facts > div:nth-child(4) { --motion-delay: 0.3s; }
-.live-facts > div:nth-child(n + 5) { --motion-delay: 0.34s; }
-.service-strip { --motion-delay: 0.28s; }
-.destinations > a:nth-child(1) { --motion-delay: 0.36s; }
-.destinations > a:nth-child(n + 2) { --motion-delay: 0.42s; }
-
-/* Slow halo around the live service indicator. The dot's own colour is a
-   background, so the ring borrows --success directly rather than currentColor. */
-.live-facts dd i { position: relative; }
-.live-facts dd i::after {
-  content: "";
-  position: absolute;
-  inset: -4px;
-  border: 1px solid var(--success);
-  border-radius: 50%;
-  animation: var(--motion-halo) 2.8s ease-out infinite;
-}
+.home-hero > h1 { --motion-delay: 0.06s; }
+.hero-actions { --motion-delay: 0.14s; }
+.headline-stats > div:nth-child(1) { --motion-delay: 0.22s; }
+.headline-stats > div:nth-child(2) { --motion-delay: 0.26s; }
+.headline-stats > div:nth-child(3) { --motion-delay: 0.3s; }
 
 /* Models — every card reveals, with the delay held flat past the first few rows
    so a long catalog cannot push the last cards into a visibly late entrance. */
@@ -177,19 +158,16 @@
 
 /* -------------------------------------------------------- micro-interactions */
 
-/* These four have no transition of their own, so the transform needs one here.
+/* These three have no transition of their own, so the transform needs one here.
    .model-card and .chip are absent on purpose: their `transition: .14s` and
    `transition: .12s` shorthands already animate every property, transform
    included. */
-.destinations > a > b,
 .home-action,
 .back-link,
 .usage-button {
   transition: transform 0.18s ease;
 }
 
-.destinations > a > b { display: inline-block; }
-.destinations > a:hover > b { transform: translateX(4px); }
 .home-action:hover,
 .usage-button:not(:disabled):hover { transform: translateY(-2px); }
 .back-link:hover { transform: translateX(-3px); }
@@ -208,14 +186,12 @@
     --motion-halo: none;
   }
 
-  .destinations > a > b,
   .home-action,
   .back-link,
   .usage-button {
     transition: none;
   }
 
-  .destinations > a:hover > b,
   .home-action:hover,
   .usage-button:not(:disabled):hover,
   .back-link:hover,
