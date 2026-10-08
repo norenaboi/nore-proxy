@@ -2,6 +2,7 @@ import express, { type Request, type Response } from "express";
 import axios from "axios";
 import { randomUUID } from "node:crypto";
 import { verifyApiKey } from "../middleware/auth.js";
+import { validateToolCatalog } from "../middleware/toolValidation.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import rateLimiter from "../middleware/rateLimiter.js";
 import { logRequestStart, logRequestEnd, logError, markFirstToken, normalizeBillingTokens } from "../utils/logging.js";
@@ -103,7 +104,7 @@ function inBandStreamError(raw: any) {
   return error;
 }
 
-router.post("/v1/chat/completions", verifyApiKey, async (req: any, res: any) => {
+router.post("/v1/chat/completions", verifyApiKey, validateToolCatalog("openai"), async (req: any, res: any) => {
   const apiKey = req.apiKey;
   const baseRequest = clone(req.body);
   try { await apiKeyManager.checkForGeneration(apiKey, rateLimiter, estimateTokens(baseRequest.messages || [])); }

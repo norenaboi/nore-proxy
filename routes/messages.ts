@@ -2,6 +2,7 @@ import express, { type Request, type Response } from "express";
 import axios from "axios";
 import { randomUUID } from "node:crypto";
 import { verifyApiKey } from "../middleware/auth.js";
+import { validateToolCatalog } from "../middleware/toolValidation.js";
 import apiKeyManager from "../services/apiKeyManager.js";
 import settingsManager from "../services/settingsManager.js";
 import keyStateManager, { ACTIONABLE_CODES } from "../services/keyStateManager.js";
@@ -462,7 +463,7 @@ function anthropicErrorEnvelope(error: any, statusCode: any) {
 
 // --- Route: POST /v1/messages ---
 
-router.post("/v1/messages", verifyApiKey, async (req: any, res: any) => {
+router.post("/v1/messages", verifyApiKey, validateToolCatalog("anthropic"), async (req: any, res: any) => {
   const apiKey = req.apiKey;
   const anthropicReq = clone(req.body);
   const modelName = anthropicReq.model;

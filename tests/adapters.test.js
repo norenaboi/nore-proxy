@@ -6,6 +6,7 @@ import * as codex from "../utils/adapters/openai-codex.js";
 import * as gemini from "../utils/adapters/gemini.js";
 import * as openai from "../utils/adapters/openai.js";
 import * as responses from "../utils/adapters/openai-responses.js";
+import { normalizeToolCatalog } from "../utils/toolValidation.js";
 import {
   ImageInputError,
   geminiInteractions,
@@ -219,6 +220,24 @@ test("request adapters preserve core messages and protocol requirements", () => 
   assert.equal(responsesBody.instructions, "Be concise");
   assert.equal(responsesBody.store, false);
   assert.equal(responsesBody.max_output_tokens, 128);
+});
+
+test("normalized tool catalogs preserve schemas and named choice through adapters", () => {
+  const parameters = { type: "object", properties: { value: { anyOf: [{ type: "string" }, { type: "number" }] } }, required: ["value"] };
+  const declaration = { type: "function", function: { name: "lookup", description: "synthetic", parameters } };
+  const body = {
+    ...request,
+    tools: normalizeToolCatalog([declaration, structuredClone(declaration)], "openai"),
+    tool_choice: { type: "function", function: { name: "lookup" } },
+  };
+  for (const adapter of [responses, codex]) {
+    for (const transform of [adapter.transformRequest, adapter.transformStreamRequest]) {
+      const converted = transform(body, "upstream", { requestId: "synthetic" });
+      assert.deepEqual(converted.tools, [{ type: "function", name: "lookup", description: "synthetic", parameters }]);
+      assert.deepEqual(converted.tool_choice, { type: "function", name: "lookup" });
+    }
+  }
+  assert.deepEqual(openai.transformRequest(body, "upstream").tools, [declaration]);
 });
 
 test("Codex requests and headers share a request identifier", () => {
