@@ -99,7 +99,11 @@ export async function executeRouting(requestId: string, requestedModel: string, 
       const excluded: Set<string> = endpointKey ? attemptedKeyHashes(state, endpointKey) ?? new Set<string>() : new Set<string>();
       const endpoint = await getEndpointForConcreteModel(target, { excludeHashes: excluded, rotationOffset });
       if (!endpoint) {
-        const error = new Error("Can't find the model you're looking for.");
+        const error = new Error(
+          state.autoModel
+            ? `Target model '${target}' of automatic model '${state.requestedModel}' is currently unavailable (no endpoint or usable key).`
+            : `Model '${target}' is currently unavailable: no endpoint or usable key is configured for it.`,
+        );
         error.name = "EndpointResolutionError";
         error.statusCode = state.autoModel ? 503 : 404;
         if (!state.autoModel) throw error;
@@ -164,5 +168,7 @@ export async function executeRouting(requestId: string, requestedModel: string, 
   }
   const error = new Error(`Model '${requestedModel}' not found.`);
   error.statusCode = 404;
+  error.name = "ModelNotFoundError";
+  error.code = "model_not_found";
   throw error;
 }

@@ -214,16 +214,19 @@ class KeyStateManager {
   }
 
   async describeExhaustion(endpointKey: string): Promise<{ message: string; details: string[] }> {
-    const message = "No token left in the chamber.";
     const tokens = Array.isArray(Config.ENDPOINTS[endpointKey]?.tokens) ? Config.ENDPOINTS[endpointKey].tokens : [];
-    if (!tokens.length) return { message, details: ["endpoint has no keys configured"] };
+    if (!tokens.length) {
+      return { message: "No usable API tokens are configured for this endpoint.", details: [] };
+    }
     const states = await this.getStatesForEndpoint(endpointKey, tokens);
-    const details = states.map((state) => this.reasonUnavailable(state)).filter((detail): detail is string => detail !== null);
-    return { message, details: details.length ? details : states.map((state) => `${state.maskedKey || "key"}: attempted, no key succeeded`) };
+    const reasons = states.map((state) => this.reasonUnavailable(state)).filter((reason): reason is string => reason !== null);
+    const details = reasons.length ? reasons : states.map((state) => `${state.maskedKey || "key"}: attempted, no key succeeded`);
+    const message = `No usable API token left for endpoint '${Config.ENDPOINTS[endpointKey]?.name || endpointKey}'. All keys are exhausted: ${details.join("; ")}.`;
+    return { message, details };
   }
 
   async buildExhaustionError(endpointKey?: string): Promise<Error> {
-    const { message, details } = endpointKey ? await this.describeExhaustion(endpointKey) : { message: "No token left in the chamber.", details: [] as string[] };
+    const { message, details } = endpointKey ? await this.describeExhaustion(endpointKey) : { message: "No usable API token is available.", details: [] as string[] };
     const error = new Error(message);
     error.name = "TokenExhaustedError";
     (error as any).statusCode = 404;

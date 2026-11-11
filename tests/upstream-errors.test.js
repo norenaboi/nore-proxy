@@ -48,3 +48,14 @@ test("error context keeps routing details while masking secrets", () => {
   assert.equal(context.statusCode, 503);
   assert.equal(getUpstreamErrorMessage(context.responseBody), "overloaded");
 });
+
+test("plain-text error bodies stay readable but HTML pages collapse to the fallback", () => {
+  assert.equal(getUpstreamErrorMessage("Service unavailable"), "Service unavailable");
+  assert.equal(getUpstreamErrorMessage(""), "Unknown error");
+  assert.equal(getUpstreamErrorMessage("   \n  "), "Unknown error");
+  assert.equal(
+    getUpstreamErrorMessage("<html><head><title>502</title></head><body>Bad Gateway</body></html>"),
+    "Unknown error",
+  );
+  assert.equal(getUpstreamErrorMessage("<!DOCTYPE html><html><body>WAF block</body></html>"), "Unknown error");
+});

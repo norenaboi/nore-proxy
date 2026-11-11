@@ -42,6 +42,7 @@ import { buildUpstreamErrorContext } from "../utils/upstreamErrors.js";
 import { executeRouting, httpError, statusOf, withContext } from "../utils/requestRouting.js";
 import { routingMetadata, summarizeRoutingAttempts } from "../utils/autoRouting.js";
 import { proxyAgentsFor } from "../utils/proxyAgents.js";
+import { applyRetryAfter } from "../utils/clientErrors.js";
 
 type DynamicRecord = Record<string, any>;
 
@@ -131,10 +132,13 @@ router.post("/v1/embeddings", verifyApiKey, async (req: any, res: any) => {
   const contextTokens = estimateEmbeddingTokens(baseRequest.input);
 
   try { await apiKeyManager.checkForGeneration(apiKey, rateLimiter, contextTokens); }
-  catch (error: any) { return res.status(error.statusCode || 500).json({ error: { message: error.message } }); }
+  catch (error: any) {
+    applyRetryAfter(res, error);
+    return res.status(error.statusCode || 500).json({ error: { message: error.message } });
+  }
 
   const registered = MODEL_REGISTRY[modelName];
-  if (!registered) return res.status(404).json({ error: `Model '${modelName}' not found.` });
+  if (!registered) return res.status(404).json({ error: { message: `Model '${modelName}' not found.`, code: "model_not_found" } });
   if (registered.modality !== "embedding") {
     return res.status(400).json({
       error: {
@@ -195,6 +199,7 @@ router.post("/v1/embeddings", verifyApiKey, async (req: any, res: any) => {
       `API [ID: ${requestId}]: ${error?.name || "Error"}: ${error?.message || String(error)}`,
     );
     if (!res.headersSent) {
+      applyRetryAfter(res, error);
       res.status(statusOf(error) || 500).json({ error: { message: error.message || String(error), ...(error.code ? { code: error.code } : {}) } });
     } else if (!res.writableEnded) {
       res.end();

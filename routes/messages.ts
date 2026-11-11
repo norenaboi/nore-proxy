@@ -51,6 +51,12 @@ import {
   getUpstreamErrorMessage,
   readUpstreamErrorBody,
 } from "../utils/upstreamErrors.js";
+import {
+  anthropicErrorEnvelope as anthropicErrorEnvelopeShared,
+  anthropicErrorType as anthropicErrorTypeShared,
+  applyRetryAfter,
+  resetStreamHeaders,
+} from "../utils/clientErrors.js";
 
 
 type DynamicRecord = Record<string, any>;
@@ -308,7 +314,11 @@ async function executeMessagesRouting(requestId: string, requestedModel: string,
         rotationOffset,
       });
       if (!endpointInfo) {
-        const error = new Error("Can't find the model you're looking for.");
+        const error = new Error(
+          state.autoModel
+            ? `Target model '${target}' of automatic model '${state.requestedModel}' is currently unavailable (no endpoint or usable key).`
+            : `Model '${target}' is currently unavailable: no endpoint or usable key is configured for it.`,
+        );
         error.name = "EndpointResolutionError";
         error.statusCode = state.autoModel ? 503 : 404;
         if (!state.autoModel) throw error;
@@ -417,6 +427,8 @@ async function executeMessagesRouting(requestId: string, requestedModel: string,
   }
   const error = new Error(`Model '${requestedModel}' not found.`);
   error.statusCode = 404;
+  error.name = "ModelNotFoundError";
+  error.code = "model_not_found";
   throw error;
 }
 
@@ -430,35 +442,27 @@ function successfulRoutingMetadata(
   return metadata;
 }
 
-function anthropicErrorType(statusCode: any) {
-  if (statusCode === 400) return "invalid_request_error";
-  if (statusCode === 401) return "authentication_error";
-  if (statusCode === 403) return "permission_error";
-  if (statusCode === 404) return "not_found_error";
-  if (statusCode === 413) return "request_too_large";
-  if (statusCode === 429) return "rate_limit_error";
-  if (statusCode === 529) return "overloaded_error";
-  return "api_error";
-}
+// Re-exported under local names for the route's error paths; kept identical to
+// the OpenAI-route helpers in utils/clientErrors.ts so the two protocols stay
+// in lockstep.
+const anthropicErrorType = anthropicErrorTypeShared;
+const anthropicErrorEnvelope = anthropicErrorEnvelopeShared;
 
-function anthropicErrorEnvelope(error: any, statusCode: any) {
-  if (error?.responseBody?.type === "error" && error.responseBody.error?.type) {
-    return {
-      ...error.responseBody,
-      error: {
-        ...error.responseBody.error,
-        ...(error.code ? { code: error.code } : {}),
-      },
-    };
+// Claude Code's auto-mode safety review rides along on ordinary
+// /v1/messages requests: the client adds an `anthropic-beta` value (plus a
+// `safeguards` body field) and reads the verdict from the same response.
+// Those headers only mean something to a native Anthropic upstream, which is
+// where they are forwarded. They are passed verbatim rather than
+// allowlisted because the valid set changes with client releases.
+function forwardableAnthropicHeaders(
+  reqHeaders: Record<string, unknown> | undefined,
+): DynamicRecord {
+  const forwarded: DynamicRecord = {};
+  for (const [name, value] of Object.entries(reqHeaders || {})) {
+    if (!name.startsWith("anthropic-") || typeof value !== "string") continue;
+    forwarded[name] = value;
   }
-  return {
-    type: "error",
-    error: {
-      type: anthropicErrorType(statusCode),
-      message: error?.message || "Internal server error",
-      ...(error?.code ? { code: error.code } : {}),
-    },
-  };
+  return forwarded;
 }
 
 // --- Route: POST /v1/messages ---
@@ -477,10 +481,16 @@ router.post("/v1/messages", verifyApiKey, validateToolCatalog("anthropic"), asyn
   try {
     await apiKeyManager.checkForGeneration(apiKey, rateLimiter, contextTokens);
   } catch (error: any) {
-    return res.status(error.statusCode || 500).json({
-      type: "error",
-      error: { type: "invalid_request_error", message: error.message },
-    });
+    applyRetryAfter(res, error);
+    return res
+      .status(error.statusCode || 500)
+      .json({
+        type: "error",
+        error: {
+          type: anthropicErrorType(error.statusCode || 500),
+          message: error.message,
+        },
+      });
   }
 
   // Validate model
@@ -538,7 +548,8 @@ router.post("/v1/messages", verifyApiKey, validateToolCatalog("anthropic"), asyn
     if (isStreaming) {
       await streamMessages(req, res, requestId, anthropicReq, modelName, apiKey, openaiMessages);
     } else {
-      const responseData = await makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, openaiMessages);
+      const clientHeaders = forwardableAnthropicHeaders(req.headers);
+      const responseData = await makeMessagesRequest(requestId, anthropicReq, modelName, apiKey, openaiMessages, clientHeaders);
       res.json(responseData);
     }
   } catch (error: any) {
@@ -587,6 +598,12 @@ router.post("/v1/messages", verifyApiKey, validateToolCatalog("anthropic"), asyn
       writeAnthropicEvent(res, "error", anthropicErrorEnvelope(error, statusCode));
       res.end();
     } else if (!res.headersSent) {
+      // A streaming request pre-set its SSE headers before routing; if routing
+      // failed before the first byte, res.json() would emit a JSON body still
+      // labelled text/event-stream — unreadable by every client. Reset the
+      // framing headers so the JSON error below is parseable.
+      resetStreamHeaders(res);
+      applyRetryAfter(res, error);
       res.status(statusCode).json(anthropicErrorEnvelope(error, statusCode));
     } else if (!res.writableEnded) {
       res.end();
@@ -596,7 +613,7 @@ router.post("/v1/messages", verifyApiKey, validateToolCatalog("anthropic"), asyn
 
 // --- Non-streaming request ---
 
-async function makeMessagesRequest(requestId: string, anthropicReq: DynamicRecord, modelName: string, apiKey: string, openaiMessages: any[]): Promise<any> {
+async function makeMessagesRequest(requestId: string, anthropicReq: DynamicRecord, modelName: string, apiKey: string, openaiMessages: any[], clientHeaders: DynamicRecord = {}): Promise<any> {
   return executeMessagesRouting(requestId, modelName, (state: any, endpointInfo: any) =>
     makeMessagesAttempt(
       requestId,
@@ -606,6 +623,7 @@ async function makeMessagesRequest(requestId: string, anthropicReq: DynamicRecor
       openaiMessages,
       endpointInfo,
       state,
+      clientHeaders,
     ),
   );
 }
@@ -618,6 +636,7 @@ async function makeMessagesAttempt(
   baseOpenaiMessages: any[],
   endpointOverride: any,
   routingState: any,
+  clientHeaders: DynamicRecord = {},
 ) {
   const anthropicReq = clone(baseAnthropicReq);
   const openaiMessages = clone(baseOpenaiMessages);
@@ -646,7 +665,7 @@ async function makeMessagesAttempt(
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       endpointInfo = endpointOverride || await getEndpointForConcreteModel(modelName, { excludeHashes: triedHashes });
       if (!endpointInfo) {
-        const error = new Error("Can't find the model you're looking for.");
+        const error = new Error(`Model '${modelName}' is currently unavailable: no endpoint or usable key is configured for it.`);
         error.name = "EndpointResolutionError";
         error.statusCode = 404;
         throw error;
@@ -678,6 +697,7 @@ async function makeMessagesAttempt(
 
         const extraHeaders = getExtraHeaders(apiFormat, {});
         headers = {
+          ...clientHeaders,
           ...customHeaders,
           ...extraHeaders,
           ...upstreamAuthHeaders(apiFormat, backendToken),
@@ -826,6 +846,7 @@ async function makeMessagesAttempt(
 // --- Streaming request ---
 
 async function streamMessages(req: Request, res: Response, requestId: string, anthropicReq: DynamicRecord, modelName: string, apiKey: string, openaiMessages: any[]): Promise<any> {
+  const clientHeaders = forwardableAnthropicHeaders(req.headers);
   const abortController = new AbortController();
   let activeStream: StreamWithDestroy | null = null;
   let cancelActiveAttempt: ((error?: Error) => void) | null = null;
@@ -852,6 +873,7 @@ async function streamMessages(req: Request, res: Response, requestId: string, an
         openaiMessages,
         state,
         endpointInfo,
+        clientHeaders,
         abortController,
         () => clientAborted,
         (stream: any) => { activeStream = stream; },
@@ -875,6 +897,7 @@ async function streamMessagesAttempt(
   baseOpenaiMessages: any[],
   routingState: any,
   endpointOverride: any,
+  clientHeaders: DynamicRecord,
   abortController: AbortController,
   isClientAborted: () => boolean,
   setActiveStream: (stream: any) => void,
@@ -909,7 +932,7 @@ async function streamMessagesAttempt(
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       endpointInfo = endpointOverride || await getEndpointForConcreteModel(modelName, { excludeHashes: triedHashes });
       if (!endpointInfo) {
-        const error = new Error("Can't find the model you're looking for.");
+        const error = new Error(`Model '${modelName}' is currently unavailable: no endpoint or usable key is configured for it.`);
         error.name = "EndpointResolutionError";
         error.statusCode = 404;
         throw error;
@@ -942,6 +965,7 @@ async function streamMessagesAttempt(
 
         const extraHeaders = getExtraHeaders(apiFormat, {});
         headers = {
+          ...clientHeaders,
           ...customHeaders,
           ...extraHeaders,
           ...upstreamAuthHeaders(apiFormat, backendToken),

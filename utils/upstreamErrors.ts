@@ -75,8 +75,20 @@ export async function readUpstreamErrorBody(
   };
 }
 
+// Upstreams occasionally answer errors with HTML status pages (proxies,
+// captive gateways, WAFs). Passed through verbatim, that markup becomes the
+// client's error message; collapse it to a short, readable fragment instead.
+function readableTextBody(text: string, fallback: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return fallback;
+  if (/^\s*<(?:!doctype|html|head|body)\b/i.test(trimmed) || trimmed.includes("</html>")) {
+    return fallback;
+  }
+  return trimmed;
+}
+
 export function getUpstreamErrorMessage(body: any, fallback: string = "Unknown error") {
-  if (typeof body === "string" && body.trim()) return body;
+  if (typeof body === "string") return readableTextBody(body, fallback);
 
   return (
     body?.error?.message ||

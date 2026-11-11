@@ -15,6 +15,7 @@ import { executeRouting, httpError, statusOf, withContext } from "../utils/reque
 import { markStreamOutputStarted, routingMetadata, summarizeRoutingAttempts } from "../utils/autoRouting.js";
 import { proxyAgentsFor } from "../utils/proxyAgents.js";
 import { applyQueryKeyAuth, upstreamAuthHeaders } from "../utils/endpointPolicies.js";
+import { applyRetryAfter, resetStreamHeaders } from "../utils/clientErrors.js";
 
 
 type DynamicRecord = Record<string, any>;
@@ -31,7 +32,7 @@ function persistUpstreamError({ requestId, modelName, endpointInfo, requestHeade
 
 function sendStreamError(res: any, requestId: any, modelName: any, error: any, statusCode: any = 500) {
   if (res.writableEnded) return;
-  if (!res.headersSent) res.status(statusCode);
+  if (!res.headersSent) { res.status(statusCode); applyRetryAfter(res, error); }
   res.write(`data: ${JSON.stringify({ id: `chatcmpl-${requestId}`, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: modelName, choices: [{ index: 0, delta: {}, finish_reason: "error" }], error: { message: error?.message || "Unknown error", type: "server_error", code: error?.code || statusCode } })}\n\n`);
   res.write("data: [DONE]\n\n");
   res.end();
@@ -108,13 +109,16 @@ router.post("/v1/chat/completions", verifyApiKey, validateToolCatalog("openai"),
   const apiKey = req.apiKey;
   const baseRequest = clone(req.body);
   try { await apiKeyManager.checkForGeneration(apiKey, rateLimiter, estimateTokens(baseRequest.messages || [])); }
-  catch (error: any) { return res.status(error.statusCode || 500).json({ error: { message: error.message } }); }
+  catch (error: any) {
+    applyRetryAfter(res, error);
+    return res.status(error.statusCode || 500).json({ error: { message: error.message } });
+  }
 
   const requestId = randomUUID();
   const modelName = baseRequest.model;
   const streaming = baseRequest.stream === true;
   const registered = MODEL_REGISTRY[modelName];
-  if (!registered) return res.status(404).json({ error: `Model '${modelName}' not found.` });
+  if (!registered) return res.status(404).json({ error: { message: `Model '${modelName}' not found.`, code: "model_not_found" } });
   // Embedding and image models answer on their own routes: their endpoints
   // expose no completions surface, so serving one here would post a chat body
   // at a URL that cannot answer it.
@@ -171,7 +175,7 @@ router.post("/v1/chat/completions", verifyApiKey, validateToolCatalog("openai"),
     }
     if (error.clientAbort) { if (!res.writableEnded) try { res.end(); } catch (_) {} }
     else if (streaming) sendStreamError(res, requestId, modelName, error, statusOf(error) || 500);
-    else if (!res.headersSent) res.status(statusOf(error) || 500).json({ error: { message: error.message || String(error), ...(error.code ? { code: error.code } : {}) } });
+    else if (!res.headersSent) { applyRetryAfter(res, error); res.status(statusOf(error) || 500).json({ error: { message: error.message || String(error), ...(error.code ? { code: error.code } : {}) } }); }
     else if (!res.writableEnded) res.end();
   }
 });

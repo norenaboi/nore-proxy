@@ -27,6 +27,11 @@ import accountRoutes from "./routes/account.js";
 import pagesRoutes from "./routes/pages.js";
 import logsRoutes from "./routes/logs.js";
 import uptimeRoutes from "./routes/uptime.js";
+import {
+  applyRetryAfter,
+  clientErrorBody,
+  protocolForPath,
+} from "./utils/clientErrors.js";
 import { initializeFrontend, renderFrontend } from "./frontend/server/frontendHost.js";
 
 const app = express();
@@ -207,20 +212,48 @@ app.use(async (req: Request, res: Response) => {
     await renderFrontend(req, res, "public.html");
     return;
   }
+  // API paths answer in their protocol's shape; everything else keeps the
+  // bare-string shape the admin frontend already parses.
+  if (protocolForPath(req.path) === "anthropic") {
+    res.status(404).json({
+      type: "error",
+      error: {
+        type: "not_found_error",
+        message: `Not found: ${req.method} ${req.path}`,
+      },
+    });
+    return;
+  }
+  if (req.path.startsWith("/v1/")) {
+    res.status(404).json({
+      error: { message: `Not found: ${req.method} ${req.path}`, code: "not_found" },
+    });
+    return;
+  }
   res.status(404).json({ error: "Not found" });
 });
 
 // Error handler — never leak raw exception messages to clients
 const errorHandler: ErrorRequestHandler = (
-  err: { statusCode?: number; message?: string },
-  _req,
+  err: { statusCode?: number; message?: string; retryAfterSeconds?: number },
+  req,
   res,
   _next,
 ) => {
   console.error("Unhandled error:", err);
-  res.status(err.statusCode || 500).json({
-    error: { message: err.statusCode ? err.message : "Internal server error" },
-  });
+  applyRetryAfter(res, err);
+  res
+    .status(err.statusCode || 500)
+    .json(
+      clientErrorBody(
+        // Body-parser errors (JSON parse failures) carry statusCode 400 and a
+        // message the client needs to fix the request; other unexpected errors
+        // stay generic so internals never leak.
+        { message: err.statusCode ? err.message : "Internal server error" },
+        err.statusCode,
+        protocolForPath(req.path),
+      ),
+    );
 };
 app.use(errorHandler);
 

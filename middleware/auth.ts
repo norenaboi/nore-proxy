@@ -2,10 +2,19 @@ import type { NextFunction, Request, Response } from "express";
 import apiKeyManager from "../services/apiKeyManager.js";
 import { validateSession } from "../services/sessionManager.js";
 import { validateAccountSession } from "../services/accountSessionManager.js";
+import {
+  applyRetryAfter,
+  clientErrorBody,
+  protocolForPath,
+} from "../utils/clientErrors.js";
 
 /**
- * Bearer-token auth for OpenAI-format endpoints (/v1/chat/completions).
- * Expects: Authorization: Bearer <token>
+ * Bearer-token auth for the client-facing API routes. Expects:
+ * Authorization: Bearer <token>.
+ *
+ * Errors are formatted in the protocol of the route being protected — an
+ * Anthropic SDK posting to /v1/messages must not receive an OpenAI-shaped
+ * 401 it cannot parse.
  */
 export async function verifyApiKey(
   req: Request,
@@ -15,12 +24,13 @@ export async function verifyApiKey(
   const authorization = req.headers.authorization;
 
   if (!authorization || !authorization.startsWith("Bearer ")) {
-    return res.status(401).json({
-      error: {
-        message:
-          "Invalid authorization header format. Expected 'Authorization: Bearer <token>'.",
-      },
-    });
+    return res.status(401).json(
+      clientErrorBody(
+        { message: "Invalid authorization header format. Expected 'Authorization: Bearer <token>'." },
+        401,
+        protocolForPath(req.path),
+      ),
+    );
   }
 
   const apiKey = authorization.replace("Bearer ", "");
@@ -32,9 +42,16 @@ export async function verifyApiKey(
   } catch (error: unknown) {
     const authError = error as { statusCode?: number; message?: string };
     if (!authError.statusCode) return next(error);
-    return res.status(authError.statusCode).json({
-      error: { message: authError.message || "Invalid or missing API key" },
-    });
+    applyRetryAfter(res, authError);
+    return res
+      .status(authError.statusCode)
+      .json(
+        clientErrorBody(
+          { message: authError.message || "Invalid or missing API key" },
+          authError.statusCode,
+          protocolForPath(req.path),
+        ),
+      );
   }
 }
 

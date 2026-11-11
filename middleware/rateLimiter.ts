@@ -3,7 +3,7 @@ import settingsManager from "../services/settingsManager.js";
 import { getClientIp } from "../utils/helpers.js";
 
 type AttemptMap = Map<string, number[]>;
-type RateLimitError = Error & { statusCode: number };
+type RateLimitError = Error & { statusCode: number; retryAfterSeconds: number };
 
 // IP-level brute-force limiter for the admin login route
 // Tracks attempt timestamps per IP and rejects if too many occur within the window
@@ -88,6 +88,8 @@ class RateLimiter {
         `You exceeded your requests per minute limit (${rateLimit}). Please wait and try after ${retryAfter} seconds.`,
       ) as RateLimitError;
       error.statusCode = 429;
+      // Carried so the routes can set the standard Retry-After header.
+      error.retryAfterSeconds = retryAfter;
       throw error;
     }
 
