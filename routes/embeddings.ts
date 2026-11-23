@@ -39,7 +39,7 @@ import {
   getEmbeddingAdapter,
 } from "../utils/adapters/embeddings.js";
 import { buildUpstreamErrorContext } from "../utils/upstreamErrors.js";
-import { executeRouting, httpError, statusOf, withContext } from "../utils/requestRouting.js";
+import { executeRouting, httpError, statusOf, withContext, UPSTREAM_TIMEOUT_MS } from "../utils/requestRouting.js";
 import { routingMetadata, summarizeRoutingAttempts } from "../utils/autoRouting.js";
 import { proxyAgentsFor } from "../utils/proxyAgents.js";
 import { applyRetryAfter } from "../utils/clientErrors.js";
@@ -230,7 +230,7 @@ async function makeEmbeddingRequest(
     const proxy = proxyAgentsFor(endpoint.proxyId);
     let response;
     try {
-      response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, timeout: 180000, validateStatus: () => true, ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}) });
+      response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, timeout: UPSTREAM_TIMEOUT_MS, validateStatus: () => true, ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}) });
     } catch (error: any) {
       throw withContext(error, endpoint, prepared);
     }

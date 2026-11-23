@@ -33,6 +33,52 @@ declare global {
 
 export type RoutingAttemptRunner = (state: any, endpoint: any) => Promise<any>;
 
+/**
+ * Upstream request timeout shared by every client route, in milliseconds.
+ *
+ * Axios implements `timeout` on the Node request via `req.setTimeout`, so it
+ * is a socket idle timeout, not a total-duration cap: a stream that delivers
+ * bytes within this window keeps running however long it takes overall. The
+ * value must therefore exceed the longest legitimate gap between upstream
+ * bytes — for reasoning models that can mean several minutes of silent
+ * thinking before the first token, plus mid-stream pauses between phases.
+ */
+export const UPSTREAM_TIMEOUT_MS = 300000;
+
+/** SSE comment frame sent between upstream events to hold idle client and
+ * intermediary connections open (comment frames are ignored by every SSE
+ * parser). 15s stays comfortably under typical 60s proxy/LB idle timeouts. */
+export const SSE_HEARTBEAT_MS = 15000;
+
+/**
+ * Emits SSE comment heartbeats on a streaming response until stopped.
+ *
+ * A reasoning upstream can go minutes without emitting an event. Without
+ * periodic bytes, an intermediary (nginx, Cloudflare, a corporate proxy) with
+ * a shorter idle timeout than the upstream's silence closes the client
+ * connection, and the proxy only learns of it via `res` "close" — by then the
+ * stream is already cut. Comment frames keep those intermediaries satisfied
+ * without injecting anything a compliant SSE client would surface.
+ *
+ * Start this only once the upstream has answered 2xx and the route has
+ * committed to streaming: the first write flushes the pre-set SSE headers as
+ * a 200, which would otherwise steal the status code from a JSON error
+ * response for a connection that never established.
+ *
+ * The timer is `unref`'d so it can never keep the process alive, and writing
+ * after the response ends is a no-op.
+ */
+export function startSseHeartbeat(res: any, intervalMs: number = SSE_HEARTBEAT_MS): () => void {
+  let stopped = false;
+  const stop = () => { if (stopped) return; stopped = true; clearInterval(timer); };
+  const timer = setInterval(() => {
+    if (stopped || res.writableEnded || res.destroyed) { stop(); return; }
+    res.write(": keep-alive\n\n");
+  }, intervalMs);
+  timer.unref();
+  return stop;
+}
+
 export const statusOf = (error: any): any => error?.response?.status ?? error?.statusCode ?? null;
 
 export function httpError(status: any, body: any) {

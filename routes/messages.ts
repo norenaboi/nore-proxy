@@ -34,6 +34,7 @@ import {
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import { applyQueryKeyAuth, upstreamAuthHeaders } from "../utils/endpointPolicies.js";
 import { proxyAgentsFor } from "../utils/proxyAgents.js";
+import { UPSTREAM_TIMEOUT_MS, startSseHeartbeat } from "../utils/requestRouting.js";
 import { openAIResponseToAnthropic } from "../utils/responseFormats.js";
 import {
   attemptedKeyHashes,
@@ -743,7 +744,7 @@ async function makeMessagesAttempt(
         url: requestUrl,
         headers,
         data,
-        timeout: 180000,
+        timeout: UPSTREAM_TIMEOUT_MS,
         validateStatus: () => true,
         ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}),
       });
@@ -1012,7 +1013,7 @@ async function streamMessagesAttempt(
         headers,
         data,
         responseType: "stream",
-        timeout: 180000,
+        timeout: UPSTREAM_TIMEOUT_MS,
         validateStatus: () => true,
         signal: abortController.signal,
         ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}),
@@ -1038,6 +1039,10 @@ async function streamMessagesAttempt(
       throw await keyStateManager.buildExhaustionError(endpointInfo?.endpointKey);
     }
 
+    // The upstream 2xx commits this response to SSE framing; heartbeats hold
+    // the client and intermediary connection open while the model thinks.
+    const stopHeartbeat = startSseHeartbeat(res);
+    try {
     const consume = apiFormat === "anthropic"
       ? streamAnthropicPassthrough
       : streamOpenAIToAnthropic;
@@ -1057,6 +1062,9 @@ async function streamMessagesAttempt(
     setActiveStream(null);
     await keyStateManager.recordSuccess(endpointInfo.endpointKey, endpointInfo.token);
     return { streamed: true };
+    } finally {
+      stopHeartbeat();
+    }
   } catch (error: any) {
     if (isClientAborted()) error.clientAbort = true;
     const responseBody = await readUpstreamErrorBody(

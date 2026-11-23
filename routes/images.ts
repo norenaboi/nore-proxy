@@ -34,7 +34,7 @@ import { applyQueryKeyAuth, getImagesUrl, supportsImages, upstreamAuthHeaders } 
 import { ImageInputError, getImageAdapter } from "../utils/adapters/images.js";
 import { clientRouteForModality } from "../shared/contracts/models.js";
 import { buildUpstreamErrorContext } from "../utils/upstreamErrors.js";
-import { executeRouting, httpError, statusOf, withContext } from "../utils/requestRouting.js";
+import { executeRouting, httpError, statusOf, withContext, UPSTREAM_TIMEOUT_MS } from "../utils/requestRouting.js";
 import { routingMetadata, summarizeRoutingAttempts } from "../utils/autoRouting.js";
 import { proxyAgentsFor } from "../utils/proxyAgents.js";
 import { applyRetryAfter } from "../utils/clientErrors.js";
@@ -203,7 +203,7 @@ async function makeImageRequest(
     try {
       // Image generation is slower than a completion of the same size, so the
       // upstream deadline is longer than the 180s the other routes use.
-      response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, timeout: 300000, validateStatus: () => true, ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}) });
+      response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, timeout: UPSTREAM_TIMEOUT_MS, validateStatus: () => true, ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}) });
     } catch (error: any) {
       throw withContext(error, endpoint, prepared);
     }

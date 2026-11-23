@@ -11,7 +11,7 @@ import { createBoundedText, guardCarryBuffer, type BoundedText } from "../utils/
 import keyStateManager from "../services/keyStateManager.js";
 import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import { buildUpstreamErrorContext, readUpstreamErrorBody } from "../utils/upstreamErrors.js";
-import { executeRouting, httpError, statusOf, withContext } from "../utils/requestRouting.js";
+import { executeRouting, httpError, statusOf, withContext, UPSTREAM_TIMEOUT_MS, startSseHeartbeat } from "../utils/requestRouting.js";
 import { markStreamOutputStarted, routingMetadata, summarizeRoutingAttempts } from "../utils/autoRouting.js";
 import { proxyAgentsFor } from "../utils/proxyAgents.js";
 import { applyQueryKeyAuth, upstreamAuthHeaders } from "../utils/endpointPolicies.js";
@@ -208,7 +208,7 @@ async function streamFromBackend(req: Request, res: Response, requestId: string,
     let response;
     const proxy = proxyAgentsFor(endpoint.proxyId);
     try {
-      response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, responseType: "stream", timeout: 180000, validateStatus: () => true, signal: abortController.signal, ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}) });
+      response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, responseType: "stream", timeout: UPSTREAM_TIMEOUT_MS, validateStatus: () => true, signal: abortController.signal, ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}) });
       activeStream = response.data;
     } catch (error: any) {
       if (clientAborted) error.clientAbort = true;
@@ -219,6 +219,9 @@ async function streamFromBackend(req: Request, res: Response, requestId: string,
       response.data?.destroy?.();
       throw withContext(httpError(response.status, body), endpoint, prepared, body);
     }
+    // The upstream 2xx commits this response to SSE framing; heartbeats hold
+    // the client and intermediary connection open while the model thinks.
+    const stopHeartbeat = startSseHeartbeat(res);
     try {
       const result = await consumeStream(response.data, res, state, prepared.adapter, streamCtx, requestId, () => clientAborted);
       activeStream = null;
@@ -234,6 +237,8 @@ async function streamFromBackend(req: Request, res: Response, requestId: string,
       activeStream = null;
       if (clientAborted) error.clientAbort = true;
       throw withContext(error, endpoint, prepared, error.responseBody);
+    } finally {
+      stopHeartbeat();
     }
     });
     await logStreamSuccess(requestId, routed, baseRequest, routed.endpoint, apiKey, routed.routingState);
@@ -327,7 +332,7 @@ async function makeBackendRequest(requestId: string, baseRequest: DynamicRecord,
     const prepared = prepareAttempt(baseRequest, endpoint, requestId, false);
     const proxy = proxyAgentsFor(endpoint.proxyId);
     let response;
-    try { response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, timeout: 180000, validateStatus: () => true, ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}) }); }
+    try { response = await axios({ method: "post", url: prepared.requestUrl, headers: prepared.headers, data: prepared.data, timeout: UPSTREAM_TIMEOUT_MS, validateStatus: () => true, ...(proxy ? { httpAgent: proxy.httpAgent, httpsAgent: proxy.httpsAgent } : {}) }); }
     catch (error: any) { throw withContext(error, endpoint, prepared); }
     if (response.status < 200 || response.status >= 300) throw withContext(httpError(response.status, response.data), endpoint, prepared, response.data);
     await keyStateManager.recordSuccess(endpoint.endpointKey, endpoint.token);
