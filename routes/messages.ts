@@ -35,6 +35,7 @@ import { getAdapter, getExtraHeaders } from "../utils/adapters/index.js";
 import { applyQueryKeyAuth, upstreamAuthHeaders } from "../utils/endpointPolicies.js";
 import { proxyAgentsFor } from "../utils/proxyAgents.js";
 import { UPSTREAM_TIMEOUT_MS, startSseHeartbeat } from "../utils/requestRouting.js";
+import { repairTruncatedJson } from "../utils/jsonRepair.js";
 import { openAIResponseToAnthropic } from "../utils/responseFormats.js";
 import {
   attemptedKeyHashes,
@@ -214,6 +215,45 @@ function writeAnthropicEvent(res: any, event: any, data: any) {
     markFirstToken(state.requestId);
   }
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+/**
+ * Close out a truncated Anthropic SSE stream so a strict client (Claude Code)
+ * is not stranded mid tool-call.
+ *
+ * When the upstream dies mid-response — the timeout expires between bytes and
+ * axios aborts, or the upstream closes a stream that never sent a terminal
+ * event — the client has already received `message_start` plus partial blocks.
+ * Anthropic framing has no way to resume: without content_block_stop for every
+ * open block, a message_delta, and message_stop, the client's parser sits with
+ * a tool_use block whose argument JSON it also never finished receiving. That
+ * malformed tool call poisons every later request in the session, because tool
+ * calls must be replayable verbatim into the next request's history.
+ *
+ * The stream consumer supplies any open block indices plus a callback that
+ * emits them; this writes the terminal message_delta/message_stop pair. The
+ * events go through `writeAnthropicEvent` only when frames have not yet been
+ * written — for recovery they always have been, or there is nothing to rescue.
+ */
+function emitStreamRescue(
+  res: any,
+  onCloseBlocks: (res: any) => void,
+  outputTokenCount: number,
+) {
+  if (res.writableEnded) return;
+  onCloseBlocks(res);
+  // The route-level error handler reads this flag to skip appending an error
+  // event after the terminal message_stop.
+  (res as any).__streamRescued = true;
+  writeAnthropicEvent(res, "message_delta", {
+    type: "message_delta",
+    // A null stop_reason tells the client the message was cut short upstream
+    // rather than ending naturally; Anthropic uses the same signal when it
+    // truncates a stream.
+    delta: { stop_reason: null, stop_sequence: null },
+    usage: { output_tokens: outputTokenCount },
+  });
+  writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
 }
 
 // --- Error persistence ---
@@ -595,6 +635,11 @@ router.post("/v1/messages", verifyApiKey, validateToolCatalog("anthropic"), asyn
 
     if (error.clientAbort) {
       if (!res.writableEnded) try { res.end(); } catch (_) {}
+    } else if (isStreaming && (res as any).__streamRescued) {
+      // The stream consumer already closed the truncated SSE sequence with a
+      // terminal message_stop; an error event after that is out-of-protocol
+      // framing. The failure is recorded in logs and key health above.
+      if (!res.writableEnded) res.end();
     } else if (isStreaming && res.headersSent && !res.writableEnded) {
       writeAnthropicEvent(res, "error", anthropicErrorEnvelope(error, statusCode));
       res.end();
@@ -1091,6 +1136,29 @@ function streamAnthropicPassthrough(
     let buffer = "";
     const accumulated = createBoundedText();
     let usage: any = null;
+    // Client framing state for truncation rescue: which blocks the client saw
+    // opened but not closed, and whether the stream was already terminated.
+    let clientSawMessageStart = false;
+    let clientSawMessageStop = false;
+    const openBlockIndices = new Set<number>();
+    const trackClientEvent = (data: any) => {
+      if (data.type === "message_start") clientSawMessageStart = true;
+      else if (data.type === "message_stop") clientSawMessageStop = true;
+      else if (data.type === "content_block_start") openBlockIndices.add(data.index);
+      else if (data.type === "content_block_stop") openBlockIndices.delete(data.index);
+    };
+    const rescue = () => {
+      if (!clientSawMessageStart || clientSawMessageStop) return;
+      if (res.writableEnded || res.destroyed) return;
+      emitStreamRescue(res, (res: any) => {
+        for (const index of [...openBlockIndices].sort((a, b) => a - b)) {
+          writeAnthropicEvent(res, "content_block_stop", {
+            type: "content_block_stop",
+            index,
+          });
+        }
+      }, usage?.output_tokens ?? estimateTokensFromLength(accumulated.totalLength));
+    };
     const cleanup = () => {
       stream.off("data", onData);
       stream.off("end", onEnd);
@@ -1100,6 +1168,7 @@ function streamAnthropicPassthrough(
     const settle = (error?: Error) => {
       if (settled) return;
       settled = true;
+      if (error) rescue();
       cleanup();
       if (error) reject(error);
       else resolve();
@@ -1126,6 +1195,7 @@ function streamAnthropicPassthrough(
         let data;
         try { data = JSON.parse(payload); } catch { continue; }
         if (!data || typeof data !== "object") continue;
+        trackClientEvent(data);
         if (data.type === "error") {
           const error = new Error(data.error?.message || "Upstream stream failed");
           error.name = "UpstreamStreamError";
@@ -1361,6 +1431,64 @@ function streamOpenAIToAnthropic(
     writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
   }
 
+  // Truncation rescue for the converted path: close every block the client
+  // saw opened, completing a tool call cut mid-argument-JSON with a repair
+  // tail delta so the accumulated input parses, then terminate the message.
+  const rescueConverted = () => {
+    if (terminated || !sentMessageStart) return;
+    if (res.writableEnded || res.destroyed) return;
+    terminated = true; // claim the terminal pair emitTerminal guards on
+    closeThinkingBlock();
+    closeTextBlock();
+    let antiRecursion = false;
+    emitStreamRescue(res, (res: any) => {
+      if (antiRecursion) return;
+      antiRecursion = true;
+      for (const toolIndex of toolOrder) {
+        const tool = toolFragments.get(toolIndex);
+        if (!tool?.id) continue;
+        const index = nextBlockIndex++;
+        writeAnthropicEvent(res, "content_block_start", {
+          type: "content_block_start",
+          index,
+          content_block: {
+            type: "tool_use",
+            id: tool.id,
+            name: tool.name || "",
+            input: {},
+          },
+        });
+        const joined = tool.fragments.join("");
+        for (const fragment of tool.fragments) {
+          writeAnthropicEvent(res, "content_block_delta", {
+            type: "content_block_delta",
+            index,
+            delta: { type: "input_json_delta", partial_json: fragment },
+          });
+        }
+        // The fragments the client holds were cut mid-JSON. A repair that
+        // only appends closers completes them minimally; if the prefix
+        // cannot be salvaged the client keeps the truncated input, but the
+        // block itself still closes so the message terminates cleanly.
+        const repaired = repairTruncatedJson(joined);
+        if (repaired && repaired.length > joined.length) {
+          writeAnthropicEvent(res, "content_block_delta", {
+            type: "content_block_delta",
+            index,
+            delta: { type: "input_json_delta", partial_json: repaired.slice(joined.length) },
+          });
+        }
+        writeAnthropicEvent(res, "content_block_stop", {
+          type: "content_block_stop",
+          index,
+        });
+      }
+    },
+      streamUsage?.completion_tokens ??
+        (estimateTokensFromLength(accumulatedContent.totalLength) +
+          estimateTokensFromLength(accumulatedReasoning.totalLength)));
+  };
+
   const cleanup = () => {
     stream.off("data", onData);
     stream.off("end", onEnd);
@@ -1370,6 +1498,7 @@ function streamOpenAIToAnthropic(
   };
   const settle = (error?: Error) => {
     if (settled) return;
+    if (error) rescueConverted();
     settled = true;
     cleanup();
     if (error) reject(error);
